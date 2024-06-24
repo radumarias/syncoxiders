@@ -1,2 +1,5 @@
 # syncoxide-rs
-Cloud sync between multiple providers written in Rust.
+
+A cloud file sync, sharing and backup solution written in Rust.
+
+For now it's just in idea phase.
