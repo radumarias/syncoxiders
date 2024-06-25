@@ -52,8 +52,8 @@ https://forms.gle/qgnWBJhzCpzPLSmv5
 - Cleanup storage
 - Sync, share status, storage overview
 - Backups with borg, encrypted, deduplicated, compressed
-- Photos manager
 - Automation, convert to PDF, convert image, unzip, convert audio/video, watermark files
+- Photos manager
 - REST API, gRPC, CLI clients and client libs in multiple languages
 - Many supported providers
 
