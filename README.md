@@ -62,6 +62,7 @@ Compared to S3Drive, rclone, Resilio Sync, Nextcloud, Syncthing, ownCloud, Seafi
 - Simple and quick way to share files with someone using minimal tools, ideally only by browser
 - Receiving files, like S3 presigned URLs but create a dest folder where others can upload more files and even folders
 - Can combine both local files Sync and Share with remote providers
+- rclone is not quite real time Sync from remote to local, it has delay for auto-sync (even if you are listing the content of a folder it doesn’t immediately pickup changes) and does sync on some specific operations
 - Encryption for stored files
 - Backup solution with borgbackup and repo for it
 - Built very efficient with Rust
