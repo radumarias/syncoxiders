@@ -92,6 +92,7 @@ There are several ways to interact with our service:
 
 ### Local files
 - In case you have some local files you want to keep in sync between multiple devices, without any file storage providers, you can use our local app on each device which will handle sync in P2P manner using QUIC. Apps need to be running for this. This is similar to Resilio Sync
+- All devices are auhenticated using web of trust to make sure are trusted by you
 
 You can mix these 2, for example you could setup a sync between a local folder and a provider. The local app will push changes to our service which will sync them with the provider and the service will push changes from provider back to local app.
 
