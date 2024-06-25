@@ -54,6 +54,23 @@ https://forms.gle/qgnWBJhzCpzPLSmv5
 - REST API, gRPC, CLI clients and client libs in multiple languages
 - Many supported providers
 
+# Some key differences compared to other products
+
+Compared to S3Drive, rclone, Resilio Sync, Nextcloud, Syncthing, ownCloud, Seafile
+
+- Sync and Share between cloud providers
+- Simple and quick way to share files with someone using minimal tools, ideally only by browser
+- Receiving files, like S3 presigned URLs but create a dest folder where others can upload more files and even folders
+- Can combine both local files Sync and Share with remote providers
+- Encryption for stored files
+- Backup solution with borgbackup and repo for it
+- Built very efficient with Rust
+- Search and analytics
+- WAL (Write-Ahead Logging) to ensure file integrity
+- Handles very large files efficiently with concurrent and resumable transfers
+- Seamlessly browser app and desktop apps, also mobile apps
+- Extensive cilents, libs, CLI, REST and gRPC
+
 # How it works
 There are several ways to interact with our service:
 - browser app: we expose a file manager app built for WebAssembly than can manage all operations and transfers
