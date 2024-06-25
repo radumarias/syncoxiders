@@ -28,7 +28,7 @@ https://forms.gle/qgnWBJhzCpzPLSmv5
 # Features
 - Sync between providers, Copy, Sync, Move, Two-way sync
 - Conflict resolution
-- Sync local files between multiple devices, authenticated devices
+- Sync local files between multiple authenticated devices
 - MD5, SHA1 hashes are checked at all times for file integrity
 - Multi-threaded transfers
 - Make sync (and changes) with WAL (Write-Ahead Logging) to ensure file integrity
