@@ -7,7 +7,7 @@ It offers real time sync (from simple Copy One-way to Two-way Sync) all handled 
 
 For now it's just in idea phase but has some or the core components that will be used, like encryption and a basic Google Drive client. You can see the design doc [here](https://www.canva.com/design/DAGI-5FeEEA/2IwzP0vp45dvSarZd_drzA/view?utm_content=DAGI-5FeEEA&utm_campaign=designshare&utm_medium=link&utm_source=editor) or [PDF](https://github.com/radumarias/syncoxide-rs/blob/ff4a57650cc8f97ad382d3b9475ee60a9b95d089/syncoxide.rs.pdf)
 
-Will use [rencfs](https://github.com/radumarias/rencfs) for encryption and in the prototype phase [gdrive-rs](https://github.com/radumarias/gdrive-rs) for accesing Google Drive.
+Will use [rencfs](https://github.com/radumarias/rencfs) for encryption and [gdrive-rs](https://github.com/radumarias/gdrive-rs) for accesing Google Drive.
 
 It you could take this survey to express your oppinion about the current solution and offer insights on what other features you would like from a service like this it would help a lot  
 https://forms.gle/qgnWBJhzCpzPLSmv5
