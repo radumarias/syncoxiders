@@ -1,6 +1,6 @@
 # syncoxide-rs
 
-A cloud file sync, sharing and backup solution written in Rust.
+A cloud files Sync, Sharing, Backup and encrypted solution written in Rust.
 
 The purpose of this project is to offer an easy and reliable way to sync files between multiple providers (like Google Drive, Dropbox, S3, SFTP servers, ...) and local files, and a simple and quick way for file sharing and backups.  
 It offers real time sync (from simple Copy One-way to Two-way Sync) all handled in the cloud, without the explicit need of local clients.
