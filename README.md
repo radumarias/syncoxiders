@@ -26,7 +26,7 @@ https://forms.gle/qgnWBJhzCpzPLSmv5
 - Photos manager
 
 # Features
-- Sync between providers, Copy, Sync, Move, Tho-way sync
+- Sync between providers, Copy, Sync, Move, Two-way sync
 - Conflict resolution
 - Sync local files between multiple devices
 - MD5, SHA1 hashes are checked at all times for file integrity
