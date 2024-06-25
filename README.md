@@ -9,6 +9,9 @@ For now it's just in idea phase. You can see the design doc [here](https://www.c
 
 Will use [rencfs](https://github.com/radumarias/rencfs) for encryption and in the prototype phase [gdrive-rs](https://github.com/radumarias/gdrive-rs) for accesing Google Drive.
 
+It you could take this survey to express your oppinion about the current solution and offer insights on what other features you would like from a service like this it would help a lot  
+https://forms.gle/qgnWBJhzCpzPLSmv5
+
 # Use cases
 - You have various cloud providers and you need to keep files in sync between them
 - You want to quickly share a local file with someone with minimal tools involved
