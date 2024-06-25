@@ -53,6 +53,7 @@ https://forms.gle/qgnWBJhzCpzPLSmv5
 - Sync, share status, storage overview
 - Backups with borg, encrypted, deduplicated, compressed
 - Photos manager
+- Automation, convert to PDF, convert image, unzip, convert audio/video, watermark files
 - REST API, gRPC, CLI clients and client libs in multiple languages
 - Many supported providers
 
