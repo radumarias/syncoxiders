@@ -46,7 +46,9 @@ https://forms.gle/qgnWBJhzCpzPLSmv5
 - Local views: My Drive, Computers, Shared, Shared with me, Recents, Starred, Trash
 - Global view from all providers and local files, My Drive, Computers, Shared, Shared with me, Recents, Starred, Trash
 - Internal links to other files
-- Search and analytics
+- Search capabilities
+- Analytics
+- File history and versioning
 - Cleanup storage
 - Sync, share status, storage overview
 - Backups with borg, encrypted, deduplicated, compressed
