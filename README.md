@@ -1,4 +1,4 @@
-# syncoxide-rs
+# syncoxide.rs
 
 Cloud files Sync, Sharing, Backup and encrypted solution written in Rust.
 
