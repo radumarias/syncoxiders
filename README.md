@@ -124,8 +124,9 @@ You can mix these 2, for example you could setup a sync between a local folder a
 ### Receiving files
 
 - Someone might want to send you a file, you setup a Request Files link, send it to them, and we’ll handle how the files gets back to you
-- You can mix between these, for example you can share a local file and the other person who save it on their provider, both files will be kept in sync.
-- Or you can create a Request Files link based on a provider folder (or local folder) and others can send files to you from their browser, torrent client, local app or from their provider.
+
+You can mix between these, for example you can share a local file and the other person who save it on their provider, both files will be kept in sync.  
+Or you can create a Request Files link based on a provider folder (or local folder) and others can send files to you from their browser, torrent client, local app or from their provider.
 
 ## Encrypt
 - You may want to keep your files encrypted for privacy. Your provider will not have access to the content of your files, nor metadata. You will need the local app or browser app to access the files. It works with local files too
