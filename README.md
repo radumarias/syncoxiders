@@ -58,7 +58,7 @@ https://forms.gle/qgnWBJhzCpzPLSmv5
 - REST API, gRPC, CLI clients and client libs in multiple languages
 - Many supported providers
 
-# Key differences compared to other products
+# What separates it from other products
 
 Compared to S3Drive, rclone, Resilio Sync, Nextcloud, Syncthing, ownCloud, Seafile
 
