@@ -61,18 +61,19 @@ https://forms.gle/qgnWBJhzCpzPLSmv5
 
 # What separates it from other products
 
-What other solutions are there: MultCloud, S3 Drive, rclone, Resilio Sync.
+What other solutions are there: MultCloud, S3 Drive, rclone, odrive, Resilio Sync.
 Some of them are hard to use especially for non-technical users and also they lack multiple features.
 
 - MultCloud offers something similar for Sync but not for Sharing with others
 - S3 Drive is a bit harder to setup as it requires some manual config in some cases providing access tokens manually
-- rclone is not quite real time Sync from remote to local, it has delay for auto-sync (even if you are listing the content of a folder it doesn’t immediately pickup changes) and does sync on some specific operations
+- rclone is great but it’s mostly for technical people, you need to do some manual config from console and for Google Drive they have a problem, is not quite real time Sync from remote to local. It has delay for auto-sync (even if you are listing the content of a folder it doesn’t immediately pickup changes) and does sync on some specific operations
+- odrive doesn’t have sync between providers but just offer a unified view between all your providers. For sharing it offers the other person just a view of the shared files in odrive apps, they cannot add the files to their provider for accessing in there and keeping them in sync, or save them locally and keep them in sync
 - Resilio Sync is great but is not of the scale I'm proposing, it only handles your local files sync, not between storage providers and also doesn't have such an easy sharing
 
 What all are missing is an easy way to send a local file to someone with just the browser for ex and Share between storage providers.
 
 What we offer better or additionally:
-- Sync and Share between cloud providers
+- Sync and Share between storage providers and local files
 - Simple and quick way to share files with someone using minimal tools, ideally only by browser
 - Receiving files, like S3 presigned URLs but create a dest folder where others can upload more files and even folders
 - Can combine both local files Sync and Share with remote providers
