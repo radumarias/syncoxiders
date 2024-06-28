@@ -115,6 +115,7 @@ You can mix these 2, for example you could setup a sync between a local folder a
 
 - You may share a file from your provider with another person, using our service. After they accept it it will be accessible in their provider, both of you can change the file and the changes are kept in sync
 - The service will notify the other user and he will select where to save the files, what provider and folder. You will be notified back when they accepted and also when they changed something
+- The user may decide to not add the shared files to their providers but keep it as a link (reference), in that case the shared files will be visible to him in a Shared with me folder in the browser or local app. Any changes he makes in there will synced
 - On sharing on the same provider if the provider supports sharing it will use their build-in sharing functionality, if not it will copy the file to destination provider and then keep it in sync between the two of you
 
 ### With external users
