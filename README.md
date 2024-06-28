@@ -2,7 +2,7 @@
 
 Cloud files Sync, Sharing, Backup and Encryption solution written in Rust.
 
-The purpose of this project is to offer an easy and reliable way to sync files between multiple providers (like Google Drive, Dropbox, S3, SFTP servers, ...) and local files, and a simple and quick way for file sharing, backup and encryption.  
+The purpose of this project is to offer an easy and reliable way to sync files between multiple storage providers (like Google Drive, Dropbox, S3, SFTP servers, ...) and local files, and a simple and quick way for file sharing, backup and encryption.  
 It offers real time sync (from simple Copy One-way to Two-way Sync) all handled in the cloud, without the explicit need of local clients.
 
 For now it's in prototyping phase, has some or the core components, like encryption and basic Google Drive client.  
