@@ -60,7 +60,14 @@ https://forms.gle/qgnWBJhzCpzPLSmv5
 
 # What separates it from other products
 
-Compared to S3Drive, rclone, Resilio Sync, Nextcloud, Syncthing, ownCloud, Seafile
+What other solution are there: MultCloud, S3 Drive, rclone, Nextcloud, Resilio Sync, MEGA, ownCloud, Seafile.
+
+Some of them hard to use especially for non-technical users and also they lack multiple features.
+
+MultCloud offers something similar for Sync but not for Sharing with others.  
+Resilio Sync is great but is not of the scale I'm proposing, it only handles your local files sync, not between storage providers and also doesn't have such an easy sharing.
+
+What all are missing is easy way to send a local file to someone with just the browser for ex and Sync between storage providers.
 
 - Sync and Share between cloud providers
 - Simple and quick way to share files with someone using minimal tools, ideally only by browser
