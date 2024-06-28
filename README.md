@@ -1,4 +1,4 @@
-# syncoxiders
+# SyncOxiders
 
 Cloud files Sync, Sharing, Backup and Encryption solution written in Rust.
 
