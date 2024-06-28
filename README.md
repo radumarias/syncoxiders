@@ -61,27 +61,28 @@ https://forms.gle/qgnWBJhzCpzPLSmv5
 
 # What separates it from other products
 
-What other solution are there: MultCloud, S3 Drive, rclone, Nextcloud, Resilio Sync, MEGA, ownCloud, Seafile.
+What other solutions are there: MultCloud, S3 Drive, rclone, Resilio Sync.
+Some of them are hard to use especially for non-technical users and also they lack multiple features.
 
-Some of them hard to use especially for non-technical users and also they lack multiple features.
+- MultCloud offers something similar for Sync but not for Sharing with others
+- S3 Drive is a bit harder to setup as it requires some manual config in some cases providing access tokens manually
+- rclone is not quite real time Sync from remote to local, it has delay for auto-sync (even if you are listing the content of a folder it doesn’t immediately pickup changes) and does sync on some specific operations
+- Resilio Sync is great but is not of the scale I'm proposing, it only handles your local files sync, not between storage providers and also doesn't have such an easy sharing
 
-MultCloud offers something similar for Sync but not for Sharing with others.  
-Resilio Sync is great but is not of the scale I'm proposing, it only handles your local files sync, not between storage providers and also doesn't have such an easy sharing.
+What all are missing is an easy way to send a local file to someone with just the browser for ex and Share between storage providers.
 
-What all are missing is easy way to send a local file to someone with just the browser for ex and Sync between storage providers.
-
+What we offer better or additionally:
 - Sync and Share between cloud providers
 - Simple and quick way to share files with someone using minimal tools, ideally only by browser
 - Receiving files, like S3 presigned URLs but create a dest folder where others can upload more files and even folders
 - Can combine both local files Sync and Share with remote providers
-- rclone is not quite real time Sync from remote to local, it has delay for auto-sync (even if you are listing the content of a folder it doesn’t immediately pickup changes) and does sync on some specific operations
 - Encryption for stored files
 - Backup solution with borgbackup and repo for it
-- Built very efficient with Rust
+- Built very efficiently with Rust
 - Search and analytics
 - WAL (Write-Ahead Logging) to ensure file integrity
 - Handles very large files efficiently with concurrent and resumable transfers
-- Seamlessly browser app and desktop apps, also mobile apps
+- Similar browser app and desktop app, also mobile apps
 - Extensive cilents, libs, CLI, REST and gRPC
 
 # How it works
