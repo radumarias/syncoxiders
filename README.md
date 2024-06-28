@@ -65,7 +65,7 @@ What other solutions are there: MultCloud, S3 Drive, rclone, odrive, Resilio Syn
 Some of them are hard to use especially for non-technical users and also they lack multiple features.
 
 - MultCloud seems to be very similar for Sync, Share and Backup but lacks sync with local files. Also it’s very buggy, login with Google doesn’t work when you access the shared link., reset pass doesn’t work well, their Google Drive app is still in review. Also it lacks encryption
-- S3 Drive is a bit harder to setup as it requires some manual config in some cases providing access tokens manually
+- S3 Drive is a bit harder to setup as it requires some manual config in some cases providing access tokens manually. Also lacks many features like Share, Backup, Encrypt. The sync is also quite slow
 - rclone is great but it’s mostly for technical people, you need to do some manual config from the console and for Google Drive they have a problem, it is not quite real time Sync from remote to local. It has delay for auto-sync (even if you are listing the content of a folder it doesn’t immediately pickup changes) and does sync on some specific operations
 - odrive doesn’t have sync between providers but just offers a unified view between all your providers. For sharing it offers the other person just a view of the shared files in odrive apps, they cannot add the files to their provider for accessing in there and keeping them in sync, or save them locally and keep them in sync
 - Resilio Sync is great but is not of the scale I'm proposing, it only handles your local files sync, not between storage providers and also doesn't have such an easy sharing
