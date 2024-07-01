@@ -1,0 +1,22 @@
+[package]
+name = "file-tree-merge"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+documentation.workspace = true
+exclude.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+
+walkdir = "2.5.0"
+chksum-md5 = "0.0.0"
+git2 = "0.19.0"
+slab_tree = "0.3.2"

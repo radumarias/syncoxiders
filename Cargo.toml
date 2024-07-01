@@ -1,0 +1,22 @@
+[workspace]
+members = ["file-change-consumer", "file-change-router", "file-tree-merge", "file-watcher"]
+
+resolver = "2"
+
+[workspace.package]
+name = "syncoxiders"
+description = "Cloud files Sync, Sharing, Backup and Encryption solution written in Rust."
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Radu Marias <radumarias@gmail.com>"]
+homepage = "https://github.com/radumarias/syncoxiders"
+repository = "https://github.com/radumarias/syncoxiders"
+readme = "README.md"
+keywords = ["sync", "share", "cloud", "filesystem", "encryption"]
+categories = ["cryptography", "filesystem"]
+documentation = "https://docs.rs/syncoxiders"
+exclude = [".github/"]
+
+[workspace.dependencies]
+anyhow = "1.0.44"
