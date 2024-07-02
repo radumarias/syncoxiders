@@ -12,9 +12,9 @@ Will use [rencfs](https://github.com/radumarias/rencfs) for encryption and [gdri
 
 It you could take this [**SURVEY**](https://forms.gle/qgnWBJhzCpzPLSmv5) to express your oppinion about the current solution and offer your oppinion on what features you would like from a service like this it would help a lot  
 
-# The name
+# What's with the name?
 
-`SyncOxiders`? What's with the name? :) Well:
+`SyncOxiders`? :) Well:
 - in Rust community the term `oxide` or `oxidize` it's often used, as it relates to `rust` as a substance
 - `rs` it's short from `rust`
 - many Rust related domains tend to be `.rs`
