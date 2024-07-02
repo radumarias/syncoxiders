@@ -10,8 +10,7 @@ You can see the design doc [here](https://www.canva.com/design/DAGI-5FeEEA/2IwzP
 
 Will use [rencfs](https://github.com/radumarias/rencfs) for encryption and [gdrive-rs](https://github.com/radumarias/gdrive-rs) for accesing Google Drive.
 
-It you could take this survey to express your oppinion about the current solution and offer insights on what features you would like from a service like this it would help a lot  
-https://forms.gle/qgnWBJhzCpzPLSmv5
+It you could take this [*SURVEY*](https://forms.gle/qgnWBJhzCpzPLSmv5) to express your oppinion about the current solution and offer insights on what features you would like from a service like this it would help a lot  
 
 # Use cases
 - You have various cloud providers and you need to keep files in sync between them
