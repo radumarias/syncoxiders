@@ -14,7 +14,12 @@ It you could take this [**SURVEY**](https://forms.gle/qgnWBJhzCpzPLSmv5) to expr
 
 # The name
 
-`SyncOxiders`? What's with the name? :) Well in Rust community the term `oxide` or `oxidize` it's often used, as it relates to `rust` as substance, and `rs` it's short from `rust`. Many Rust related domains tend to be `.rs` so the name is `Sync` obvious, `Oxide` as mentioned before and `rs` from the domain, so we have the website [syncoxide.rs](https://syncoxide.rs/).
+`SyncOxiders`? What's with the name? :) Well:
+- in Rust community the term `oxide` or `oxidize` it's often used, as it relates to `rust` as a substance
+- `rs` it's short from `rust`
+- many Rust related domains tend to be `.rs`
+- 
+So the name is `Sync` obvious, `Oxide` as mentioned before and `rs` for the domain. So we have the website [syncoxide.rs](https://syncoxide.rs/).
 
 # Use cases
 - You have various cloud providers and you need to keep files in sync between them
