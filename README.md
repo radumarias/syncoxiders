@@ -1,6 +1,6 @@
 # SyncOxiders
 
-Cloud files Sync, Sharing, Backup and Encryption solution written in Rust.
+Cloud file and email Sync, file Sharing, Backup and Encryption solution written in Rust.
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/services2.png?raw=true)
 
