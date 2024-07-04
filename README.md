@@ -8,7 +8,7 @@ The purpose of this project is to offer an easy and reliable way to sync files a
 It offers real time sync (from simple Copy One-way to Two-way Sync) all handled in the cloud, without the explicit need of local clients.
 
 > [!WARNING]  
-> For now it's in prototyping phase, has some or the core components, like encryption and basic Google Drive client.  
+> For now it's in prototyping phase, it has some or the core components, like encryption and basic Google Drive client.  
 > You can see the design doc [here](https://www.canva.com/design/DAGI-5FeEEA/2IwzP0vp45dvSarZd_drzA/view?utm_content=DAGI-5FeEEA&utm_campaign=designshare&utm_medium=link&utm_source=editor) or [PDF](https://github.com/radumarias/syncoxiders/blob/0be3968005be6332214593046b6f54809aa13134/SyncOxiders.pdf)
 
 Will use [rencfs](https://github.com/radumarias/rencfs) for encryption and [gdrive-rs](https://github.com/radumarias/gdrive-rs) for accesing Google Drive.
