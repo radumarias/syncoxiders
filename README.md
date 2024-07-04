@@ -35,6 +35,8 @@ So the name is `Sync` obvious, `Oxide` as mentioned before and `rs` for the doma
 - Encrypt local files or files stored on remote providers
 - Search and analytics, what files you most often access, what types of files do you have, ...
 - Quick and secure backups
+- Keep emails in sync between multiple providers
+- Backup your emails
 - Photos manager
 
 # Features
@@ -63,7 +65,9 @@ So the name is `Sync` obvious, `Oxide` as mentioned before and `rs` for the doma
 - File history and versioning
 - Cleanup storage
 - Sync, share status, storage overview
-- Backups with borg, encrypted, deduplicated, compressed
+- Backups with Borg, encrypted, deduplicated and compressed
+- Keep emails in sync between multiple providers
+- Backup your emails locally or on our Borg repo
 - Anti-Virus scanning
 - Automation, convert to PDF, convert image, unzip, convert audio/video, watermark files
 - Photos manager
@@ -160,8 +164,16 @@ Or you can create a Request Files link based on a provider folder (or local fold
 
 - We’re using borg which handles encryption, deduplication and compression. We offer borg repos that can be used to backup data. Subscription is separate from the Sync and Share services.
 
+### Files
+
 There are 2 sources of backups:
+- files from provider: from browser app or local app you can schedule backups from provider files. The service will need to read all files and changes from the provider and will backup on our repo. Everything is handled by the service, you don’t need the local app running for this
 - local files: using the local app you can setup backups schedule for local files and the local app will handle the backup process
-- provider files: from browser app or local app you can schedule backups from provider files. The service will need to read all files and changes from the provider and will backup on our repo. Everything is handled by the service, you don’t need the local app running for this.
 
 When you want to restore some data you can use the local app, you’ll select the archive to restore from and it will be mounted in OS from where you can copy the files. You can also use borg CLI or Vorta for GUI if you want, setup will be provided for you in the local app, browser app and on our website.
+
+### Emails
+
+From the browser app or local app you can define backup rules and schedule. There are 2 modes:
+- backup on our service: running backup in scheduled time will be handled by our service, all emails will be read by us from your email provider and saved to our Borg repo
+- backup locally: local app will run on defined intervals, read the mails directly from your email provider and backup to our Borg repo
