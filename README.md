@@ -2,7 +2,7 @@
 
 Cloud files Sync, Sharing, Backup and Encryption solution written in Rust.
 
-![]([https://raw.githubusercontent.com/radumarias/syncoxiders/4eb8b0da3195b073b26f2a557314bee9d4996db7/website/resources/services.jpg)
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/services.png?raw=true)
 
 The purpose of this project is to offer an easy and reliable way to sync and share files between multiple storage providers (like Google Drive, Dropbox, S3, SFTP servers, ...) and local files. Also simple way for backup and encryption.  
 It offers real time sync (from simple Copy One-way to Two-way Sync) all handled in the cloud, without the explicit need of local clients.
