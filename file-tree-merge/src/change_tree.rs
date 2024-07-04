@@ -1,5 +1,5 @@
 use crate::TREE_DIR;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::{fs, io};
 
@@ -7,7 +7,7 @@ use git2::{Repository, Status};
 use slab_tree::{NodeId, Tree, TreeBuilder};
 
 use crate::tree_creator;
-use crate::tree_creator::HashKind;
+use crate::tree_creator::Item;
 
 #[derive(Debug, Clone)]
 pub enum Change {
@@ -30,9 +30,8 @@ impl From<Status> for Change {
 }
 
 pub struct Node {
-    pub path: String,
+    pub item: Item,
     pub change: Change,
-    pub hash: Option<(HashKind, String)>,
 }
 
 #[derive(Default)]
@@ -42,7 +41,7 @@ pub struct ChangeTree {
     pub idx: HashMap<String, NodeId>,
 }
 
-pub fn build(repo: &Path) -> io::Result<ChangeTree> {
+pub fn build(items: Vec<Item>, repo: &Path) -> io::Result<ChangeTree> {
     if repo.exists() && !repo.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::Other,
@@ -61,6 +60,17 @@ pub fn build(repo: &Path) -> io::Result<ChangeTree> {
         Ok(repo) => repo,
         Err(e) => Err(io::Error::new(io::ErrorKind::Other, e))?,
     };
+    if items.len() == 0 {
+        return Ok(ChangeTree {
+            new_repo,
+            tree: Tree::new(),
+            idx: HashMap::new(),
+        });
+    }
+    let mut items_map: BTreeMap<_, _> = items
+        .into_iter()
+        .map(|data| (data.path.clone(), data))
+        .collect();
     repo.index()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
         .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
@@ -88,15 +98,19 @@ pub fn build(repo: &Path) -> io::Result<ChangeTree> {
     }
     let mut tree = tree_builder
         .with_root(Node {
-            path: "".to_string(),
+            item: Item {
+                path: "".to_string(),
+                times: Default::default(),
+                size: 0,
+                is_dir: true,
+                hash: None,
+            },
             change: Change::New,
-            hash: None,
         })
         .build();
-
     let root_id = tree.root_id().unwrap();
     let root = tree.get_mut(root_id).unwrap();
-    nodes_idx.insert(root.as_ref().data().path.clone(), root_id);
+    nodes_idx.insert(root.as_ref().data().item.path.clone(), root_id);
     for status in statuses {
         let mut path = status.path().unwrap().to_string();
         path = path
@@ -106,16 +120,15 @@ pub fn build(repo: &Path) -> io::Result<ChangeTree> {
         let status = status.status();
         let parent_path = get_parent(&path);
         let mut parent_node = tree.get_mut(*nodes_idx.get(parent_path).unwrap()).unwrap();
-        let mut change: Change = status.into();
+        let change: Change = status.into();
         match change {
             Change::Rename(_) => {}
             _ => {}
         }
         let child_id = parent_node
             .append(Node {
-                path: path.clone(),
+                item: items_map.remove(&path).unwrap(),
                 change,
-                hash: None,
             })
             .node_id();
         nodes_idx.insert(path, child_id);

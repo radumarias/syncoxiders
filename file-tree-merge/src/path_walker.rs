@@ -1,26 +1,47 @@
-use crate::tree_creator;
-use crate::tree_creator::HashKind;
 use std::fs::{File, FileTimes};
 use std::io;
 use std::path::{Path, PathBuf};
+
 use walkdir::{DirEntry, WalkDir};
 
+use crate::tree_creator::HashKind;
+use crate::{tree_creator, IterRef};
+
 pub struct PathWalker {
-    it: Box<dyn Iterator<Item = walkdir::Result<DirEntry>>>,
     src: PathBuf,
 }
 
 impl PathWalker {
     pub fn new(src: &Path) -> Self {
         Self {
-            it: Box::new(WalkDir::new(src).follow_links(true).into_iter()),
             src: src.to_path_buf(),
         }
     }
 }
 
-impl Iterator for PathWalker {
-    type Item = io::Result<(String, tree_creator::Item)>;
+pub struct Iter {
+    it: Box<dyn Iterator<Item = walkdir::Result<DirEntry>>>,
+    src: PathBuf,
+}
+
+impl IterRef for PathWalker {
+    type Item = io::Result<tree_creator::Item>;
+    type Iter = Iter;
+
+    fn iter(&self) -> Self::Iter {
+        Iter {
+            it: Box::new(
+                WalkDir::new(self.src.clone())
+                    .follow_links(true)
+                    .into_iter(),
+            ),
+            src: self.src.clone(),
+        }
+    }
+}
+
+impl Iterator for Iter {
+    type Item = io::Result<tree_creator::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.it.next().map(|entry| {
@@ -28,7 +49,6 @@ impl Iterator for PathWalker {
                 .map(|entry| {
                     let path = entry.path();
                     let path_rel = path.strip_prefix(&self.src).unwrap();
-                    let name = path.file_name().unwrap().to_str().unwrap().to_string();
                     let times = FileTimes::new()
                         .set_accessed(entry.metadata().unwrap().accessed().unwrap())
                         .set_modified(entry.metadata().unwrap().modified().unwrap());
@@ -44,16 +64,13 @@ impl Iterator for PathWalker {
                     } else {
                         None
                     };
-                    (
-                        path_rel.to_str().unwrap().to_string(),
-                        tree_creator::Item {
-                            name,
-                            times,
-                            size,
-                            is_dir,
-                            hash,
-                        },
-                    )
+                    tree_creator::Item {
+                        path: path_rel.to_str().unwrap().to_string(),
+                        times,
+                        size,
+                        is_dir,
+                        hash,
+                    }
                 })
                 .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
         })

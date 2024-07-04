@@ -7,7 +7,7 @@ pub fn merge(src: &mut ChangeTree, dst: &mut ChangeTree, delete: bool) -> io::Re
     if let Some(root) = src.tree.root() {
         println!("Changes in src:");
         root.traverse_pre_order().for_each(|node| {
-            println!("{:?} {}", node.data().change, node.data().path);
+            println!("{:?} {}", node.data().change, node.data().item.path);
         });
     } else {
         println!("No changes in src");
@@ -15,7 +15,7 @@ pub fn merge(src: &mut ChangeTree, dst: &mut ChangeTree, delete: bool) -> io::Re
     if let Some(root) = dst.tree.root() {
         println!("Changes in dst:");
         root.traverse_pre_order().for_each(|node| {
-            println!("{:?} {}", node.data().change, node.data().path);
+            println!("{:?} {}", node.data().change, node.data().item.path);
         });
     } else {
         println!("No changes in dst");

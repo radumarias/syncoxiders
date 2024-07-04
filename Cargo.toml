@@ -4,7 +4,6 @@ members = ["file-change-consumer", "file-change-router", "file-tree-merge", "fil
 resolver = "2"
 
 [workspace.package]
-name = "syncoxiders"
 description = "Cloud files Sync, Sharing, Backup and Encryption solution written in Rust."
 version = "0.1.0"
 edition = "2021"
