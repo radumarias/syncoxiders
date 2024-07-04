@@ -116,6 +116,8 @@ There are several ways to interact with our service:
 
 #### Between providers
 
+![](https://github.com/radumarias/syncoxiders/blob/2aaa0dd9703383ed2ba040bf359c44a8889e61e8/website/resources/sync-providers.png)
+
 #### Local files
 
 You can mix these 2, for example you could setup a sync between a local folder and a provider. The local app will push changes to our service which will sync them with the provider and the service will push changes from provider back to local app.
