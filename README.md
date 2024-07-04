@@ -116,31 +116,75 @@ There are several ways to interact with our service:
 
 #### Between providers
 
-![](https://github.com/radumarias/syncoxiders/blob/2aaa0dd9703383ed2ba040bf359c44a8889e61e8/website/resources/sync-providers.png)
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/sync-providers.png?raw=true)
 
 #### Local files
 
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/sync-local-files.png?raw=true)
+
 You can mix these 2, for example you could setup a sync between a local folder and a provider. The local app will push changes to our service which will sync them with the provider and the service will push changes from provider back to local app.
+
+#### Emails
+
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/sync-emails.png?raw=true)
 
 ## Share files
 
 ### Between service users
 
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/share-providers.png?raw=true)
+
 ### With external users
 
 ### Local files
 
-### Receiving files
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/share-local-files.png?raw=true)
+
+### Receiving files to provider
+
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/receive-file-with-provider.png?raw=true)
+
+### Receiving files locally
+
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/receive-local-file.png?raw=true)
 
 You can mix between these, for example you can share a local file and the other person saves it on their provider, both files will be kept in sync.  
 Or you can create a Request Files link based on a provider folder (or local folder) and others can send you files from their provider or local files using their browser, torrent client or local app.
 
 ## Encrypt
 
+### Sync encrypted between providers
+
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/sync-encrypted.png?raw=true)
+
+### Share encrypted with users on our service
+
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/share-encryptyed-with-service-user.png?raw=true)
+
+### Share encrypted with external user
+
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/share-encrypte-with-external-user.png?raw=true)
+
 ## Backup
 
 ### Files
 
+### Backup files from provider
+
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/backup-provider.png?raw=true)
+
+#### Backup local files
+
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/backup-local-files.png?raw=true)
+
 When you want to restore some data you can use the local app, you’ll select the archive to restore from and it will be mounted in OS from where you can copy the files. You can also use borg CLI or Vorta for GUI if you want, setup will be provided for you in the local app, browser app and on our website.
 
 ### Emails
+
+#### Backup by our service
+
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/backup-emails-with-service.png?raw=true)
+
+#### Backup locally
+
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/backup-emails-locally.png?raw=true)
