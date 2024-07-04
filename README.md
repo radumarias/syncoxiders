@@ -103,12 +103,13 @@ What we offer better or additionally:
 
 # How it works
 There are several ways to interact with our service:
-- browser app: we expose a file manager app built for WebAssembly than can manage all operations and transfers
-- local app: we also have a local file manager app which is very similar to the browser app, in fact they share the same code. The same, will handle all operations and transfers with the service and with other P2P apps. Will expose files with FUSE or other technologies
-- clients:
-  - CLI: a command line interface to interact with our service. It can also expose files with FUSE or other technologies
-  - libs: we have libs in several languages. They can also expose files with FUSE or other technologies
-- API: we expose a REST API and gRPC that you can use to manage all operations and transfers. It uses WebSockets to notify you about changes
+- `browser app`: we expose a file manager app built for WebAssembly than can manage all operations and transfers
+- `local app`: we also have a local file manager app which is very similar to the browser app, in fact they share the same code. The same, will handle all operations and transfers with the service and with other P2P apps. Will expose files with FUSE or other technologies
+- `mobile app`: similar to local app but for Android and iOS
+- `clients`:
+  - `CLI`: a command line interface to interact with our service. It can also expose files with FUSE or other technologies
+  - `libs`: we have libs in several languages. They can also expose files with FUSE or other technologies
+- `API`: we expose a REST API and gRPC that you can use to manage all operations and transfers. It uses WebSockets to notify you about changes
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/clients.png?raw=true)
 
