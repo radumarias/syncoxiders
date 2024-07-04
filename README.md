@@ -140,7 +140,7 @@ You can mix these 2, for example you could setup a sync between a local folder a
 
 ### Local files
 
-![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/share-local-files.png?raw=true)
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/share-local-file.png?raw=true)
 
 ### Receiving files to provider
 
