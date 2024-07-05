@@ -22,7 +22,7 @@ In many cases we'll use present tense for several functionality, even though it'
 
 Working on having these in up to 2 months:
 - in Docker ability to sync 2 folders in the filesystem
-- run rclone in Docker and mount Google Drive and MS OneDrive or Dropbox in 2 folders
+- run rclone in Docker and mount Google Drive and Dropbox or MS OneDrive in 2 folders
 - from CLI trigger a sync which will make a Two-Way sync between the folders, first sync will do a union between the 2, no deletes will be performed
 - make sure files are synced between the two folders and on the remote storage providers
 - do some changes in both folders and trigger a sync, this and from now on will propagate deletes also, make sure folders are in sync and also on remotes
