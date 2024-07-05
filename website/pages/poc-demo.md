@@ -8,7 +8,7 @@ How it works for now:
 - in the files we keep the size and hash of the content of the file
 - we create files for directories also as git doesn't catch changes to directories
 - we do `git add .`
-- then git status -s` show what's changed
+- then `git status -s` show what's changed, we use `git2` crate to interact with git
 
 Work in progress:
 - have 2 mounted folders with rclone (src, dst)
