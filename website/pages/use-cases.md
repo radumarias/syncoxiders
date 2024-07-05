@@ -1,5 +1,7 @@
 [<< Back](../README.md)
 
+# Use cases
+
 - You have various cloud providers and you need to keep files in sync between them
 - You want to quickly share a local file with someone with minimal tools involved
 - You want to share a Dropbox file with someone that doesn’t have a Dropbox account but want to keep that file in sync with them
