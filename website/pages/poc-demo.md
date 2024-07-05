@@ -1,6 +1,6 @@
 [⟵ Back](https://github.com/radumarias/syncoxiders/blob/main/README.md#poc)
 
-How it works for now
+How it works for now:
 - we mount in a folder with rclone
 - we use git to catch changes, how it works:
 - we keep a git repo for the folder in a `repo` folder
