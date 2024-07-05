@@ -56,7 +56,6 @@ It would be possible to have something in about 6 months with this functionality
 [Features](website/pages/use-cases.md)
 
 # What separates it from other products
-
-[What separates it from other products](website/pages/compare.md)
+<a name="what-separates-it-from-other-products" href="website/pages/compare.md">What separates it from other products</a>
 
 [How it works](website/pages/how-it-works.md)
