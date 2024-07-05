@@ -39,7 +39,7 @@ You can some [demos](website/pages/poc-demo.md) so far.
 It would be possible to have something in about 6 months with this functionality:
 - integration with Google Drive and Dropbox or MS OneDrive
 - Sync between the two
-- Share files in providers with another user
+- Share files from providers with another user
 - browser app with basic functionality like:
   - adding providers
   - setup sync rules
