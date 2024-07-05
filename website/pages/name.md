@@ -1,4 +1,4 @@
-[<< Back](../../README.md)
+[&#8592; Back](../../README.md)
 
 # What's with the name
 
