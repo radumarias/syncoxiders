@@ -1,4 +1,4 @@
-[⟵ Back](../../README.md)
+[⟵ Back](../../README.md#how-it-works)
 
 # How it works
 There are several ways to interact with our service:
