@@ -16,7 +16,7 @@ Will use [rencfs](https://github.com/radumarias/rencfs) for encryption and [gdri
 It you could take this [**SURVEY**](https://forms.gle/qgnWBJhzCpzPLSmv5) to express your opinion about the current solution and offer your opinion on what features you would want from a service like this it would help a lot.
 
 > [!NOTE]  
-In many cases we'll use present tense for several functionality even though it's not yet implemented, but it's user as an idea of what the system could be.
+In many cases we'll use present tense for several functionality, even though it's not yet implemented, it's used to give an idea of what the system could be.
 
 # What's with the name?
 
@@ -112,7 +112,7 @@ There are several ways to interact with our service:
 - `clients`:
   - `CLI app`: a command line interface to interact with our service. It can also expose files with FUSE or other technologies
   - `libs`: we have libs in several languages. They can also expose files with FUSE or other technologies
-- `API`: we expose a REST API and gRPC that you can use to manage all operations and transfers. It uses WebSockets to notify you about changes
+- `API`: we expose a REST API and gRPC service that you can use to manage all operations and transfers. It uses WebSockets to notify you about changes
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/clients.png?raw=true)
 
@@ -128,8 +128,6 @@ There are several ways to interact with our service:
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/sync-local-files.png?raw=true)
 
-You can mix these 2, for example you could setup a sync between a local folder and a provider. The local app will push changes to our service which will sync them with the provider and the service will push changes from provider back to local app.
-
 #### Emails
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/sync-emails.png?raw=true)
@@ -142,11 +140,14 @@ You can mix these 2, for example you could setup a sync between a local folder a
 
 ### With external users
 
+- you can share a file from your providers with someone not using our service or any other storage providers. We’ll generate a link, we’ll email to them, or you can send them, and they can get it from browser, with a torrent client or sync it with our local client
+- if they are using our browser or local app you will be notified when they changed something and they will be notified when you make changes
+
 ### Local files
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/share-local-file.png?raw=true)
 
-### Receiving files to provider
+### Receiving files into provider
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/receive-file-with-provider.png?raw=true)
 
