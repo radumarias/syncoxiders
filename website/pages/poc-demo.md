@@ -14,8 +14,8 @@ Work in progress:
 - have 2 mounted folders with rclone (src, dst)
 - build changes tree for each of them
 - merge changes trees and resolve conflicts
-- apply changes to src and dst
-- make sure changes are reflected on remotes
+- apply changes to both src and dst
+- make sure changes are reflected on both sremotes
 
 Basic changes:  
 [![Watch the video](https://img.youtube.com/vi/Z45mxYbojoc/0.jpg)](https://youtu.be/Z45mxYbojoc)
