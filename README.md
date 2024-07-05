@@ -15,7 +15,7 @@ Will use [rencfs](https://github.com/radumarias/rencfs) for encryption and [gdri
 
 It you could take this [**SURVEY**](https://forms.gle/qgnWBJhzCpzPLSmv5) to express your opinion about the current solution and offer your opinion on what features you would want from a service like this it would help a lot.
 
-> [!NOTICE]  
+> [!NOTE]  
 In many cases we'll use present tense for several functionality even though it's not yet implemented, but it's user as an idea of what the system could be.
 
 # What's with the name?
