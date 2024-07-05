@@ -51,7 +51,7 @@ It would be possible to have something in about 6 months with this functionality
 
 # The big picture
 
-This is what it's planned to have in the end. This ommits the backup and encryption is not shown explicitly but it's there.
+This is what it's planned to have in the end. This ommits the backup, emails and encryption is not shown explicitly but it's there.
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/services2.png?raw=true)
 
