@@ -20,7 +20,7 @@ In many cases we'll use present tense for several functionality, even though it'
 
 # POC
 
-Working on having these in up to 3 months:
+Working on having these in up to 2 months:
 - in Docker ability to sync any 2 folders in the filesystem
 - run rclone in Docker and mount Google Drive and MS OneDrive or Dropbox in 2 folders
 - from CLI trigger a sync which will make a Two-Way sync between the folders, first sync will do a union between the 2, no deletes will be performed
