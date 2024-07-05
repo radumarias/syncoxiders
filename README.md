@@ -18,14 +18,36 @@ It you could take this [**SURVEY**](https://forms.gle/qgnWBJhzCpzPLSmv5) to expr
 > [!NOTE]  
 In many cases we'll use present tense for several functionality, even though it's not yet implemented, it's used to give an idea of what the system could be.
 
-# What's with the name?
+[What's with the name?](website/pages/name.md)
 
-`SyncOxiders`? :) Well:
-- in Rust community the term `oxide` or `oxidize` it's often used, as it relates to `rust` as a substance
-- `rs` it's short from `rust`
-- many Rust related domains tend to be `.rs`
+# POC
 
-So the name is `Sync` obvious, `Oxide` as mentioned before and `rs` for the domain. So we have the website [syncoxide.rs](https://syncoxide.rs/)
+Working on having these in up to 3 months:
+- in Docker ability to sync any 2 folders in the filesystem
+- run rclone in Docker and mount Google Drive and MS OneDrive or Dropbox in 2 folders
+- from CLI trigger a sync which will make a Two-Way sync between the folders, first sync will do a union between the 2, no deletes will be performed
+- make sure files are synced between the two folders and on the remote storage providers
+- do some changes in both folders and trigger a sync, this and from now on will propagate deletes also, make sure folders are in sync and also on remotes
+- do some changes on the remotes, trigger a sync and make sure changes are propagated in both folders and on remotes
+- save files encrypted using rencfs and have sync working
+  - this will save encrypted data on the mount points of rclone and expose them with FUSE
+
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/poc.png?raw=true)
+
+# MVP
+
+It would be possible to have something in about 6 months with this functionality:
+- integration with Google Drive and Dropbox or MS OneDrive
+- Sync between the two
+- Share files in providers with another user
+- browser app with basic functionality like:
+  - adding providers
+  - setup sync rules
+  - share between providers
+- some basic functionality of sharing local files, no sync between them
+- Encryption
+
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/mvp.png?raw=true)
 
 # Use cases
 - You have various cloud providers and you need to keep files in sync between them
