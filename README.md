@@ -51,6 +51,8 @@ It would be possible to have something in about 6 months with this functionality
 
 # The big picture
 
+This is what it's planned to have in the end.
+
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/services2.png?raw=true)
 
 <a name="use-cases" href="website/pages/use-cases.md">Use cases</a>
