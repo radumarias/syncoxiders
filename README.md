@@ -55,6 +55,8 @@ It would be possible to have something in about 6 months with this functionality
 
 [Features](website/pages/use-cases.md)
 
+# What separates it from other products
+
 [What separates it from other products](website/pages/compare.md)
 
 [How it works](website/pages/how-it-works.md)
