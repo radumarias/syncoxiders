@@ -1,8 +1,8 @@
 [<< Back](../../README.md)
 
-# What's with the name?
+# What's with the name
 
-`SyncOxiders`? :) Well:
+`SyncOxiders` :) Well:
 - in Rust community the term `oxide` or `oxidize` it's often used, as it relates to `rust` as a substance
 - `rs` it's short from `rust`
 - many Rust related domains tend to be `.rs`
