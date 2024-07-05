@@ -17,5 +17,8 @@ Work in progress:
 - apply changes to src and dst
 - make sure changes are reflected on remotes
 
-[![Watch the video](https://img.youtube.com/vi/Z45mxYbojoc/0.jpg)](https://youtu.be/Z45mxYbojoc)  
+Basic changes:
+[![Watch the video](https://img.youtube.com/vi/Z45mxYbojoc/0.jpg)](https://youtu.be/Z45mxYbojoc)
+
+Rename:
 [![Watch the video](https://img.youtube.com/vi/Gdo7Igrg9QE/0.jpg)](https://youtu.be/Gdo7Igrg9QE)
