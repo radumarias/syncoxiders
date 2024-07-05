@@ -47,7 +47,7 @@ It would be possible to have something in about 6 months with this functionality
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/mvp.png?raw=true)
 
-# The full picture
+# The big picture
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/services2.png?raw=true)
 
