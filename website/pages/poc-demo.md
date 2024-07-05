@@ -18,4 +18,4 @@ Work in progress:
 - make sure changes are reflected on remotes
 
 [![Watch the video](https://img.youtube.com/vi/Z45mxYbojoc/0.jpg)](https://youtu.be/Z45mxYbojoc)
-[![]()](resources/git-rename.mp4)
+[![Watch the video](https://img.youtube.com/vi/Gdo7Igrg9QE/0.jpg)](https://youtu.be/Gdo7Igrg9QE)
