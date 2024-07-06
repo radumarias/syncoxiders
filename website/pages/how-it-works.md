@@ -10,7 +10,7 @@ There are several ways to interact with our service:
   - `libs`: we have libs in several languages. They can also expose files with FUSE or other technologies
 - `API`: we expose a REST API and gRPC service that you can use to manage all operations and transfers. It uses WebSockets to notify you about changes
 
-![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/clients.png?raw=true)
+![clients](https://github.com/radumarias/syncoxiders/blob/main/website/resources/clients.png?raw=true)
 
 ## Sync
 
