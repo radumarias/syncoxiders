@@ -1,3 +1,5 @@
+[⟵ Back](../features.md#features)
+
 # Sync local files
 
 Useful to sync local files between multiple devices with no remote providers involved. It will do it in a `P2P` manner using `QUIC` (will fallback to `TCP/IP` if firewalls blocks `UDP`). Your local apps need to be running for the sync to happen. This is similar to `Resilio Sync`.
