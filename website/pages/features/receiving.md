@@ -11,7 +11,7 @@ You can create such an URL from a provider folder or local folder. For local fol
 
 We’ll notify the user with the link, or you can send it to them. You will be notified when they uploaded new files.
 
-![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/frame-receiving.png?raw=true)
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/frame-receive.png?raw=true)
 
 You can define these:
 - title and description
@@ -27,4 +27,4 @@ When user opens the link it will be presented with:
 - **upload with local app**: they can install and/or use the local app from where they can choose to upload a files from a provider (if they have an account on our service), `Shared with me` folder or local files
     - a QR code will also be presented if they want to use the mobile apps
 
-![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/diagram-receiving.png?raw=true)
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/diagram-receive.png?raw=true)
