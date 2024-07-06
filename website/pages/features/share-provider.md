@@ -22,4 +22,4 @@ When they access the link will have these options:
     - a QR code will also be presented if they want to use the mobile apps
 - **preview**: for some types we offer preview, like for images, videos, audios, text files, PDFs, ...
 
-![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/share-others.png?raw=true)
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/diagram-share-provider.png?raw=true)
