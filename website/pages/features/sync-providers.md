@@ -1,4 +1,4 @@
-[⟵ Back](../features.md)
+[⟵ Back](../features.md#features)
 
 # Sync between providers
 
