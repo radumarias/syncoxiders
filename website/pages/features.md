@@ -2,6 +2,12 @@
 
 # Features
 
+All sync operations and changes are applied with WAL (Write-Ahead Logging) to ensure file integrity on crash or power loss. That is, any changes are first written to WAL and then applied to the file. On crash or power loss, the next time the process starts it will apply remaining changes, this repeats until all changes are successfully applied.
+
+MD5, SHA1 hashes are checked at all times for file integrity. After we transfer the files we will compare local hash with remote hash to ensure data integrity.
+
+All transfers are multi-threaded and resumable. I can handles very large files efficiently with parallel and resumable downloads.
+
 - Sync between providers, Copy, Sync, Move, Two-way sync
 - Conflict resolution
 - Sync local files between multiple authenticated devices
