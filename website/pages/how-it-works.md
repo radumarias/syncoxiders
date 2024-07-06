@@ -59,8 +59,8 @@ You can define sync rules between multiple email addresses. This extends mail fo
 - You can quickly share a file directly with someone via a link, they can get it from browser, with a torrent client or sync it with our browser or local app
 - If both of you are using the local app you can share directly from the app and files will be kept in sync
 - The share can be made in 2 ways:
-    - 1P2P1: in a peer-to-peer manner, your can use our file manager app in browser (uses WebRTC) or local app (uses HTTP, QUIC and BitTorrent), in both cases they need to be running for the user to download the files
-    - 1Upload to our service`: with the browser app or local app you can first upload the local file to us and user will download it directly from us. The browser app or local app don’t need to be running for the download to happen
+    - `P2P`: in a peer-to-peer manner, your can use our file manager app in browser (uses WebRTC) or local app (uses HTTP, QUIC and BitTorrent), in both cases they need to be running for the user to download the files
+    - `Upload to our service`: with the browser app or local app you can first upload the local file to us and user will download it directly from us. The browser app or local app don’t need to be running for the download to happen
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/share-local-file.png?raw=true)
 
