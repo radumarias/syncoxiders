@@ -59,8 +59,8 @@ You can define sync rules between multiple email addresses. This extends mail fo
 - You can quickly share a file directly with someone via a link, they can get it from browser, with a torrent client or sync it with our browser or local app
 - If both of you are using the local app you can share directly from the app and files will be kept in sync
 - The share can be made in 2 ways:
-    - **P2P**: in a peer-to-peer manner, your can use our file manager app in browser (uses WebRTC) or local app (uses HTTP, QUIC and BitTorrent), in both cases they need to be running for the user to download the files
-    - **Upload to our service**: with the browser app or local app you can first upload the local file to us and user will download it directly from us. The browser app or local app don’t need to be running for the download to happen
+    - 1P2P1: in a peer-to-peer manner, your can use our file manager app in browser (uses WebRTC) or local app (uses HTTP, QUIC and BitTorrent), in both cases they need to be running for the user to download the files
+    - 1Upload to our service`: with the browser app or local app you can first upload the local file to us and user will download it directly from us. The browser app or local app don’t need to be running for the download to happen
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/share-local-file.png?raw=true)
 
@@ -84,8 +84,8 @@ Or you can create a Request Files link based on a provider folder (or local fold
 You may want to keep your files encrypted for privacy. Your provider will not have access to the content of your files, nor metadata. You will need the local app or browser app to access the files. It works with local files too.
 
 Encrypted share: it uses PGP to handle encryption. There are 2 options:
-- **share with users on our service**: a session key will be generated then encrypted with destination’s user’s public key. The encrypted key will be sent along with the file when sharing. If user is adding the shared file to provider or local app the file will be decryted on demand using the session key. On the disk or on provider it will be kept encrypted all the time
-- **share with external user**: if user is not using our service or downloads the file with browser or torrent, before downloading the file they will need to upload their public key. After that the file is downloaded as encrypted along with the encrypted session key. User can then decrypt the session key with his private key and then decrypt the file, this can be handled with any PGP client like GPG (instructions will be provided on the download page)
+- `share with users on our service`: a session key will be generated then encrypted with destination’s user’s public key. The encrypted key will be sent along with the file when sharing. If user is adding the shared file to provider or local app the file will be decryted on demand using the session key. On the disk or on provider it will be kept encrypted all the time
+- `share with external user`: if user is not using our service or downloads the file with browser or torrent, before downloading the file they will need to upload their public key. After that the file is downloaded as encrypted along with the encrypted session key. User can then decrypt the session key with his private key and then decrypt the file, this can be handled with any PGP client like GPG (instructions will be provided on the download page)
 
 ### Sync encrypted between providers
 
@@ -106,8 +106,8 @@ We’re using BorgBackup which handles encryption, deduplication and compression
 ### Files
 
 There are 2 sources of backups:
-- **files from provider**: from browser app or local app you can schedule backups from provider files. The service will need to read all files and changes from the provider and will backup on our repo. Everything is handled by the service, you don’t need the local app running for this
-- **local files**: using the local app you can setup backups schedule for local files and the local app will handle the backup process
+- `files from provider`: from browser app or local app you can schedule backups from provider files. The service will need to read all files and changes from the provider and will backup on our repo. Everything is handled by the service, you don’t need the local app running for this
+- `local files`: using the local app you can setup backups schedule for local files and the local app will handle the backup process
 
 When you want to restore some data you can use the local app, you’ll select the archive to restore from and it will be mounted in OS from where you can copy the files. You can also use BorgBackup CLI or Vorta for GUI if you want, setup will be provided for you in the local app, browser app and on our website
 
@@ -124,8 +124,8 @@ When you want to restore some data you can use the local app, you’ll select th
 ### Emails
 
 From the browser app or local app you can define backup rules and schedule. There are 2 modes:
-- **backup by our service**: running backup in scheduled time will be handled by our service, all emails will be read by us from your email provider and saved to our BorgBackup repo
-- **backup locally**: local app will run on defined intervals, read the mails directly from your email provider and backup to our BorgBackup repo
+- `backup by our service`: running backup in scheduled time will be handled by our service, all emails will be read by us from your email provider and saved to our BorgBackup repo
+- `backup locally`: local app will run on defined intervals, read the mails directly from your email provider and backup to our BorgBackup repo
 
 #### Backup by our service
 
