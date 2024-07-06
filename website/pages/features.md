@@ -8,7 +8,7 @@ MD5, SHA1 hashes are checked at all times for file integrity. After we transfer 
 
 All transfers are multi-threaded and resumable. I can handles very large files efficiently with parallel and resumable downloads.
 
-- Sync between providers, Copy, Sync, Move, Two-way sync
+- [Sync between providers, Copy, Sync, Move, Two-way sync](features/sync-providers.md)
 - Conflict resolution
 - Sync local files between multiple authenticated devices
 - MD5, SHA1 hashes are checked at all times for file integrity
