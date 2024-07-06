@@ -9,16 +9,16 @@ MD5, SHA1 hashes are checked at all times for file integrity. After we transfer 
 All transfers are multi-threaded and resumable. I can handles very large files efficiently with parallel and resumable downloads.
 
 - [Sync between providers, Copy, Sync, Move, Two-way sync](features/sync-providers.md)
-- Conflict resolution
-- Sync local files between multiple authenticated devices
-- MD5, SHA1 hashes are checked at all times for file integrity
+- [Conflict resolution](features/sync-providers.md#conflict-resolution)
+- [Sync local files between multiple authenticated devices](features/sync-local.md)
+- [MD5, SHA1 hashes are checked at all times for file integrity](features.md#features)
 - Multi-threaded transfers
 - Make sync (and changes) with WAL (Write-Ahead Logging) to ensure file integrity
-- Share between multiple providers like Google Drive, Dropbox, S3, ...
-- Share local files
-- Easy way to share files with external users, via a link or notification.
+- [Share between multiple providers like Google Drive, Dropbox, S3, ...](features/share-providers.ms)
+- [Share local files](features/share-local.ms)
+- [Easy way to share files with external users, via a link or notification](features/share-external.ms)
 - Handles very large files efficiently with concurrent and resumable transfers
-- Receiving files, like S3 presigned URLs but create a dest folder where others can upload more files and even folders
+- [Receiving files, like S3 presigned URLs but create a dest folder where others can upload more files and even folders](features/receive.ms)
   - deadline, late uploads, password
 - Encrypted files and folders, with files saved in provider or with local files
   - also encrypted sharing with PGP
