@@ -1,6 +1,6 @@
 [⟵ Back](../../README.md#stack)
 
-We’ll build it mostly in Rust with a bit of Java (for Spark and Flink) and Python (for Airflow) and deployed on AWS and Kubernetes.
+We’ll build it mostly in Rust with a bit of Java (Spark and Flink) and Python (Airflow) and deployed on AWS and Kubernetes.
 
 | Scope | Solution |
 | ----- | -------- |
