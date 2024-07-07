@@ -8,4 +8,6 @@ All devices are authenticated using web of trust to make sure are trusted by you
 
 Sync mode (`Copy`, `Move`, `One-way`, `Two-way`), `compare-mode` and `conflict resolution` are handled as per above.
 
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/sync-local.png?raw=true)
+
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/diagram-sync-local.png?raw=true)
