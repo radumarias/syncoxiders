@@ -9,11 +9,11 @@ We’ll build it mostly in Rust with a bit of Java and deployed on AWS and Kuber
 | DB | RDS, ScyllaDB, Google Cloud Spanner, Neo4j |
 | Local app DB | SurrealDB |
 | Browser app | egui, wasi, wasm-bindgen, rencfs, pgp |
-| Local app desktop | egui, mainline, transmission_rs, cratetorrent/rqbit quinn, rencfs, pgp, fuse3 |
+| Local app desktop | egui, mainline, transmission_rs, cratetorrent/rqbit, <br/ > quinn, rencfs, pgp, fuse3 |
 | Local app mobile | Kotlin Multiplatform |
 | Sync daemon | tokio, rencfs, gdrive-rs, git2, rclone, Flink |
 | Use Kafka | rdkafka |
-| Keycloak | axum-keycloak-auth (in app token verificaton) or Keycloak Gatekeeper (reverse proxy in front of the services) |
+| Keycloak | axum-keycloak-auth (in app token verificaton) <br/ > or Keycloak Gatekeeper (reverse proxy in front of the services) |
 | Event Bus | Kafka / Amazon SQS / RabbitMQ |
 | Streaming processor | Flink |
 | File storage | S3 |
