@@ -38,7 +38,7 @@ All transfers are multi-threaded and resumable. I can handles very large files e
 - [Backup your emails locally or on our Borg repo](features/emails.md)
 - [Anti-Virus scanning](features/antivirus.md)
 - [Automation, convert to PDF, convert image, unzip, convert audio/video, watermark files](features/automation.md)
-- [Photos manager](features/photos.md)
+- [Photo manager](features/photos.md)
 - [REST API, gRPC, CLI clients and client libs in multiple languages](features/clients.md)
 - [Many supported providers](features/supported-providers.md)
 - [Integration with other systems](features/integrations.md)
