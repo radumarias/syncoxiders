@@ -1,4 +1,4 @@
-(features/status.md)
+[⟵ Back](../features.md#features)
 
 # Keep emails in sync between multiple providers
 
