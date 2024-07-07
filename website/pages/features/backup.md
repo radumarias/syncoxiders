@@ -2,7 +2,7 @@
 
 # Backups with BorgBackup, encrypted, deduplicated and compressed
 
-We’re using `BorgBackup` which handles encryption, deduplication and compression. We offer BorgBackup repos that can be used to backup data. Subscription is separate from the Sync and Share services.
+We’re using [BorgBackup](https://www.borgbackup.org) which handles encryption, deduplication and compression. We offer BorgBackup repos that can be used to backup data. Subscription is separate from the Sync and Share services.
 
 There are 2 scopes of backups:
 - **local data**: using the local app or browser app you can setup backup schedule for local files, this will be done with cron jobs, scheduled tasks on Windows, termux-job-scheduler on Android and ibimobiledevice in iOS
