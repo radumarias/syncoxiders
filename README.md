@@ -55,12 +55,12 @@ This is what it's planned to have in the end.
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/services.png?raw=true)
 
-[Use cases]("website/pages/use-cases.md)
+[Use cases](website/pages/use-cases.md)
 
-[Features]("website/pages/features.md)
+[Features](website/pages/features.md)
 
-[What separates it from other products]("website/pages/compare.md)
+[What separates it from other products](website/pages/compare.md)
 
-[How it works]("website/pages/how-it-worsks.md)
+[How it works](website/pages/how-it-worsks.md)
 
-[How it works]("website/pages/stack.md)
+[How it works](website/pages/stack.md)
