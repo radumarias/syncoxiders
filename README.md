@@ -1,4 +1,4 @@
-# ![](website/resources/syncoxiders-icon-32p.png) SyncOxiders
+# ![](website/resources/syncoxiders-icon-20p.png) SyncOxiders
 
 Cloud file and email Sync, file Sharing, Backup and Encryption solution written in Rust.
 
