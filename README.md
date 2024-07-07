@@ -10,7 +10,8 @@ It offers real time sync (from simple Copy One-way to Two-way Sync) all handled 
 
 It's using [rencfs](https://github.com/radumarias/rencfs) for encryption and [gdrive-rs](https://github.com/radumarias/gdrive-rs) for accesing Google Drive.
 
-It you could take this [**SURVEY**](https://forms.gle/qgnWBJhzCpzPLSmv5) to express your opinion about the current solution and offer your opinion on what features you would want from a service like this it would help a lot.
+> [!INFO]  
+> It you could take this [**SURVEY**](https://forms.gle/qgnWBJhzCpzPLSmv5) to express your opinion about the current solution and offer your opinion on what features you would want from a service like this it would help a lot.
 
 > [!NOTE]  
 In many cases we'll use present tense for several functionality, even though it's not yet implemented, it's used to give an idea of what the system could be.
