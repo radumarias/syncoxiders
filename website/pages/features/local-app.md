@@ -13,3 +13,5 @@ It operates in 2 modes:
 It supports notifications that you receive for several events and changes, like when someone is sharing a file with you, someone accepted your share, someone changed a shared file and others.
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/app.png?raw=true)
+
+Image is copyrighted to `SpaceDrive`.
