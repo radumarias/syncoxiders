@@ -9,7 +9,7 @@ We’ll build it mostly in Rust with a bit of Java and deployed on AWS and Kuber
 | DB | RDS, ScyllaDB, Google Cloud Spanner, Neo4j |
 | Local app DB | SurrealDB |
 | Browser app | egui, wasi, wasm-bindgen, rencfs, pgp |
-| Local app desktop | egui, mainline, transmission_rs, quinn, cratetorrent/rqbit, rencfs, pgp, fuse3 |
+| Local app desktop | egui, mainline, transmission_rs, cratetorrent/rqbit <br/> quinn, rencfs, pgp, fuse3 |
 | Local app mobile | Kotlin Multiplatform |
 | Sync daemons | tokio, rclone, rencfs, Java, Flink |
 | Use Kafka | rdkafka |
