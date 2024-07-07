@@ -1,6 +1,6 @@
 [⟵ Back](../features.md#features)
 
-# Backups with BorgBackup, encrypted, deduplicated, compressed
+# Backups with BorgBackup, encrypted, deduplicated and compressed
 
 We’re using `BorgBackup` which handles encryption, deduplication and compression. We offer BorgBackup repos that can be used to backup data. Subscription is separate from the Sync and Share services.
 
