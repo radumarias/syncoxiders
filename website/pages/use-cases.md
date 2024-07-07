@@ -14,4 +14,4 @@
 - Quick and secure backups
 - Keep emails in sync between multiple providers
 - Backup your emails
-- Photos manager
+- Photo manager
