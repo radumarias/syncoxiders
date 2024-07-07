@@ -1,4 +1,4 @@
-[⟵ Back](https://github.com/radumarias/syncoxiders/blob/main/README.md#poc)
+[⟵ Back](../../README.md#poc)
 
 How it works for now:
 - we mount in a folder with rclone

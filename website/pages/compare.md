@@ -1,4 +1,4 @@
-[⟵ Back](https://github.com/radumarias/syncoxiders/blob/main/README.md#what-separates-it-from-other-products)
+[⟵ Back](../../README.md#what-separates-it-from-other-products)
 
 # What separates it from other 
 

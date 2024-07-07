@@ -2,7 +2,7 @@
 
 We’ll build it mostly in Rust with a bit of Java and deployed on AWS and Kubernetes.
 
-| Scope |	Solution |
+| Scope | Solution |
 | ----- | -------- |
 | REST API, gRPC | axum, tonic |
 | Websocket | tokio-tungstenite |
