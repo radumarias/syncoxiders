@@ -14,12 +14,12 @@ All transfers are multi-threaded and resumable. I can handles very large files e
 - [MD5, SHA1 hashes are checked at all times for file integrity](features.md#features)
 - Multi-threaded transfers
 - [Make sync (and changes) with WAL (Write-Ahead Logging) to ensure file integrity](features.md#features)
-- [Share between multiple providers like Google Drive, Dropbox, S3, ...](features/share-providers.ms)
-- [Share local files](features/share-local.ms)
-- [Easy way to share files with external users, via a link or notification](features/share-external.ms)
-- [Receiving files, like S3 presigned URLs but create a dest folder where others can upload more files and even folders](features/receive.ms)
+- [Share between multiple providers like Google Drive, Dropbox, S3, ...](features/share-providers.md)
+- [Share local files](features/share-local.md)
+- [Easy way to share files with external users, via a link or notification](features/share-external.md)
+- [Receiving files, like S3 presigned URLs but create a dest folder where others can upload more files and even folders](features/receive.md)
   - deadline, late uploads, password
-- [Encrypted files and folders, with files saved in provider or with local files](features/encrypt.ms)
+- [Encrypted files and folders, with files saved in provider or with local files](features/encrypt.md)
   - also encrypted sharing with PGP
 - [Browser app built in WebAssembly compatible with all major browsers](features/browser-app.md)
 - [Local app for desktop and mobile, access files via FUSE on Linux and macOS, WinFSP (or others) on Windows and file picker on mobile](features/local-app.md)
