@@ -13,7 +13,7 @@ We’ll build it mostly in Rust with a bit of Java (Spark and Flink) and Python 
 | Local app mobile | Kotlin Multiplatform |
 | Sync daemon | tokio, rencfs, gdrive-rs, git2, rclone, Flink |
 | Use Kafka | rdkafka |
-| Keycloak | axum-keycloak-auth (in app token verificaton) <br/> or Keycloak Gatekeeper (reverse proxy in front of the services) |
+| Keycloak | axum-keycloak-auth (in app token verificaton) or <br/> Keycloak Gatekeeper (reverse proxy in front of the services) |
 | Event Bus | Kafka / Amazon SQS / RabbitMQ |
 | Streaming processor | Flink |
 | File storage | S3 |
