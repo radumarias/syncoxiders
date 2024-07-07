@@ -61,6 +61,6 @@ This is what it's planned to have in the end.
 
 [What separates it from other products](website/pages/compare.md)
 
-[How it works](website/pages/how-it-worsks.md)
+[How it works](website/pages/how-it-works.md)
 
 [Tech stack](website/pages/stack.md)
