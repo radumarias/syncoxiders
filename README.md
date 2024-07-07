@@ -63,4 +63,4 @@ This is what it's planned to have in the end.
 
 [How it works](website/pages/how-it-worsks.md)
 
-[How it works](website/pages/stack.md)
+[Tech stack](website/pages/stack.md)
