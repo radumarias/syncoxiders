@@ -22,4 +22,6 @@ You will be notified when they accepted or change something and they will be not
 
 When they access the link they have the same options as above for sharing between other service users or with external users.
 
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/share-local.png?raw=true)
+
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/diagram-share-local.png?raw=true)
