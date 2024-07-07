@@ -9,4 +9,4 @@ We offer various analytics like:
 - metrics on files activity, how often a file is changed, who did the most/recent change, most changed/used files, unused files ...
 - duplicate files between providers
 
-![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/analytics.png?raw=true)
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/frame-analytics.png?raw=true)
