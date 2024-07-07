@@ -3,7 +3,7 @@
 We’ll build it mostly in Rust with a bit of Java and deployed on AWS and Kubernetes.
 
 | Scope |	Solution |
-| ===== | ======== |
+| ----- | -------- |
 | REST API, gRPC | axum, tonic |
 | Websocket | tokio-tungstenite |
 | DB | RDS, ScyllaDB, Google Cloud Spanner, Neo4j |
@@ -24,4 +24,3 @@ We’ll build it mostly in Rust with a bit of Java and deployed on AWS and Kuber
 | Metrics | Prometheus and Grafana Mimir |
 | Tracing | Prometheus and Grafana Tempo |
 | Logs | Grafana Loki |
-
