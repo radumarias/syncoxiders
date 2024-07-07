@@ -10,6 +10,6 @@ You can define sync rules between multiple email addresses. This extends mail fo
 
 From the browser app or local app you can define backup rules and schedule and app will run on those intervals and backup your emails locally.
 
-![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/backup-emails-with-service.png.png?raw=true)
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/backup-emails-with-service.png?raw=true)
 
-![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/backup-emails-locally.png.png?raw=true)
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/backup-emails-locally.png?raw=true)
