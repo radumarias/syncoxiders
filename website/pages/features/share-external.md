@@ -28,4 +28,6 @@ When they access the link will have these options:
 - 
 Sync mode (`Copy`, `Move`, `One-way`, `Two-way`), `compare-mode` and `conflict resolution` are handled as per above.
 
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/share-external.png?raw=true)
+
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/diagram-share-external.png?raw=true)
