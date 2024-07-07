@@ -11,7 +11,7 @@ We’ll build it mostly in Rust with a bit of Java and deployed on AWS and Kuber
 | Browser app | egui, wasi, wasm-bindgen, rencfs, pgp |
 | Local app desktop | egui, mainline, transmission_rs, cratetorrent/rqbit <br/> quinn, rencfs, pgp, fuse3 |
 | Local app mobile | Kotlin Multiplatform |
-| Sync daemons | tokio, rencfs, gdrive-rs, git2, rclone, Java, Flink |
+| Sync daemons | tokio, rencfs, gdrive-rs, git2, rclone, Flink |
 | Use Kafka | rdkafka |
 | Keycloak | axum-keycloak-auth (in app token verificaton) <br/> or Keycloak Gatekeeper (reverse proxy in front of the services) |
 | Event Bus | Kafka / Amazon SQS / RabbitMQ |
