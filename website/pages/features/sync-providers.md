@@ -39,4 +39,6 @@ If configured first it will try to `auto-merge` (see below). This is disabled by
 
 If either of the underlying remotes lacks support for the chosen method, it will be ignored and will fall back to the default of `newer`. If `modtime` is not supported either by the remote it will fallback to `path1`.
 
+![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/sync-providers.png?raw=true)
+
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/diagram-sync-providers.png?raw=true)
