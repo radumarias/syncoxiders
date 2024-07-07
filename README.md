@@ -62,3 +62,5 @@ This is what it's planned to have in the end.
 <a name="what-separates-it-from-other-products" href="website/pages/compare.md">What separates it from other products</a>
 
 <a name="how-it-works" href="website/pages/how-it-works.md">How it works</a>
+
+<a name="stack" href="website/pages/stack.md">Stack</a>
