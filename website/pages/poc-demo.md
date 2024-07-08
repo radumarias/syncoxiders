@@ -18,7 +18,7 @@
     - `mnt`: where the actual files are
     - `repo`: the git repo that must persist between runs
 - inside the `repo` we create a `tree` directory and create the tree structure from `mnt`
-- in the files content we keep the `size`, `mtime` and a `MD5 hash` of the content of the file, if we use `--checksum` param on run, see below. Please not it's considerably slower with this enabled
+- in the files content we keep the `size`, `mtime` and a `MD5 hash` of the content of the file, if we use `--checksum` param on run, see below. Please note it's considerably slower with this enabled
 - we do `git add .`
 - then `git status -s` shows what's changed, we use `git2` crate to interact with git
 - after we have the changes tree we apply them to `dst` `mnt`
