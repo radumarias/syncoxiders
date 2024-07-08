@@ -58,7 +58,8 @@ Other args:
 
 ## Limitations
 
-For now it doesn't sync empty folders, not `Add`, `Delete`, or `Rename` them. This is a limitation by `git` as it handles files only. Of couse the directory tree qill be recreated in `dst` based on the file parent, just folders with no files in it will not be synced.
+- Conflicts are not handled yet. If file is changed in both `src` and `dst` the winner is the one from `src`. It's like `master-slave` sync where `src` is the master
+- For now it doesn't sync empty folders, not `Add`, `Delete`, or `Rename` them. This is a limitation by `git` as it handles files only. Of couse the directory tree qill be recreated in `dst` based on the file parent, just folders with no files in it will not be synced.
 
 # Work in progress
 
