@@ -19,8 +19,8 @@
 - we do `git add .`
 - then `git status -s` shows what's changed, we use `git2` crate to interact with git
 - after we have the changes tree we apply them to `dst` `mnt`
-    - in `Add/Modify` we check if the file in `dst` is the same as in `src` we skip it
-    - comparation between the files is made using `size`, `atime`, `mtime` and `hash`, if present
+    - on `Add` and `Modify` we check if the file is already present in `dst` and if it's the same as in `src` we skip it
+    - comparation between the files is made using `size`, `mtime` and `MD5 hash`, if enabled
     - on `Rename` if the `old` file is not present in the `dst` to move it, we copy from `src`
 
 # Using CLI
@@ -31,10 +31,22 @@ You can run `syncoxiders -h` to see all args. The basic usage is like this:
 syncoxiders --src-mnt <SRC-MNT> --src-repo <SRC-REPO> --dst-mnt <DST-MNT> --src-repo <DST-REPO>
 ```
 
+`<SRC-MNT>`: where the actual files are for `src` side
+`<SRC-REPO>`: a folder that should persist between runs, it creates a `git` repo with metadata from files from `src`
+`<DST-MNT>`: where the actual files are for `dst` side
+`<DST-REPO>`: a folder that should persist between runs, it creates a `git` repo with metadata from files from `dst`
+
+For now, it does `One-way` sync propagating these operations from `src` to `dst`:
+- `Add`, `Modify`, `Delete`, `Rename`
+- on `Add` and `Modify` we check if the file is already present in `dst` and if it's the same as in `src` we skip it
+- comparation between the files is made using `size`, `mtime` and `MD5 hash`, if enabled, see `--checksum` arg below
+- on `Rename` if the `old` file is not present in the `dst` to move it, we copy from `src`
+
+
 By default it detects changes in files based on `size` and `mtime`. After copying to `dst` it will set also `atime` and `mtime` for the files.
 
 Other args:
-- `--dry-run`: it will not youch any files, it will just print the operations
+- `--dry-run`: it will not youch any files in `<SRC-MNT>`, it will just print the operations
 - `--checksum`: (disabled by default): If specified it will calculate `MD5` for each file and keep it in the git repo files. It will participate in detecting changes along with `size` and `mtime`. **Please note, it will be much slower when activated.**
 - `--no-crc`: (disabled by default): If specified it will skip checking `CRC` after file was transfered. Normally it compare `CRC` of file in `src` before coping and the file in `dst` after copying, this ensures the transfer was ok. **Checking `CRC` is mostly useful if disk is accessed over the network.`
 
