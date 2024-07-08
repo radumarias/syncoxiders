@@ -18,6 +18,8 @@ In many cases we'll use present tense for several functionality, even though it'
 
 [What's with the name](website/pages/name.md)
 
+**You can play with the [CLI app](website/pages/poc-demo.md#uising-cli) and see some [demos](website/pages/poc-demo.md) so far.**
+
 # POC
 
 Working on having these in up to 2 months:
@@ -29,8 +31,6 @@ Working on having these in up to 2 months:
 - do some changes on the remotes, trigger a sync and make sure changes are propagated in both folders and on remotes
 - save files encrypted using rencfs and have sync working
   - this will save encrypted data on the mount points of rclone and expose them with FUSE
-
-**You can play with the [CLI app](website/pages/poc-demo.md#ising-cli) and see some [demos](website/pages/poc-demo.md) so far.**
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/poc.png?raw=true)
 
