@@ -1,4 +1,4 @@
-# SyncOxiders
+# ![](website/resources/syncoxiders-icon-20p.png) SyncOxiders
 
 Cloud file and email Sync, file Sharing, Backup and Encryption solution written in Rust.
 
@@ -7,11 +7,11 @@ It offers real time sync (from simple Copy One-way to Two-way Sync) all handled 
 
 > [!WARNING]  
 > For now it's in prototyping phase, it has some or the core components, like encryption and basic Google Drive client.  
-> You can see the design doc [here](https://www.canva.com/design/DAGI-5FeEEA/2IwzP0vp45dvSarZd_drzA/view?utm_content=DAGI-5FeEEA&utm_campaign=designshare&utm_medium=link&utm_source=editor) or [PDF](https://github.com/radumarias/syncoxiders/blob/0be3968005be6332214593046b6f54809aa13134/SyncOxiders.pdf)
 
-Will use [rencfs](https://github.com/radumarias/rencfs) for encryption and [gdrive-rs](https://github.com/radumarias/gdrive-rs) for accesing Google Drive.
+It's using [rencfs](https://github.com/radumarias/rencfs) for encryption and [gdrive-rs](https://github.com/radumarias/gdrive-rs) for accesing Google Drive.
 
-It you could take this [**SURVEY**](https://forms.gle/qgnWBJhzCpzPLSmv5) to express your opinion about the current solution and offer your opinion on what features you would want from a service like this it would help a lot.
+> [!IMPORTANT]  
+> It you could take this [**SURVEY**](https://forms.gle/qgnWBJhzCpzPLSmv5) to express your opinion about the current solution and offer your opinion on what features you would want from a service like this it would help a lot.
 
 > [!NOTE]  
 In many cases we'll use present tense for several functionality, even though it's not yet implemented, it's used to give an idea of what the system could be.
@@ -30,7 +30,7 @@ Working on having these in up to 2 months:
 - save files encrypted using rencfs and have sync working
   - this will save encrypted data on the mount points of rclone and expose them with FUSE
 
-You can some [demos](website/pages/poc-demo.md) so far.
+You can see some [demos](website/pages/poc-demo.md) so far.
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/poc.png?raw=true)
 
