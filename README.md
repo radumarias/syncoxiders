@@ -18,9 +18,9 @@ In many cases we'll use present tense for several functionality, even though it'
 
 [What's with the name](website/pages/name.md)
 
-**You can play with the [CLI app](https://github.com/radumarias/syncoxiders/blob/main/website/pages/poc-demo.md#using-cli) and see some [demos](website/pages/poc-demo.md) so far.**
-
 # POC
+
+**You can play with the [CLI app](https://github.com/radumarias/syncoxiders/blob/main/website/pages/poc-demo.md#using-cli) and see some [demos](website/pages/poc-demo.md) so far.**
 
 Working on having these in up to 2 months:
 - in Docker ability to sync 2 folders in the filesystem
