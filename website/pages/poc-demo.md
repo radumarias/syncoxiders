@@ -1,6 +1,6 @@
 [⟵ Back](../../README.md#poc)
 
-How it works for now:
+# How it works for now
 
 **`One-way` sync:**
 - have 2 mounted folders with rclone (`src`, `dst`)
@@ -23,7 +23,23 @@ How it works for now:
     - comparation between the files is made using `size`, `atime`, `mtime` and `hash`, if present
     - on `Rename` if the `old` file is not present in the `dst` to move it, we copy from `src`
 
-**Work in progress:**
+# Using CLI
+
+You can run `syncoxiders -h` to see all args. The basic usage is like this:
+
+```bash
+syncoxiders --src-mnt <SRC-MNT> --src-repo <SRC-REPO> --dst-mnt <DST-MNT> --src-repo <DST-MNT>
+```
+
+By default it detects changes in files based on `size` and `mtime`. After copying to `dst` it will set also `atime` and `mtime` for the files.
+
+Other args:
+- `--dry-run`: it will not youch any files, it will just print the operations
+- `--checksum`: (disabled by default): If specified it will calculate `MD5` for each file and keep it in the git repo files. It will participate in detecting changes along with `size` and `mtime`. **Please note, it will be much slower when activated.**
+- `--no-crc`: (disabled by default): If specified it will skip checking `CRC` after file was transfered. Normally it compare `CRC` of file in `src` before coping and the file in `dst` after copying, this ensures the transfer was ok. **Checking `CRC` is mostly useful if disk is accessed over the network.`
+
+# Work in progress
+
 - have 2 mounted folders with rclone (`src`, `dst`)
 - build changes tree for both of them
 - merge changes trees and resolve conflicts
