@@ -25,6 +25,9 @@
 
 # Using CLI
 
+You can take the binaries from here for target [x86_64-unknown-linux-gnu](https://drive.google.com/file/d/1UnWR5rnPfOW3OBLu21xJySPDVHkEbb-v/view?usp=sharing).  
+For other targets you could clone the repo and build it.
+
 You can run `syncoxiders -h` to see all args. The basic usage is like this:
 
 ```bash
