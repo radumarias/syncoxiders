@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::change_tree_merge::{Changes, Items};
 use crate::crc_eq;
+use crate::tree_creator::Item;
 use anyhow::Result;
 use colored::*;
 
@@ -15,6 +16,7 @@ pub fn apply(
     src_mnt: &Path,
     dst_mnt: &Path,
     dry_run: bool,
+    crc: bool,
 ) -> Result<()> {
     for (change, path) in changes {
         let dst = dst_mnt.join(&path);
@@ -32,7 +34,7 @@ pub fn apply(
                 let mut add = true;
                 let src_item = items_src.get(path).unwrap();
                 if let Some(dst_item) = items_dst.get(path) {
-                    if src_item.eq(dst_item) {
+                    if items_content_eq(src_item, dst_item) {
                         add = false;
                     }
                 }
@@ -42,15 +44,12 @@ pub fn apply(
                     File::set_times(&File::open(dst.clone())?, src_item.times)?;
                     File::open(dst.clone())?.sync_all()?;
                     File::open(dst.parent().unwrap())?.sync_all()?;
-                    if !crc_eq(&src_mnt.join(&path), &dst.clone())? {
+                    if crc && !crc_eq(&src_mnt.join(&path), &dst.clone())? {
                         println!("{}", "   checksum failed after copy, aborting".red().bold());
                         anyhow::bail!("Checksum failed for `{path}` after copy");
                     }
                 } else {
-                    println!(
-                        "{}",
-                        "   skip, already present in dst with same hash".yellow()
-                    );
+                    println!("{}", "   skip, already present and same content".yellow());
                 }
             }
             Change::Delete => {
@@ -86,7 +85,7 @@ pub fn apply(
                     File::open(dst.clone())?.sync_all()?;
                     File::open(dst.parent().unwrap())?.sync_all()?;
                 }
-                if !crc_eq(&src_mnt.join(&path), &dst.clone())? {
+                if crc && !crc_eq(&src_mnt.join(&path), &dst.clone())? {
                     println!("{}", "   checksum failed after copy, aborting".red().bold());
                     anyhow::bail!("Checksum failed for `{path}` after copy");
                 }
@@ -109,7 +108,7 @@ pub fn apply(
                     fs::create_dir_all(dst.parent().unwrap())?;
                     fs::copy(src_mnt.join(&path), dst.clone())?;
                 }
-                if !crc_eq(&src_mnt.join(&path), &dst.clone())? {
+                if crc && !crc_eq(&src_mnt.join(&path), &dst.clone())? {
                     println!("{}", "   checksum failed after copy, aborting".red().bold());
                     anyhow::bail!("Checksum failed for `{path}` after copy");
                 }
@@ -118,4 +117,8 @@ pub fn apply(
     }
 
     Ok(())
+}
+
+fn items_content_eq(a: &Item, b: &Item) -> bool {
+    a.size == b.size && a.mtime == b.mtime && a.hash == b.hash
 }

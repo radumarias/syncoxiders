@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
 use std::collections::BTreeMap;
-use std::io;
 use std::path::{Path, PathBuf};
+use std::{io, thread};
 use tap::Pipe;
 
 use file_tree_merge::change_tree::ChangeTree;
@@ -32,10 +32,18 @@ struct Args {
 
     #[arg(short, long, default_value_t = false)]
     checksum: bool,
+
+    #[arg(short, long, short = 'r', default_value_t = false)]
+    no_crc: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+
+    if args.no_crc {
+        println!("{}", "CRC is disabled for checking file after transfer. Make sure you want it like that, if not, remove --no-crc from args !".red().bold());
+        thread::sleep(std::time::Duration::from_secs(10));
+    }
 
     if args.checksum {
         println!(
@@ -79,6 +87,7 @@ fn main() -> Result<()> {
             &args.src_mnt,
             &args.dst_mnt,
             args.dry_run,
+            !args.no_crc,
         )
         // todo: dst -> src
     })?;

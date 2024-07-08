@@ -56,19 +56,6 @@ impl Debug for Item {
     }
 }
 
-impl PartialEq for Item {
-    fn eq(&self, other: &Self) -> bool {
-        other.path == self.path
-            && other.atime == self.atime
-            && other.mtime == self.mtime
-            && other.size == self.size
-            && other.is_dir == self.is_dir
-            && other.hash == self.hash
-    }
-}
-
-impl Eq for Item {}
-
 pub struct TreeCreator<I: Iterator<Item = io::Result<Item>>, Iter: IterRef<Iter = I>> {
     iter: Iter,
 }
@@ -116,7 +103,6 @@ impl<I: Iterator<Item = io::Result<Item>>, Iter: IterRef<Iter = I>> TreeCreator<
                 Path::new(&path)
                     .parent()
                     .map_or(Ok(()), fs::create_dir_all)?;
-                file.write_all(&get_time_bytes(&item.atime))?;
                 file.write_all(&get_time_bytes(&item.mtime))?;
                 file.write_all(&item.size.to_le_bytes())?;
                 if let Some((_, ref hash)) = item.hash {

@@ -52,10 +52,7 @@ impl Iterator for Iter {
             entry
                 .map(|entry| {
                     let path = entry.path();
-                    println!(
-                        "{}",
-                        format!("Prepare file '{}'", path.to_str().unwrap()).cyan()
-                    );
+                    println!("{}", format!("Prepare '{}'", path.to_str().unwrap()).cyan());
                     let path_rel = path.strip_prefix(&self.src).unwrap();
                     // println!("prepare {:?}", path_rel);
                     let atime = entry.metadata().unwrap().accessed().unwrap();
