@@ -67,4 +67,4 @@ Other args:
 - build changes tree for both of them
 - merge changes trees and resolve conflicts
 - apply changes to both `src` and `dst`
-- make sure changes are reflected on both sremotes
+- make sure changes are reflected on both remotes
