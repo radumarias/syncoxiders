@@ -15,9 +15,13 @@ exclude.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+colored.workspace = true
 
 walkdir = "2.5.0"
 chksum-md5 = "0.0.0"
 git2 = "0.19.0"
 slab_tree = "0.3.2"
 tap = "1.0.1"
+regex = "1"
+clap = { version = "4", features = ["derive"] }
+crc32fast = "1.3"

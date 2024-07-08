@@ -18,4 +18,5 @@ documentation = "https://docs.rs/syncoxiders"
 exclude = [".github/"]
 
 [workspace.dependencies]
-anyhow = "1.0.44"
+anyhow = { version = "1.0.44", features = ["backtrace"] }
+colored = "2.1.0"

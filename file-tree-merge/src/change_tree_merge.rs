@@ -1,24 +1,54 @@
-use std::io;
+use std::collections::BTreeMap;
 
 use crate::change_tree::{Change, ChangeTree};
+use crate::tree_creator::Item;
+use anyhow::Result;
 
-pub fn merge(src: &mut ChangeTree, dst: &mut ChangeTree, delete: bool) -> io::Result<Vec<Change>> {
-    let changes = vec![];
-    if let Some(root) = src.tree.root() {
-        println!("Changes in src:");
-        root.traverse_pre_order().for_each(|node| {
-            println!("{:?} {}", node.data().change, node.data().item.path);
-        });
-    } else {
-        println!("No changes in src");
+pub enum MergeStrategy {
+    Copy,
+    Move,
+    OneWay,
+    TwoWay,
+}
+
+pub type Changes = Vec<(Change, String)>;
+pub type Items = BTreeMap<String, Item>;
+pub type SrcChanges = (Changes, Items);
+pub type DstChanges = (Changes, Items);
+
+pub fn merge(
+    changes_src: (ChangeTree, BTreeMap<String, Item>),
+    changes_dst: (ChangeTree, BTreeMap<String, Item>),
+    strategy: MergeStrategy,
+) -> Result<(SrcChanges, DstChanges)> {
+    match strategy {
+        MergeStrategy::Copy => unimplemented!(),
+        MergeStrategy::Move => unimplemented!(),
+        MergeStrategy::OneWay => Ok((do_one_way(changes_src)?, (vec![], changes_dst.1))),
+        MergeStrategy::TwoWay => unimplemented!(),
     }
-    if let Some(root) = dst.tree.root() {
-        println!("Changes in dst:");
+}
+
+fn do_one_way(changes_src: (ChangeTree, BTreeMap<String, Item>)) -> Result<SrcChanges> {
+    let mut changes = vec![];
+    let (changes_src, items_src) = changes_src;
+    if changes_src.tree.root().unwrap().first_child().is_some() {
+        let root = changes_src.tree.root().unwrap();
         root.traverse_pre_order().for_each(|node| {
-            println!("{:?} {}", node.data().change, node.data().item.path);
+            if node.node_id() == changes_src.tree.root_id().unwrap() {
+                return;
+            }
+            // println!(
+            //     "{:?} {:?}",
+            //     node.data().change.as_ref().unwrap(),
+            //     node.data().path
+            // );
+
+            let change = node.data().change.as_ref().unwrap();
+            let path = node.data().path.clone();
+            changes.push((change.clone(), path));
         });
-    } else {
-        println!("No changes in dst");
     }
-    Ok(changes)
+
+    Ok((changes, items_src))
 }
