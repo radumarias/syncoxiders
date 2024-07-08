@@ -30,7 +30,7 @@ Working on having these in up to 2 months:
 - save files encrypted using rencfs and have sync working
   - this will save encrypted data on the mount points of rclone and expose them with FUSE
 
-You can play with the CLI app and see some [demos](website/pages/poc-demo.md) so far.
+**You can play with the CLI app and see some [demos](website/pages/poc-demo.md) so far.**
 
 ![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/poc.png?raw=true)
 
