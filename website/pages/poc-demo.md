@@ -2,6 +2,9 @@
 
 # How it works for now
 
+`One-way` sync for `Add`, `Modify`, `Delete`, `Rename`:  
+[![Watch the video](https://img.youtube.com/vi/JHQC1XpCzQw/0.jpg)](https://www.youtube.com/watch?v=JHQC1XpCzQw)
+
 **`One-way` sync:**
 - have 2 mounted folders with rclone (`src`, `dst`)
 - build changes tree for `src`
@@ -64,9 +67,3 @@ For now it doesn't sync empty folders, not `Add`, `Delete`, or `Rename` them. Th
 - merge changes trees and resolve conflicts
 - apply changes to both `src` and `dst`
 - make sure changes are reflected on both sremotes
-
-Basic changes:  
-[![Watch the video](https://img.youtube.com/vi/Z45mxYbojoc/0.jpg)](https://youtu.be/Z45mxYbojoc)
-
-Rename:  
-[![Watch the video](https://img.youtube.com/vi/Gdo7Igrg9QE/0.jpg)](https://youtu.be/Gdo7Igrg9QE)
