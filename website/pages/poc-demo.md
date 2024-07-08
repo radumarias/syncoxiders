@@ -23,7 +23,7 @@
 - then `git status -s` shows what's changed, we use `git2` crate to interact with git
 - after we have the changes tree we apply them to `dst` `mnt`
     - on `Add` and `Modify` we check if the file is already present in `dst` and if it's the same as in `src` we skip it
-    - comparation between the files is made using `size`, `mtime` and `MD5 hash`, if enabled
+    - comparision between the files is made using `size`, `mtime` and `MD5 hash`, if enabled
     - on `Rename` if the `old` file is not present in the `dst` to move it, we copy from `src`
 
 # Using CLI
@@ -45,7 +45,7 @@ syncoxiders --src-mnt <SRC-MNT> --src-repo <SRC-REPO> --dst-mnt <DST-MNT> --src-
 For now, it does `One-way` sync propagating these operations from `src` to `dst`:
 - `Add`, `Modify`, `Delete`, `Rename`
 - on `Add` and `Modify` we check if the file is already present in `dst` and if it's the same as in `src` we skip it
-- comparation between the files is made using `size`, `mtime` and `MD5 hash`, if enabled, see `--checksum` arg below
+- comparision between the files is made using `size`, `mtime` and `MD5 hash`, if enabled, see `--checksum` arg below
 - on `Rename` if the `old` file is not present in the `dst` to move it, we copy from `src`
 
 
