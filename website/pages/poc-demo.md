@@ -53,6 +53,10 @@ Other args:
 - `--checksum`: (disabled by default): If specified it will calculate `MD5` for each file and keep it in the git repo files. It will participate in detecting changes along with `size` and `mtime`. **Please note, it will be much slower when activated.**
 - `--no-crc`: (disabled by default): If specified it will skip checking `CRC` after file was transfered. Normally it compare `CRC` of file in `src` before coping and the file in `dst` after copying, this ensures the transfer was ok. **Checking `CRC` is mostly useful if disk is accessed over the network.`
 
+## Limitations
+
+For now it doesn't sync empty folders, not create them nor delete them. This is a limitation by `git` as it handles files only. Of couse the directory tree qill be recreated in `dst` based on the file parent, just folders with no files in it will not be synced.
+
 # Work in progress
 
 - have 2 mounted folders with rclone (`src`, `dst`)
