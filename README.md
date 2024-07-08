@@ -18,7 +18,7 @@ In many cases we'll use present tense for several functionality, even though it'
 
 [What's with the name](website/pages/name.md)
 
-**You can play with the [CLI app](website/pages/poc-demo.md#uising-cli) and see some [demos](website/pages/poc-demo.md) so far.**
+**You can play with the [CLI app](website/pages/poc-demo.md#using-cli) and see some [demos](website/pages/poc-demo.md) so far.**
 
 # POC
 
