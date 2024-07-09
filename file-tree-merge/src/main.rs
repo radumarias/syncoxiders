@@ -15,25 +15,61 @@ use file_tree_merge::{apply_change, change_tree, change_tree_merge, TREE_DIR};
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    #[arg(short, long, short = 'a')]
-    src_mnt: PathBuf,
+    #[arg(
+        short,
+        long,
+        short = 'a',
+        help = "First mount point, where actual files that needs to be synced are located."
+    )]
+    path1_mnt: PathBuf,
 
-    #[arg(short, long, short = 'x')]
-    src_repo: PathBuf,
+    #[arg(
+        short,
+        long,
+        short = 'x',
+        help = "A directory where we keep a git repo to detect changes. Should persist between runs. MUST NOT BE INSIDE ANY OF THE <PATH1-MNT> or <PATH2-MNT> DIRECTORIES>"
+    )]
+    path1_repo: PathBuf,
 
-    #[arg(short, long, short = 'b')]
-    dst_mnt: PathBuf,
+    #[arg(
+        short,
+        long,
+        short = 'b',
+        help = "Second mount point, where actual files that needs to be synced are located."
+    )]
+    path2_mnt: PathBuf,
 
-    #[arg(short, long, short = 'y')]
-    dst_repo: PathBuf,
+    #[arg(
+        short,
+        long,
+        short = 'y',
+        help = "A directory where we keep a git repo to detect changes. Should persist between runs. MUST NOT BE INSIDE ANY OF THE <PATH1-MNT> or <PATH2-MNT> DIRECTORIES>"
+    )]
+    path_repo: PathBuf,
 
-    #[arg(short, long, default_value_t = false)]
+    #[arg(
+        short,
+        long,
+        default_value_t = false,
+        help = "This simulates the sync. Will not actually create or change any of the files in <PATH1-MNT> or <PATH2-MNT>, will just print the operations that would have normally be applied to both ends"
+    )]
     dry_run: bool,
 
-    #[arg(short, long, default_value_t = false)]
+    #[arg(
+        short,
+        long,
+        default_value_t = false,
+        help = "If specified it will calculate MD5 hash for files when comparing file in <PATH1-MNT> with the file in <PATH2-MNT> when applying Add and Modify operations. It will be considerably slower when activated"
+    )]
     checksum: bool,
 
-    #[arg(short, long, short = 'r', default_value_t = false)]
+    #[arg(
+        short,
+        long,
+        short = 'r',
+        default_value_t = false,
+        help = "If specified it will skip CRC check after file was transferred. Without this it compares the CRC of the file in <PATH1-MNT> before transfer with the CRC of the file in <PATH2-MNT> after transferred. This ensures the transfer was successful. Checking CRC is highly recommend if any of <PATH1-MNT> or <PATH1-MNT> are accessed over the network"
+    )]
     no_crc: bool,
 }
 
@@ -58,20 +94,15 @@ fn main() -> Result<()> {
         println!("{}", "Dry-run mode enabled, it will not touch any files on dst, will just print the changes!".yellow().bold());
     }
 
-    println!("{}", "Build changes tree...".cyan());
-    let (changes_tree1, errors1) = changes_tree(
-        PathWalker::new(&args.src_mnt, args.checksum),
-        &args.src_repo,
-    )?;
-    let (changes_tree2, errors2) = changes_tree(
-        PathWalker::new(&args.dst_mnt, args.checksum),
-        &args.dst_repo,
-    )?;
+    println!("{}", "Build changes trees...".cyan());
+    let (changes_tree1, errors1) =
+        changes_tree(PathWalker::new(&args.path1_mnt), &args.path1_repo)?;
+    let (changes_tree2, errors2) = changes_tree(PathWalker::new(&args.path2_mnt), &args.path_repo)?;
 
     println!("{}", "Merge changes trees...".cyan());
     change_tree_merge::merge(changes_tree1, changes_tree2, MergeStrategy::OneWay)?.pipe(|x| {
         if x.0 .0.is_empty() && x.1 .0.is_empty() {
-            println!("{}", "No changes to apply!".green());
+            println!("{}", "No changes to apply".green());
             return Ok(());
         }
         if !args.dry_run {
@@ -84,9 +115,10 @@ fn main() -> Result<()> {
             &changes_src,
             &items_src,
             &items_dst,
-            &args.src_mnt,
-            &args.dst_mnt,
+            &args.path1_mnt,
+            &args.path2_mnt,
             args.dry_run,
+            args.checksum,
             !args.no_crc,
         )
         // todo: dst -> src

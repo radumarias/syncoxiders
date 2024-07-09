@@ -11,13 +11,6 @@ use std::{fs, io};
 // pub(crate) const PATH_SEPARATOR: &str = "／";
 pub(crate) const PATH_SEPARATOR: &str = "|";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HashKind {
-    Md5,
-    Sha1,
-    Sha256,
-}
-
 pub struct Item {
     pub path: String,
     pub times: FileTimes,
@@ -25,7 +18,6 @@ pub struct Item {
     pub mtime: SystemTime,
     pub size: u64,
     pub is_dir: bool,
-    pub hash: Option<(HashKind, String)>,
 }
 
 impl Clone for Item {
@@ -37,7 +29,6 @@ impl Clone for Item {
             atime: self.mtime.clone(),
             size: self.size,
             is_dir: self.is_dir,
-            hash: self.hash.as_ref().map(|(k, v)| (k.clone(), v.clone())),
         }
     }
 }
@@ -51,7 +42,6 @@ impl Debug for Item {
             .field("mtime", &self.mtime)
             .field("size", &self.size)
             .field("is_dir", &self.is_dir)
-            .field("hash", &self.hash)
             .finish()
     }
 }
@@ -75,7 +65,6 @@ impl<I: Iterator<Item = io::Result<Item>>, Iter: IterRef<Iter = I>> TreeCreator<
         } else {
             fs::create_dir_all(&dst)?;
         }
-        // println!("Creating tree in: {:?}", dst);
         let mut first = true;
         let mut items = vec![];
         let mut errors = vec![];
@@ -103,16 +92,14 @@ impl<I: Iterator<Item = io::Result<Item>>, Iter: IterRef<Iter = I>> TreeCreator<
                 Path::new(&path)
                     .parent()
                     .map_or(Ok(()), fs::create_dir_all)?;
-                file.write_all(&get_time_bytes(&item.mtime))?;
                 file.write_all(&item.size.to_le_bytes())?;
-                if let Some((_, ref hash)) = item.hash {
-                    file.write_all(hash.as_bytes())?;
-                }
+                file.write_all(&get_time_bytes(&item.mtime))?;
                 file.flush()?;
                 file.sync_all()?;
                 File::set_times(&file, item.times)?;
+                File::open(&path)?.sync_all()?;
             }
-            File::open(&path)?.sync_all()?;
+            File::open(path.parent().unwrap())?.sync_all()?;
             items.push(item);
         }
         Ok((items, errors))

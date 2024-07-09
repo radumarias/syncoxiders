@@ -1,30 +1,27 @@
-use colored::Colorize;
-use std::fs::{File, FileTimes};
+use std::fs::FileTimes;
 use std::io;
 use std::path::{Path, PathBuf};
+
+use colored::Colorize;
 use walkdir::{DirEntry, WalkDir};
 
-use crate::tree_creator::HashKind;
 use crate::{tree_creator, IterRef};
 
 pub struct PathWalker {
-    src: PathBuf,
-    checksum: bool,
+    path: PathBuf,
 }
 
 impl PathWalker {
-    pub fn new(src: &Path, checksum: bool) -> Self {
+    pub fn new(path: &Path) -> Self {
         Self {
-            src: src.to_path_buf(),
-            checksum,
+            path: path.to_path_buf(),
         }
     }
 }
 
 pub struct Iter {
     it: Box<dyn Iterator<Item = walkdir::Result<DirEntry>>>,
-    src: PathBuf,
-    checksum: bool,
+    path: PathBuf,
 }
 
 impl IterRef for PathWalker {
@@ -34,12 +31,11 @@ impl IterRef for PathWalker {
     fn iter(&self) -> Self::Iter {
         Iter {
             it: Box::new(
-                WalkDir::new(self.src.clone())
+                WalkDir::new(self.path.clone())
                     .follow_links(true)
                     .into_iter(),
             ),
-            src: self.src.clone(),
-            checksum: self.checksum,
+            path: self.path.clone(),
         }
     }
 }
@@ -52,28 +48,16 @@ impl Iterator for Iter {
             entry
                 .map(|entry| {
                     let path = entry.path();
-                    println!("{}", format!("Prepare '{}'", path.to_str().unwrap()).cyan());
-                    let path_rel = path.strip_prefix(&self.src).unwrap();
-                    // println!("prepare {:?}", path_rel);
+                    println!(
+                        "{}",
+                        format!("Checking '{}'", path.to_str().unwrap()).cyan()
+                    );
+                    let path_rel = path.strip_prefix(&self.path).unwrap();
                     let atime = entry.metadata().unwrap().accessed().unwrap();
                     let mtime = entry.metadata().unwrap().modified().unwrap();
                     let times = FileTimes::new().set_accessed(atime).set_modified(mtime);
                     let size = entry.metadata().unwrap().len();
                     let is_dir = entry.metadata().unwrap().is_dir();
-                    let hash = if !path.is_dir() {
-                        if self.checksum {
-                            Some((
-                                HashKind::Md5,
-                                chksum_md5::chksum(File::open(path).unwrap())
-                                    .unwrap()
-                                    .to_hex_lowercase(),
-                            ))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
                     tree_creator::Item {
                         path: path_rel.to_str().unwrap().to_string(),
                         times,
@@ -81,7 +65,6 @@ impl Iterator for Iter {
                         mtime,
                         size,
                         is_dir,
-                        hash,
                     }
                 })
                 .map_err(|err| io::Error::new(io::ErrorKind::Other, err))

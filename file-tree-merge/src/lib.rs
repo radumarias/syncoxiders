@@ -1,7 +1,8 @@
-use crate::tree_creator::HashKind;
 use anyhow::Result;
+use change_tree_merge::HashKind;
 use crc32fast::Hasher;
 use std::fs::File;
+use std::io;
 use std::io::{BufReader, Read};
 use std::path::Path;
 
@@ -26,20 +27,9 @@ pub trait IterRef {
     fn iter(&self) -> Self::Iter;
 }
 
-pub fn hash_eq(h1: &Option<(HashKind, String)>, h2: &Option<(HashKind, String)>) -> bool {
-    if let Some(hash_src) = h1 {
-        if let Some(hash_dst) = h2 {
-            if hash_src.0 == hash_dst.0 && hash_src.1 == hash_dst.1 {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-pub fn crc_eq(src: &Path, dst: &Path) -> Result<bool> {
-    let src_crc = crc(src)?;
-    let dst_crc = crc(dst)?;
+pub fn crc_eq(path1: &Path, path2: &Path) -> Result<bool> {
+    let src_crc = crc(path1)?;
+    let dst_crc = crc(path2)?;
     Ok(src_crc == dst_crc)
 }
 
@@ -65,4 +55,18 @@ pub fn crc(path: &Path) -> Result<u32> {
     let checksum = hasher.finalize();
 
     Ok(checksum)
+}
+
+pub fn file_hash(path: &Path, kind: HashKind) -> io::Result<String> {
+    match kind {
+        HashKind::Md5 => Ok(chksum_md5::chksum(File::open(path)?)
+            .unwrap()
+            .to_hex_lowercase()),
+        HashKind::Sha1 => {
+            unimplemented!("sha1")
+        }
+        HashKind::Sha256 => {
+            unimplemented!("sha256")
+        }
+    }
 }

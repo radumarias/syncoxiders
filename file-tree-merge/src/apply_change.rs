@@ -1,25 +1,26 @@
 use crate::change_tree::Change;
-use std::fs;
 use std::fs::File;
 use std::path::Path;
+use std::{fs, io};
 
-use crate::change_tree_merge::{Changes, Items};
-use crate::crc_eq;
+use crate::change_tree_merge::{Changes, HashKind, Items};
 use crate::tree_creator::Item;
+use crate::{crc_eq, file_hash};
 use anyhow::Result;
 use colored::*;
 
 pub fn apply(
     changes: &Changes,
-    items_src: &Items,
-    items_dst: &Items,
-    src_mnt: &Path,
-    dst_mnt: &Path,
+    items_path1: &Items,
+    items_path2: &Items,
+    path1_mnt: &Path,
+    path2_mnt: &Path,
     dry_run: bool,
+    checksum: bool,
     crc: bool,
 ) -> Result<()> {
     for (change, path) in changes {
-        let dst = dst_mnt.join(&path);
+        let path2 = path2_mnt.join(&path);
         match change.clone() {
             Change::Add | Change::Modify => {
                 if matches!(change, Change::Add) {
@@ -32,24 +33,30 @@ pub fn apply(
                 }
                 // check if it's the same as in dst
                 let mut add = true;
-                let src_item = items_src.get(path).unwrap();
-                if let Some(dst_item) = items_dst.get(path) {
-                    if items_content_eq(src_item, dst_item) {
+                let path1_item = items_path1.get(path).unwrap();
+                if let Some(dst_item) = items_path2.get(path) {
+                    if items_content_eq(&path1_mnt, path1_item, &path2_mnt, dst_item, checksum)? {
                         add = false;
                     }
                 }
                 if add {
-                    fs::create_dir_all(dst.parent().unwrap())?;
-                    fs::copy(src_mnt.join(&path), dst.clone())?;
-                    File::set_times(&File::open(dst.clone())?, src_item.times)?;
-                    File::open(dst.clone())?.sync_all()?;
-                    File::open(dst.parent().unwrap())?.sync_all()?;
-                    if crc && !crc_eq(&src_mnt.join(&path), &dst.clone())? {
-                        println!("{}", "   checksum failed after copy, aborting".red().bold());
-                        anyhow::bail!("Checksum failed for `{path}` after copy");
+                    fs::create_dir_all(path2.parent().unwrap())?;
+                    fs::copy(path1_mnt.join(&path), path2.clone())?;
+                    File::set_times(&File::open(path2.clone())?, path1_item.times)?;
+                    File::open(path2.clone())?.sync_all()?;
+                    File::open(path2.parent().unwrap())?.sync_all()?;
+                    if crc && !crc_eq(&path1_mnt.join(&path), &path2.clone())? {
+                        println!(
+                            "{}",
+                            "   CRC check failed after transfer, aborting".red().bold()
+                        );
+                        anyhow::bail!("CRC check failed for `{path}` after transfer");
                     }
                 } else {
-                    println!("{}", "   skip, already present and same content".yellow());
+                    println!(
+                        "{}",
+                        "   skip, already present in path2 with the same content".yellow()
+                    );
                 }
             }
             Change::Delete => {
@@ -57,11 +64,11 @@ pub fn apply(
                 if dry_run {
                     continue;
                 }
-                if dst.exists() {
-                    fs::remove_file(dst.clone())?;
-                    File::open(dst.parent().unwrap())?.sync_all()?;
+                if path2.exists() {
+                    fs::remove_file(path2.clone())?;
+                    File::open(path2.parent().unwrap())?.sync_all()?;
                 } else {
-                    println!("{}", "  skip, not present in dst".yellow());
+                    println!("{}", "  skip, not present in path2".yellow());
                 }
             }
             Change::Rename(old_path) => {
@@ -69,25 +76,28 @@ pub fn apply(
                 if dry_run {
                     continue;
                 }
-                let src_item = items_src.get(path).unwrap();
+                let path1_item = items_path1.get(path).unwrap();
                 // todo: compare if old file hash in src is same as old file hash in dst
-                if dst_mnt.join(&old_path).exists() {
-                    fs::create_dir_all(dst.parent().unwrap())?;
-                    fs::rename(dst_mnt.join(&old_path), dst.clone())?;
-                    File::set_times(&File::open(dst.clone())?, src_item.times)?;
-                    File::open(dst.clone())?.sync_all()?;
-                    File::open(dst.parent().unwrap())?.sync_all()?;
+                if path2_mnt.join(&old_path).exists() {
+                    fs::create_dir_all(path2.parent().unwrap())?;
+                    fs::rename(path2_mnt.join(&old_path), path2.clone())?;
+                    File::set_times(&File::open(path2.clone())?, path1_item.times)?;
+                    File::open(path2.clone())?.sync_all()?;
+                    File::open(path2.parent().unwrap())?.sync_all()?;
                 } else {
-                    println!("{}", format!("  cannot R '{old_path}' -> '{path}', old file not present in dst. Will copy instead from src to new destination").yellow());
-                    fs::create_dir_all(dst_mnt.join(path).parent().unwrap())?;
-                    fs::copy(src_mnt.join(&path), dst.clone())?;
-                    File::set_times(&File::open(dst.clone())?, src_item.times)?;
-                    File::open(dst.clone())?.sync_all()?;
-                    File::open(dst.parent().unwrap())?.sync_all()?;
+                    println!("{}", format!("  cannot R '{old_path}' -> '{path}', old file not present in path2. Will copy instead from path1 to the new destination").yellow());
+                    fs::create_dir_all(path2_mnt.join(path).parent().unwrap())?;
+                    fs::copy(path1_mnt.join(&path), path2.clone())?;
+                    File::set_times(&File::open(path2.clone())?, path1_item.times)?;
+                    File::open(path2.clone())?.sync_all()?;
+                    File::open(path2.parent().unwrap())?.sync_all()?;
                 }
-                if crc && !crc_eq(&src_mnt.join(&path), &dst.clone())? {
-                    println!("{}", "   checksum failed after copy, aborting".red().bold());
-                    anyhow::bail!("Checksum failed for `{path}` after copy");
+                if crc && !crc_eq(&path1_mnt.join(&path), &path2.clone())? {
+                    println!(
+                        "{}",
+                        "   CRC check failed after transfer, aborting".red().bold()
+                    );
+                    anyhow::bail!("CRC check failed for `{path}` after transfer");
                 }
             }
             Change::Copy(old_path) => {
@@ -95,22 +105,25 @@ pub fn apply(
                 if dry_run {
                     continue;
                 }
-                let src_item = items_src.get(path).unwrap();
+                let path1_item = items_path1.get(path).unwrap();
                 // todo: compare if old file hash in src is same as old file hash in dst
-                if dst_mnt.join(&old_path).exists() {
-                    fs::create_dir_all(dst.clone().parent().unwrap())?;
-                    fs::copy(dst_mnt.join(&old_path), dst.clone())?;
-                    File::set_times(&File::open(dst.clone())?, src_item.times)?;
-                    File::open(dst.clone())?.sync_all()?;
-                    File::open(dst.parent().unwrap())?.sync_all()?;
+                if path2_mnt.join(&old_path).exists() {
+                    fs::create_dir_all(path2.clone().parent().unwrap())?;
+                    fs::copy(path2_mnt.join(&old_path), path2.clone())?;
+                    File::set_times(&File::open(path2.clone())?, path1_item.times)?;
+                    File::open(path2.clone())?.sync_all()?;
+                    File::open(path2.parent().unwrap())?.sync_all()?;
                 } else {
-                    println!("{}", format!("  cannot C '{old_path}' -> '{path}', old file not present in dst. Will copy instead from src to new destination").yellow());
-                    fs::create_dir_all(dst.parent().unwrap())?;
-                    fs::copy(src_mnt.join(&path), dst.clone())?;
+                    println!("{}", format!("  cannot C '{old_path}' -> '{path}', old file not present in path2. Will copy instead from path1 to the new destination").yellow());
+                    fs::create_dir_all(path2.parent().unwrap())?;
+                    fs::copy(path1_mnt.join(&path), path2.clone())?;
                 }
-                if crc && !crc_eq(&src_mnt.join(&path), &dst.clone())? {
-                    println!("{}", "   checksum failed after copy, aborting".red().bold());
-                    anyhow::bail!("Checksum failed for `{path}` after copy");
+                if crc && !crc_eq(&path1_mnt.join(&path), &path2.clone())? {
+                    println!(
+                        "{}",
+                        "   CRC check failed after transfer, aborting".red().bold()
+                    );
+                    anyhow::bail!("CRC check failed for `{path}` after transfer");
                 }
             }
         }
@@ -119,6 +132,22 @@ pub fn apply(
     Ok(())
 }
 
-fn items_content_eq(a: &Item, b: &Item) -> bool {
-    a.size == b.size && a.mtime == b.mtime && a.hash == b.hash
+fn items_content_eq(
+    path1_mnt: &&Path,
+    a: &Item,
+    path2_mnt: &&Path,
+    b: &Item,
+    checksum: bool,
+) -> io::Result<bool> {
+    if a.size == b.size && a.mtime == b.mtime {
+        if checksum {
+            let hash1 = file_hash(&path1_mnt.join(&a.path), HashKind::Md5)?;
+            let hash2 = file_hash(&path2_mnt.join(&b.path), HashKind::Md5)?;
+            Ok(hash1.eq(&hash2))
+        } else {
+            Ok(true)
+        }
+    } else {
+        Ok(false)
+    }
 }
