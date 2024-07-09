@@ -38,13 +38,12 @@ For other targets you could clone the repo and build it.
 You can run `syncoxiders -h` to see all args. The basic usage is like this:
 
 ```bash
-syncoxiders --path1-mnt <PATH1-MNT> --path1-repo <PATH1-REPO> --path2-mnt <PATH2-MNT> --path2-repo <PATH2-REPO>
+syncoxiders --path1-mnt <PATH1-MNT> --path2-mnt <PATH2-MNT> --path-repo <PATH-REPO>
 ```
 
 - `<PATH1-MNT>`: where the actual files are for `path1` side
-- `<PATH1-REPO>`: a folder that should persist between runs, we create a `git` repo with metadata from files from `path1`. **MUST NOT BE INSIDE ANY OF THE `MNT` DIRECTORIES**. If it doesn't persist next time it runs it will see all files in `path1` as `Add`ed, but will skip them if are already the same as in `path1`
 - `<PATH2-MNT>`: where the actual files are for `path2` side
-- `<PATH2-REPO>`: a folder that should persist between runs, we create a `git` repo with metadata from files from `path2`. **MUST NOT BE INSIDE ANY OF THE `MNT` DIRECTORIES**. If it doesn't persist next time it runs it will see all files in `path2` as `Add`ed, but will skip them if are already the same as in `path2`
+- `<PATH-REPO>`: a folder that should persist between runs, we create a `git` repo with metadata of files from `path1` and `path2`. **MUST NOT BE INSIDE ANY OF `<PATH1-MNT>` or `<PATH1-MNT>` DIRECTORIES**. If it doesn't persist next time it runs it will see all files in as `Add`ed, but will skip them if are already the same as on the other side
 
 For now, it does `One-way` sync propagating these operations from `path1` to `path2`:
 - `Add`, `Modify`, `Delete`, `Rename`
