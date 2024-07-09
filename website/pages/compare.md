@@ -22,7 +22,7 @@ Main 2 ones are:
 - Simple and quick way to `Share` files with someone using minimal tools, ideally only a browser
 
 Additionally:
-- Receiving files, like S3 presigned URLs but create a dest folder where others can upload more files and even folders
+- Receiving files, like S3 presigned URLs but it creates a dest folder where others can upload more files and even folders
 - Can combine both local files for Sync and Share and files on storage providers
 - Encryption for stored directories 
 - Backup solution with borgbackup and repo
