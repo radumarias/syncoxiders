@@ -52,13 +52,13 @@ By default it detects changes in files based on `size` and `mtime`. After copyin
 
 Other args:
 - `--dry-run`: it will not youch any files in `<DST-MNT>`, it will just print the operations  
-- `--checksum`: (disabled by default): If specified it will calculate `MD5` for files when comparing src with dst and will participate in detecting changes along with `size` and `mtime` when file was changed in both src and dat. **Please note, it will be slower when activated**
-- `--no-crc`: (disabled by default): If specified it will skip checking `CRC` check after file was transfered. Normally it compares the `CRC` of file in `src` before coping and the CRC of file in `dst` after copying, this ensures the transfer was ok. **Checking `CRC` is very recommend if any of src or dar is accessed over the network.**
+- `--checksum`: (disabled by default): If specified it will calculate `MD5` for files when comparing src with dst when applying `Add` and `Modify` operation. **Please note, it will be considerably slower when activated**
+- `--no-crc`: (disabled by default): If specified it will skip `CRC` check after file was transfered. Normally it compares the `CRC` of the file in `src` before coping with the CRC of the file in `dst` after copying, this ensures the transfer was successful. **Checking `CRC` is higly recommend if any of src or dst is accessed over the network.**
 
 ## Limitations
 
-- Conflicts are not handled yet. If file is changed in both `src` and `dst` the winner is the one from `src`. It's like `master-slave` sync where `src` is the master
-- For now it doesn't sync empty folders, not `Add`, `Delete`, or `Rename` them. This is a limitation by `git` as it handles files only. Of couse the directory tree qill be recreated in `dst` based on the file parent, just folders with no files in it will not be synced.
+- Conflicts are not handled yet. If the file is changed in both `src` and `dst` the winner is the one from `src`. It's like `master-slave` sync where `src` is the master
+- For now it doesn't sync any og `Add`, `Delete`, or `Rename` operations on empty folders. This is actually a limitation of `git` as it works only on files. Of couse the directory tree will be recreated in `dst` based on the file parent, just folders with no files in it will not be synced
 
 # Work in progress
 
