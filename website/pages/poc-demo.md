@@ -63,6 +63,10 @@ Other args:
 - Conflicts are not handled yet. If the file is changed in both `path1` and `path2` the winner is the one from `path1`. It's like `master-slave` sync where `path1` is the master
 - For now it doesn't sync any of `Add`, `Delete`, or `Rename` operations on empty folders. This is actually a limitation of `git` as it works only on files. The directory tree will be recreated in `path2` based on the file parent, but folders with no files in them will not be synced
 
+# Troubleshooting
+
+In case you experience any inconsistencies in the way the files are synced, or not synced for that matter, you can delete the `<PATH-REPO>` directory and run it again. It will see all files as new but will not copy them to the oher side if hey are already present in here and with the same content, it wil just copy the new or changed ones.
+
 # Work in progress
 
 - merge changes trees between `path1` and `path2` and resolve conflicts
