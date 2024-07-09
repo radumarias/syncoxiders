@@ -28,14 +28,6 @@ struct Args {
     #[arg(
         short,
         long,
-        short = 'x',
-        help = "A directory where we keep a git repo to detect changes. Should persist between runs. MUST NOT BE INSIDE ANY OF THE <PATH1-MNT> or <PATH2-MNT> DIRECTORIES>"
-    )]
-    path1_repo: PathBuf,
-
-    #[arg(
-        short,
-        long,
         short = 'b',
         help = "Second mount point, where actual files that needs to be synced are located."
     )]
@@ -44,10 +36,10 @@ struct Args {
     #[arg(
         short,
         long,
-        short = 'y',
-        help = "A directory where we keep a git repo to detect changes. Should persist between runs. MUST NOT BE INSIDE ANY OF THE <PATH1-MNT> or <PATH2-MNT> DIRECTORIES>"
+        short = 'r',
+        help = "A directory where we'll keep a git repo to detect changes. Should persist between runs. MUST NOT BE INSIDE ANY OF <PATH1-MNT> or <PATH2-MNT> DIRECTORIES"
     )]
-    path2_repo: PathBuf,
+    path_repo: PathBuf,
 
     #[arg(
         short,
@@ -68,7 +60,7 @@ struct Args {
     #[arg(
         short,
         long,
-        short = 'r',
+        short = 'x',
         default_value_t = false,
         help = "If specified it will skip CRC check after file was transferred. Without this it compares the CRC of the file in <PATH1-MNT> before transfer with the CRC of the file in <PATH2-MNT> after transferred. This ensures the transfer was successful. Checking CRC is highly recommend if any of <PATH1-MNT> or <PATH1-MNT> are accessed over the network"
     )]
@@ -98,9 +90,9 @@ fn main() -> Result<()> {
 
     println!("{}", "Build changes trees...".cyan());
     let (changes_tree1, errors1) =
-        changes_tree(PathWalker::new(&args.path1_mnt), &args.path1_repo)?;
+        changes_tree(PathWalker::new(&args.path1_mnt), &args.path_repo.join("1"))?;
     let (changes_tree2, errors2) =
-        changes_tree(PathWalker::new(&args.path2_mnt), &args.path2_repo)?;
+        changes_tree(PathWalker::new(&args.path2_mnt), &args.path_repo.join("2"))?;
 
     println!("{}", "Merge changes trees...".cyan());
     change_tree_merge::merge(changes_tree1, changes_tree2, MergeStrategy::OneWay)?.pipe(|x| {
@@ -120,15 +112,15 @@ fn main() -> Result<()> {
             &items_path2,
             &args.path1_mnt,
             &args.path2_mnt,
-            &args.path1_repo,
-            &args.path2_repo,
+            &args.path_repo.join("1"),
+            &args.path_repo.join("2"),
             args.dry_run,
             args.checksum,
             !args.no_crc,
         )?;
         // todo: dst -> src
-        git_add(&args.path2_repo, ".")?;
-        git_commit(&args.path2_repo)?;
+        git_add(&args.path_repo.join("1"), ".")?;
+        git_commit(&args.path_repo.join("2"))?;
         Ok(())
     })?;
 
