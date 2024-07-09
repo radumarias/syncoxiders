@@ -10,7 +10,6 @@
 - build changes tree for `src`
 - apply changes from `src` to `dst` for these operations:
     - `Add`, `Modify`, `Delete`, `Rename`
-- make sure changes are reflected on `dst` remote
 
 **We use git to catch the changes, how it works:**
 - we have 2 special directories for src and dst
@@ -66,4 +65,3 @@ Other args:
 - build changes tree for both of them
 - merge changes trees and resolve conflicts
 - apply changes to both `src` and `dst`
-- make sure changes are reflected on both remotes
