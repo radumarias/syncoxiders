@@ -10,7 +10,7 @@
 - build changes tree for `src`
 - apply changes from `src` to `dst` for these operations:
     - `Add`, `Modify`, `Delete`, `Rename`
-- make sure changes are reflected in `dst` remote
+- make sure changes are reflected on `dst` remote
 
 **We use git to catch changes, how it works:**
 - we keep a git repo for the folder in a `repo` folder
