@@ -75,20 +75,15 @@ In case you experience any inconsistencies in the way the files are synced, or n
 For a more robust first time sync after you removed the `<PATH-REPO>` directory you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files in `<PATH1-MNT>` compared to `<PATH2-MNT>`. This will result in a union from both `<PATH1-MNT>` and `<PATH2-MNT>`, no deletes will be made this first time.  
 After that you can run without the flag if you don't want to use the `MD5 hash` to determine changes.
 
-# Work in progress
+## Compile it from source code
 
-- merge changes trees between `path1` and `path2` and resolve conflicts
-- apply changes to both `path1` and `path2`
-
-# Compile it from source code
-
-## Clone the repo
+### Clone the repo
 
 ```bash
 git clone git@github.com:radumarias/syncoxiders.git
 ```
 
-## Install rust
+### Install rust
 
 [Install Rust](https://www.rust-lang.org/tools/install)
 
@@ -96,7 +91,7 @@ git clone git@github.com:radumarias/syncoxiders.git
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### Configuring the PATH environment variable
+#### Configuring the PATH environment variable
 
 In the Rust development environment, all tools are installed to the `~/.cargo/bin` directory, and this is where you will find the Rust toolchain, including rustc, cargo, and rustup.
 
@@ -110,13 +105,18 @@ You can try this also:
 $HOME/.cargo/env
 ```
 
-## Compile the code
+### Compile the code
 
 ```bash
 cargo build --release
 ```
-# Run it
+### Run it
 
 ```bash
 target/release/syncoxiders --path1-mnt <PATH1-MNT> --path2-mnt <PATH2-MNT> --path-repo <PATH-REPO>
 ```
+
+# Work in progress
+
+- merge changes trees between `path1` and `path2` and resolve conflicts
+- apply changes to both `path1` and `path2`
