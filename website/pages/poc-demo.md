@@ -6,13 +6,13 @@
 [![Watch the video](https://img.youtube.com/vi/JHQC1XpCzQw/0.jpg)](https://www.youtube.com/watch?v=JHQC1XpCzQw)
 
 **`One-way` sync:**
-- have 2 mounted folders with rclone (`path1`, `path1`)
+- have 2 mounted folders with rclone (`path1`, `path2`)
 - build changes tree for `path1`
 - apply changes from `path1` to `path2` for these operations:
     - `Add`, `Modify`, `Delete`, `Rename`
 
 **We use `git` to catch the changes, how it works:**
-- we have 2 special directories for `path1` and `path1`
+- we have 2 special directories for `path1` and `path2`
     - `mnt`: where the actual files that needs to be sync are
     - `repo`: a git repo we create that should persist between runs
 - inside the `repo` we create a `tree` directory and create the tree structure from `mnt` in there
