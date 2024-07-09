@@ -22,6 +22,13 @@
     - on `Add` and `Modify` we check if the file is already present in `path2` and if it's the same content as in `path1` we skip it
     - comparison between the files is made using `size`, `mtime` and `MD5 hash`, if enabled
     - on `Rename` if the `old` file is not present in the `path2` to move it, we copy it from `path1`
+- changes are applied wth WAL logic, we use git changes as WAL
+     - after we build the changes tree we unstage all changes
+     - after we applied a change for a file we stage that file in git
+     - periodically we commit staged ones
+     - after applying all changes we commit remainig staged ones
+     - like this if process is suddenly interrupted the next time it runs it will see as chnaged only not applied changes and will apply them
+     - this hapens until all pending changes are applied
 
 # Using CLI
 
