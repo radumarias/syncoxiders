@@ -51,7 +51,7 @@ For now, it does `One-way` sync propagating these operations from `src` to `dst`
 By default it detects changes in files based on `size` and `mtime`. After copying to `dst` it will set also `atime` and `mtime` for the files.
 
 Other args:
-- `--dry-run`: it will not youch any files in `<SRC-MNT>`, it will just print the operations  
+- `--dry-run`: it will not youch any files in `<DST-MNT>`, it will just print the operations  
 - `--checksum`: (disabled by default): If specified it will calculate `MD5` for each file and keep it in the git repo files. It will participate in detecting changes along with `size` and `mtime`. **Please note, it will be much slower when activated.**
 - `--no-crc`: (disabled by default): If specified it will skip checking `CRC` after file was transfered. Normally it compare `CRC` of file in `src` before coping and the file in `dst` after copying, this ensures the transfer was ok. **Checking `CRC` is mostly useful if disk is accessed over the network.`
 
