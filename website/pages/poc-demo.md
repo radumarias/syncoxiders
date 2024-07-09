@@ -11,7 +11,7 @@
 - apply changes from `src` to `dst` for these operations:
     - `Add`, `Modify`, `Delete`, `Rename`
 
-**We use git to catch the changes, how it works:**
+**We use `git` to catch the changes, how it works:**
 - we have 2 special directories for src and dst
     - `mnt`: where the actual files are
     - `repo`: a git repo that should persist between runs
