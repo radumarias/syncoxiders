@@ -106,5 +106,5 @@ cargo build --release
 # Run it
 
 ```bash
-./target/release/syncoxiders -a <PATH1-MNT> -B <PATH2-MNT> -R -a <PATH-REPO>
+./target/release/syncoxiders --path1-mnt <PATH1-MNT> --path2-mnt <PATH2-MNT> --path-repo <PATH-REPO>
 ```
