@@ -12,7 +12,7 @@
     - `Add`, `Modify`, `Delete`, `Rename`
 - make sure changes are reflected on `dst` remote
 
-**We use git to catch changes, how it works:**
+**We use git to catch the changes, how it works:**
 - we keep a git repo for the folder in a `repo` folder
 - we have 2 special directories for src and dst
     - `mnt`: where the actual files are
