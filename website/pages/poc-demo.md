@@ -6,62 +6,58 @@
 [![Watch the video](https://img.youtube.com/vi/JHQC1XpCzQw/0.jpg)](https://www.youtube.com/watch?v=JHQC1XpCzQw)
 
 **`One-way` sync:**
-- have 2 mounted folders with rclone (`src`, `dst`)
-- build changes tree for `src`
-- apply changes from `src` to `dst` for these operations:
+- have 2 mounted folders with rclone (`path1`, `path1`)
+- build changes tree for `path1`
+- apply changes from `path1` to `path2` for these operations:
     - `Add`, `Modify`, `Delete`, `Rename`
 
 **We use `git` to catch the changes, how it works:**
-- we have 2 special directories for src and dst
-    - `mnt`: where the actual files are
-    - `repo`: a git repo that should persist between runs
-- inside the `repo` we create a `tree` directory and create the tree structure from `mnt`
-- in the files content we keep the `size`, `mtime`
-- we do `git add .`
-- then `git status -s` shows what's changed, we use `git2` crate to interact with git
-- after we have the changes tree we apply them to `dst` `mnt`
-    - on `Add` and `Modify` we check if the file is already present in `dst` and if it's the same as in `src` we skip it
+- we have 2 special directories for `path1` and `path1`
+    - `mnt`: where the actual files that needs to be sync are
+    - `repo`: a git repo we create that should persist between runs
+- inside the `repo` we create a `tree` directory and create the tree structure from `mnt` in there
+- in the files content we keep `size` and `mtime`
+- we do `git add .`, then `git status -s` shows what's changed, we use `git2` crate to interact with git
+- after we have the changes tree we apply them to `path2` `mnt`
+    - on `Add` and `Modify` we check if the file is already present in `path2` and if it's the same content as in `path1` we skip it
     - comparison between the files is made using `size`, `mtime` and `MD5 hash`, if enabled
-    - on `Rename` if the `old` file is not present in the `dst` to move it, we copy from `src`
+    - on `Rename` if the `old` file is not present in the `path2` to move it, we copy it from `path1`
 
 # Using CLI
 
-You can take the binaries from here for target [x86_64-unknown-linux-gnu](https://drive.google.com/file/d/1UnWR5rnPfOW3OBLu21xJySPDVHkEbb-v/view?usp=sharing).  
+You can take the binary from here for target [x86_64-unknown-linux-gnu](https://drive.google.com/file/d/1UnWR5rnPfOW3OBLu21xJySPDVHkEbb-v/view?usp=sharing).  
 For other targets you could clone the repo and build it.
 
 You can run `syncoxiders -h` to see all args. The basic usage is like this:
 
 ```bash
-syncoxiders --src-mnt <SRC-MNT> --src-repo <SRC-REPO> --dst-mnt <DST-MNT> --src-repo <DST-REPO>
+syncoxiders --path1-mnt <PATH1-MNT> --path1-repo <PATH1-REPO> --path2-mnt <PATH2-MNT> --path2-repo <PATH2-REPO>
 ```
 
-`<SRC-MNT>`: where the actual files are for `src` side  
-`<SRC-REPO>`: a folder that should persist between runs, it creates a `git` repo with metadata from files from `src`  
-`<DST-MNT>`: where the actual files are for `dst` side  
-`<DST-REPO>`: a folder that should persist between runs, it creates a `git` repo with metadata from files from `dst`
+- `<PATH1-MNT>`: where the actual files are for `path1` side
+- `<PATH1-REPO>`: a folder that should persist between runs, we create a `git` repo with metadata from files from `path1`. **THIS MUST NOT BE INSIDE `<PATH1-MNT>`**. If it doesn't persist next time it runs it will see all files in `path1` as `Add`ed, but will skip them if are already the same as in `path1`
+- `<PATH2-MNT>`: where the actual files are for `path2` side
+- `<PATH2-REPO>`: a folder that should persist between runs, we create a `git` repo with metadata from files from `path2`. **THIS MUST NOT BE INSIDE `<PATH2-MNT>`**. If it doesn't persist next time it runs it will see all files in `path2` as `Add`ed, but will skip them if are already the same as in `path2`
 
-For now, it does `One-way` sync propagating these operations from `src` to `dst`:
+For now, it does `One-way` sync propagating these operations from `path1` to `path2`:
 - `Add`, `Modify`, `Delete`, `Rename`
-- on `Add` and `Modify` we check if the file is already present in `dst` and if it's the same as in `src` we skip it
+- on `Add` and `Modify` we check if the file is already present in `path2` and if it's the same as in `path1` we skip it
 - comparison between the files is made using `size`, `mtime` and `MD5 hash`, if enabled, see `--checksum` arg below
-- on `Rename` if the `old` file is not present in the `dst` to move it, we copy from `src`
+- on `Rename` if the `old` file is not present in the `path2` to move it, we copy it from `path1`
 
-
-By default it detects changes in files based on `size` and `mtime`. After copying to `dst` it will set also `atime` and `mtime` for the files.
+By default it detects changes in files based on `size` and `mtime`. After copying to `path2` it will set also `atime` and `mtime` for the files.
 
 Other args:
-- `--dry-run`: it will not youch any files in `<DST-MNT>`, it will just print the operations  
-- `--checksum`: (disabled by default): If specified it will calculate `MD5` for files when comparing src with dst when applying `Add` and `Modify` operation. **Please note, it will be considerably slower when activated**
-- `--no-crc`: (disabled by default): If specified it will skip `CRC` check after file was transfered. Normally it compares the `CRC` of the file in `src` before coping with the CRC of the file in `dst` after copying, this ensures the transfer was successful. **Checking `CRC` is higly recommend if any of src or dst is accessed over the network.**
+- `--dry-run`: it will not youch any files in `<PATH2-MNT>`, it will just print the operations
+- `--checksum`: (disabled by default): if specified it will calculate `MD5 hash` for files when comparing file in `path1` with the file in `path2` when applying `Add` and `Modify` operation. **Please note, it will be considerably slower when activated**
+- `--no-crc`: (disabled by default): if specified it will skip `CRC` check after file was transfered. Normally it compares the `CRC` of the file in `path1` before coping with the `CRC` of the file in `path1` after transferred. This ensures the transfer was successful. **Checking `CRC` is higly recommend if any of `path1` or `path2` are accessed over the network.**
 
 ## Limitations
 
-- Conflicts are not handled yet. If the file is changed in both `src` and `dst` the winner is the one from `src`. It's like `master-slave` sync where `src` is the master
-- For now it doesn't sync any og `Add`, `Delete`, or `Rename` operations on empty folders. This is actually a limitation of `git` as it works only on files. Of couse the directory tree will be recreated in `dst` based on the file parent, just folders with no files in it will not be synced
+- Conflicts are not handled yet. If the file is changed in both `path1` and `path2` the winner is the one from `path1`. It's like `master-slave` sync where `path1` is the master
+- For now it doesn't sync any of `Add`, `Delete`, or `Rename` operations on empty folders. This is actually a limitation of `git` as it works only on files. The directory tree will be recreated in `path2` based on the file parent, but folders with no files in them will not be synced
 
 # Work in progress
 
-- have 2 mounted folders with rclone (`src`, `dst`)
-- build changes tree for both of them
-- merge changes trees and resolve conflicts
-- apply changes to both `src` and `dst`
+- merge changes trees between `path1` and `path2` and resolve conflicts
+- apply changes to both `path1` and `path2`
