@@ -84,9 +84,13 @@ git clone git@github.com:radumarias/syncoxiders.git
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-Accordingly, it is customary for Rust developers to include this directory in their `PATH` environment variable. During installation rustup will attempt to configure the PATH. Because of differences between platforms, command shells, and bugs in rustup, the modifications to PATH may not take effect until the console is restarted, or the user is logged out, or it may not succeed at all.
+### Configuring the PATH environment variable
 
-If, after installation, running `rustc --version` in the console fails, this is the most likely reason. In that case please add it to the `PATH` manually.
+In the Rust development environment, all tools are installed to the `~/.cargo/bin` directory, and this is where you will find the Rust toolchain, including rustc, cargo, and rustup.
+
+Accordingly, it is customary for Rust developers to include this directory in their `PATH` environment variable. During installation rustup will attempt to configure the `PATH`. Because of differences between platforms, command shells, and bugs in rustup, the modifications to PATH may not take effect until the console is restarted, or the user is logged out, or it may not succeed at all.
+
+If, after installation, running `rustc --version` in the console fails, this is the most likely reason.
 
 You can try this also:
 
