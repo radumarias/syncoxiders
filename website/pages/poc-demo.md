@@ -98,5 +98,9 @@ $HOME/.cargo/env
 
 ```bash
 cargo build --release
+```
+# Run it
+
+```bash
 ./target/release/syncoxiders -a <PATH1-MNT> -B <PATH2-MNT> -R -a <PATH-REPO>
 ```
