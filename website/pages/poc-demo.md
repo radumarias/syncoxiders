@@ -15,7 +15,7 @@
 **We use git to catch the changes, how it works:**
 - we have 2 special directories for src and dst
     - `mnt`: where the actual files are
-    - `repo`: the git repo that must persist between runs
+    - `repo`: a git repo that must persist between runs
 - inside the `repo` we create a `tree` directory and create the tree structure from `mnt`
 - in the files content we keep the `size`, `mtime` and a `MD5 hash` of the content of the file, if we use `--checksum` param on run, see below. Please note it's considerably slower with this enabled
 - we do `git add .`
