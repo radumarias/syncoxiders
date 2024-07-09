@@ -35,9 +35,9 @@ syncoxiders --path1-mnt <PATH1-MNT> --path1-repo <PATH1-REPO> --path2-mnt <PATH2
 ```
 
 - `<PATH1-MNT>`: where the actual files are for `path1` side
-- `<PATH1-REPO>`: a folder that should persist between runs, we create a `git` repo with metadata from files from `path1`. **THIS MUST NOT BE INSIDE `<PATH1-MNT>`**. If it doesn't persist next time it runs it will see all files in `path1` as `Add`ed, but will skip them if are already the same as in `path1`
+- `<PATH1-REPO>`: a folder that should persist between runs, we create a `git` repo with metadata from files from `path1`. **MUST NOT BE INSIDE ANY OF THE `MNT` DIRECTORIES**. If it doesn't persist next time it runs it will see all files in `path1` as `Add`ed, but will skip them if are already the same as in `path1`
 - `<PATH2-MNT>`: where the actual files are for `path2` side
-- `<PATH2-REPO>`: a folder that should persist between runs, we create a `git` repo with metadata from files from `path2`. **THIS MUST NOT BE INSIDE `<PATH2-MNT>`**. If it doesn't persist next time it runs it will see all files in `path2` as `Add`ed, but will skip them if are already the same as in `path2`
+- `<PATH2-REPO>`: a folder that should persist between runs, we create a `git` repo with metadata from files from `path2`. **MUST NOT BE INSIDE ANY OF THE `MNT` DIRECTORIES**. If it doesn't persist next time it runs it will see all files in `path2` as `Add`ed, but will skip them if are already the same as in `path2`
 
 For now, it does `One-way` sync propagating these operations from `path1` to `path2`:
 - `Add`, `Modify`, `Delete`, `Rename`
