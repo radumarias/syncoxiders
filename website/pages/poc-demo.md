@@ -58,14 +58,22 @@ Other args:
 - `--checksum`: (disabled by default): if specified it will calculate `MD5 hash` for files when comparing file in `path1` with the file in `path2` when applying `Add` and `Modify` operations. **It will be considerably slower when activated**
 - `--no-crc`: (disabled by default): if specified it will skip `CRC` check after file was transferred. Without this it compares the `CRC` of the file in `path1` before transfer with the `CRC` of the file in `path1` after transferred. This ensures the transfer was successful. **Checking `CRC` is highly recommend if any of `path1` or `path2` are accessed over the network.**
 
+## First sync
+
+For a more robust sync, if this is the first time you sync the 2 directories and `<PATH2-MNT>` is not empty, that is if both `<PATH1-MNT>` and `<PATH2-MNT>` have some files but different ones (they are not in sync) you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files in `<PATH1-MNT>` compared to `<PATH2-MNT>`. This will result in a union from both `<PATH1-MNT>` and `<PATH2-MNT>`, no deletes will be made this first time.  
+Similarly you should do if you delete the `<REPO-MNT>` dirctory.  
+After that you can run without the flag if you don't want to use the `MD5 hash` to determine changes.
+
 ## Limitations
 
 - Conflicts are not handled yet. If the file is changed in both `path1` and `path2` the winner is the one from `path1`. It's like `master-slave` sync where `path1` is the master
 - For now it doesn't sync any of `Add`, `Delete`, or `Rename` operations on empty folders. This is actually a limitation of `git` as it works only on files. The directory tree will be recreated in `path2` based on the file parent, but folders with no files in them will not be synced
 
-# Troubleshooting
+## Troubleshooting
 
-In case you experience any inconsistencies in the way the files are synced, or not synced for that matter, you can delete the `<PATH-REPO>` directory and run it again. It will see all files as new but will not copy them to the oher side if hey are already present in here and with the same content, it wil just copy the new or changed ones.
+In case you experience any inconsistencies in the way the files are synced, or not synced for that matter, you can delete the `<PATH-REPO>` directory and run it again. It will see all files as new but will not copy them to the oher side if hey are already present in here and with the same content, it wil just copy the new or changed ones.  
+For a more robust first time sync after you removed the `<PATH-REPO>` directory you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files in `<PATH1-MNT>` compared to `<PATH2-MNT>`. This will result in a union from both `<PATH1-MNT>` and `<PATH2-MNT>`, no deletes will be made this first time.  
+After that you can run without the flag if you don't want to use the `MD5 hash` to determine changes.
 
 # Work in progress
 
