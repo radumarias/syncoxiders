@@ -2,7 +2,7 @@
 
 # How it works for now
 
-`One-way` sync for `Add`, `Modify`, `Delete`, `Rename`. You can see here a short demo:  
+`One-way` sync for `Add`, `Modify`, `Delete`, `Rename` operations. You can see here a short demo:  
 [![Watch the video](https://img.youtube.com/vi/JHQC1XpCzQw/0.jpg)](https://www.youtube.com/watch?v=JHQC1XpCzQw)
 
 **`One-way` sync:**
