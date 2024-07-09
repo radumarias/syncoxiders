@@ -18,7 +18,7 @@ Some of them are hard to use especially for non-technical users and also they la
 ## What we offer better or additionally
 
 Main 2 ones are:
-- True real-time `Sync` and especially `Share` between storage providers (but local files too)
+- True real-time `Sync` and especially `Share` between storage providers (but also for local files)
 - Simple and quick way to `Share` files with someone using minimal tools, ideally only a browser
 
 Additionally:
