@@ -53,7 +53,7 @@ By default it detects changes in files based on `size` and `mtime`. After copyin
 Other args:
 - `--dry-run`: it will not youch any files in `<DST-MNT>`, it will just print the operations  
 - `--checksum`: (disabled by default): If specified it will calculate `MD5` for files when comparing src with dst and will participate in detecting changes along with `size` and `mtime` when file was changed in both src and dat. **Please note, it will be slower when activated**
-- `--no-crc`: (disabled by default): If specified it will skip checking `CRC` check after file was transfered. Normally it compare `CRC` of file in `src` before coping and the file in `dst` after copying, this ensures the transfer was ok. **Checking `CRC` is mostly useful if disk is accessed over the network.`
+- `--no-crc`: (disabled by default): If specified it will skip checking `CRC` check after file was transfered. Normally it compares the `CRC` of file in `src` before coping and the CRC of file in `dst` after copying, this ensures the transfer was ok. **Checking `CRC` is very recommend if any of src or dar is accessed over the network.**
 
 ## Limitations
 
