@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io;
 use std::io::{BufReader, Read};
 use std::path::Path;
+use std::process::Command;
 
 pub mod apply_change;
 pub mod change_tree;
@@ -69,4 +70,55 @@ pub fn file_hash(path: &Path, kind: HashKind) -> io::Result<String> {
             unimplemented!("sha256")
         }
     }
+}
+
+pub fn git_status(repo: &Path) -> Result<String> {
+    command("git", vec!["status", "-s"], repo)
+}
+
+pub fn git_add(repo: &Path, path_specs: &str) -> Result<()> {
+    command("git", vec!["add", path_specs], repo)?;
+    Ok(())
+}
+
+pub fn command(command: &str, args: Vec<&str>, dir: &Path) -> Result<String> {
+    let mut c = Command::new(command);
+    let c = c.current_dir(dir);
+    let c = args.iter().fold(c, |c, arg| c.arg(arg));
+    let output = c.output().expect("Failed to execute command");
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        anyhow::bail!(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+pub fn git_restore_staged(repo: &Path, path_specs: &str) -> Result<()> {
+    command(
+        "git",
+        vec!["rm", "--cached", "--ignore-unmatch", "-r", path_specs],
+        repo,
+    )?;
+    let _ = command("git", vec!["restore", "--staged", path_specs], repo);
+    Ok(())
+}
+
+pub fn git_commit(repo: &Path) -> Result<()> {
+    // repo.commit(
+    //     Some("HEAD"),
+    //     &repo.signature().unwrap(),
+    //     &repo.signature().unwrap(),
+    //     if new_repo { "Initial commit" } else { "Update" },
+    //     &repo
+    //         .find_tree(repo.index().unwrap().write_tree().unwrap())
+    //         .unwrap(),
+    //     &[&repo.head().unwrap().peel_to_commit().unwrap()],
+    // )
+    // .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    command(
+        "git",
+        vec!["commit", "--allow-empty", "-m", "\"changes\""],
+        repo,
+    )?;
+    Ok(())
 }

@@ -1,15 +1,14 @@
-use crate::TREE_DIR;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
-use std::process::Command;
 use std::{fmt, fs, io};
 
 use anyhow::Result;
 use git2::{Repository, Status};
 use slab_tree::{NodeId, Tree, TreeBuilder};
 
-use crate::tree_creator;
+use crate::git_status;
 use crate::tree_creator::Item;
+use crate::{git_restore_staged, tree_creator};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
@@ -62,6 +61,8 @@ pub struct ChangeTree {
 }
 
 pub fn build(items: Vec<Item>, repo: &Path) -> Result<(ChangeTree, BTreeMap<String, Item>)> {
+    use crate::TREE_DIR;
+
     if repo.exists() && !repo.is_dir() {
         anyhow::bail!("Destination is not a directory");
     }
@@ -78,11 +79,7 @@ pub fn build(items: Vec<Item>, repo: &Path) -> Result<(ChangeTree, BTreeMap<Stri
         Err(e) => Err(io::Error::new(io::ErrorKind::Other, e))?,
     };
 
-    command("git", vec!["add", "."], repo.workdir().unwrap())?;
-    // repo.index()
-    //     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
-    //     .add_all(["."].iter(), git2::IndexAddOption::DEFAULT, None)
-    //     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    crate::git_add(repo.workdir().unwrap(), ".")?;
     let mut items_map: BTreeMap<_, _> = items
         .into_iter()
         .map(|data| (data.path.clone(), data))
@@ -128,7 +125,7 @@ pub fn build(items: Vec<Item>, repo: &Path) -> Result<(ChangeTree, BTreeMap<Stri
             .map_or("".to_string(), |x| x.path.clone()),
         root_id,
     );
-    for line in command("git", vec!["status", "-s"], repo.workdir().unwrap())?.lines() {
+    for line in git_status(&repo.workdir().unwrap().join(TREE_DIR))?.lines() {
         let change = line.chars().take(1).collect::<String>();
         let mut path = line.chars().skip(3).collect::<String>();
         let change = match change.as_str() {
@@ -145,21 +142,16 @@ pub fn build(items: Vec<Item>, repo: &Path) -> Result<(ChangeTree, BTreeMap<Stri
                 let mut old_path = capture[0].clone();
                 if old_path.starts_with("\\\"") {
                     old_path = old_path
-                        .strip_prefix(&format!("\\\"{TREE_DIR}/"))
+                        .strip_prefix("\\\"")
                         .unwrap()
                         .strip_suffix("\\\"")
                         .unwrap()
                         .to_string();
                 } else if old_path.starts_with('\"') {
                     old_path = old_path
-                        .strip_prefix(&format!("\"{TREE_DIR}/"))
+                        .strip_prefix('"')
                         .unwrap()
                         .strip_suffix('\"')
-                        .unwrap()
-                        .to_string();
-                } else {
-                    old_path = old_path
-                        .strip_prefix(&format!("{TREE_DIR}/"))
                         .unwrap()
                         .to_string();
                 }
@@ -175,21 +167,16 @@ pub fn build(items: Vec<Item>, repo: &Path) -> Result<(ChangeTree, BTreeMap<Stri
         // println!("{} {}", change, path);
         if path.starts_with("\\\"") {
             path = path
-                .strip_prefix(&format!("\\\"{TREE_DIR}/"))
+                .strip_prefix("\\\"")
                 .unwrap()
                 .strip_suffix("\\\"")
                 .unwrap()
                 .to_string();
         } else if path.starts_with('\"') {
             path = path
-                .strip_prefix(&format!("\"{TREE_DIR}/"))
+                .strip_prefix('"')
                 .unwrap()
                 .strip_suffix('\"')
-                .unwrap()
-                .to_string();
-        } else {
-            path = path
-                .strip_prefix(&format!("{TREE_DIR}/"))
                 .unwrap()
                 .to_string();
         }
@@ -211,24 +198,7 @@ pub fn build(items: Vec<Item>, repo: &Path) -> Result<(ChangeTree, BTreeMap<Stri
         nodes_idx.insert(path, child_id);
     }
 
-    // repo.commit(
-    //     Some("HEAD"),
-    //     &repo.signature().unwrap(),
-    //     &repo.signature().unwrap(),
-    //     if new_repo { "Initial commit" } else { "Update" },
-    //     &repo
-    //         .find_tree(repo.index().unwrap().write_tree().unwrap())
-    //         .unwrap(),
-    //     &[&repo.head().unwrap().peel_to_commit().unwrap()],
-    // )
-    // .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    if nodes_idx.len() > 1 {
-        command(
-            "git",
-            vec!["commit", "-m", "\"changes\""],
-            repo.workdir().unwrap(),
-        )?;
-    }
+    git_restore_staged(repo.workdir().unwrap(), ".")?;
 
     Ok((
         ChangeTree {
@@ -262,19 +232,5 @@ fn get_parent(path: &str, tree: &mut Tree<Node>, idx: &mut HashMap<String, NodeI
         idx.insert(path.to_string(), child_id);
 
         parent_node_id
-    }
-}
-
-fn command(command: &str, args: Vec<&str>, dir: &Path) -> Result<String> {
-    let mut c = Command::new(command);
-    let c = c.current_dir(dir);
-    let c = args.iter().fold(c, |c, arg| c.arg(arg));
-    let output = c.output().expect("Failed to execute command");
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        println!("{}", String::from_utf8_lossy(&output.stderr));
-        println!("{}", String::from_utf8_lossy(&output.stdout));
-        anyhow::bail!(String::from_utf8_lossy(&output.stderr).to_string())
     }
 }

@@ -10,7 +10,9 @@ use file_tree_merge::change_tree::ChangeTree;
 use file_tree_merge::change_tree_merge::MergeStrategy;
 use file_tree_merge::path_walker::PathWalker;
 use file_tree_merge::tree_creator::{Item, TreeCreator};
-use file_tree_merge::{apply_change, change_tree, change_tree_merge, TREE_DIR};
+use file_tree_merge::{
+    apply_change, change_tree, change_tree_merge, git_add, git_commit, TREE_DIR,
+};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -45,7 +47,7 @@ struct Args {
         short = 'y',
         help = "A directory where we keep a git repo to detect changes. Should persist between runs. MUST NOT BE INSIDE ANY OF THE <PATH1-MNT> or <PATH2-MNT> DIRECTORIES>"
     )]
-    path_repo: PathBuf,
+    path2_repo: PathBuf,
 
     #[arg(
         short,
@@ -97,31 +99,37 @@ fn main() -> Result<()> {
     println!("{}", "Build changes trees...".cyan());
     let (changes_tree1, errors1) =
         changes_tree(PathWalker::new(&args.path1_mnt), &args.path1_repo)?;
-    let (changes_tree2, errors2) = changes_tree(PathWalker::new(&args.path2_mnt), &args.path_repo)?;
+    let (changes_tree2, errors2) =
+        changes_tree(PathWalker::new(&args.path2_mnt), &args.path2_repo)?;
 
     println!("{}", "Merge changes trees...".cyan());
     change_tree_merge::merge(changes_tree1, changes_tree2, MergeStrategy::OneWay)?.pipe(|x| {
         if x.0 .0.is_empty() && x.1 .0.is_empty() {
             println!("{}", "No changes to apply".green());
-            return Ok(());
+            return Ok::<(), anyhow::Error>(());
         }
         if !args.dry_run {
             println!("{}", "Apply changes...".cyan());
         }
         println!("{}", "src -> dst...".cyan());
-        let (changes_src, items_src) = x.0;
-        let (_changes_dst, items_dst) = x.1;
+        let (changes_src, items_path1) = x.0;
+        let (_changes_dst, items_path2) = x.1;
         apply_change::apply(
             &changes_src,
-            &items_src,
-            &items_dst,
+            &items_path1,
+            &items_path2,
             &args.path1_mnt,
             &args.path2_mnt,
+            &args.path1_repo,
+            &args.path2_repo,
             args.dry_run,
             args.checksum,
             !args.no_crc,
-        )
+        )?;
         // todo: dst -> src
+        git_add(&args.path2_repo, ".")?;
+        git_commit(&args.path2_repo)?;
+        Ok(())
     })?;
 
     if !errors1.is_empty() {

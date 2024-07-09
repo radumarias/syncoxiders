@@ -13,14 +13,14 @@ pub enum MergeStrategy {
 
 pub type Changes = Vec<(Change, String)>;
 pub type Items = BTreeMap<String, Item>;
-pub type SrcChanges = (Changes, Items);
-pub type DstChanges = (Changes, Items);
+pub type Path1Changes = (Changes, Items);
+pub type Path2Changes = (Changes, Items);
 
 pub fn merge(
     changes_src: (ChangeTree, BTreeMap<String, Item>),
     changes_dst: (ChangeTree, BTreeMap<String, Item>),
     strategy: MergeStrategy,
-) -> Result<(SrcChanges, DstChanges)> {
+) -> Result<(Path1Changes, Path2Changes)> {
     match strategy {
         MergeStrategy::Copy => unimplemented!(),
         MergeStrategy::Move => unimplemented!(),
@@ -29,7 +29,7 @@ pub fn merge(
     }
 }
 
-fn do_one_way(changes_path1: (ChangeTree, BTreeMap<String, Item>)) -> Result<SrcChanges> {
+fn do_one_way(changes_path1: (ChangeTree, BTreeMap<String, Item>)) -> Result<Path1Changes> {
     let mut changes = vec![];
     let (changes_path1, items_path1) = changes_path1;
     if changes_path1.tree.root().unwrap().first_child().is_some() {

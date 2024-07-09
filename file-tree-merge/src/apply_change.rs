@@ -5,7 +5,7 @@ use std::{fs, io};
 
 use crate::change_tree_merge::{Changes, HashKind, Items};
 use crate::tree_creator::Item;
-use crate::{crc_eq, file_hash};
+use crate::{crc_eq, file_hash, git_add, git_commit, TREE_DIR};
 use anyhow::Result;
 use colored::*;
 
@@ -15,12 +15,18 @@ pub fn apply(
     items_path2: &Items,
     path1_mnt: &Path,
     path2_mnt: &Path,
+    path1_repo: &Path,
+    _path2_repo: &Path,
     dry_run: bool,
     checksum: bool,
     crc: bool,
 ) -> Result<()> {
+    if changes.is_empty() {
+        return Ok(());
+    }
+    let mut i = 0;
     for (change, path) in changes {
-        let path2 = path2_mnt.join(&path);
+        let path2 = path2_mnt.join(path);
         match change.clone() {
             Change::Add | Change::Modify => {
                 if matches!(change, Change::Add) {
@@ -91,13 +97,13 @@ pub fn apply(
                     File::set_times(&File::open(path2.clone())?, path1_item.times)?;
                     File::open(path2.clone())?.sync_all()?;
                     File::open(path2.parent().unwrap())?.sync_all()?;
-                }
-                if crc && !crc_eq(&path1_mnt.join(&path), &path2.clone())? {
-                    println!(
-                        "{}",
-                        "   CRC check failed after transfer, aborting".red().bold()
-                    );
-                    anyhow::bail!("CRC check failed for `{path}` after transfer");
+                    if crc && !crc_eq(&path1_mnt.join(&path), &path2.clone())? {
+                        println!(
+                            "{}",
+                            "   CRC check failed after transfer, aborting".red().bold()
+                        );
+                        anyhow::bail!("CRC check failed for `{path}` after transfer");
+                    }
                 }
             }
             Change::Copy(old_path) => {
@@ -127,7 +133,14 @@ pub fn apply(
                 }
             }
         }
+        git_add(&path1_repo.join(TREE_DIR), path)?;
+        if i % 100 == 0 {
+            git_commit(path1_repo)?;
+        }
+        i += 1;
     }
+    git_add(&path1_repo.join(TREE_DIR), ".")?;
+    git_commit(path1_repo)?;
 
     Ok(())
 }
