@@ -48,9 +48,9 @@ For now, it does `One-way` sync propagating these operations from `path1` to `pa
 By default it detects changes in files based on `size` and `mtime`. After copying to `path2` it will set also `atime` and `mtime` for the files.
 
 Other args:
-- `--dry-run`: it will not youch any files in `<PATH2-MNT>`, it will just print the operations
-- `--checksum`: (disabled by default): if specified it will calculate `MD5 hash` for files when comparing file in `path1` with the file in `path2` when applying `Add` and `Modify` operation. **Please note, it will be considerably slower when activated**
-- `--no-crc`: (disabled by default): if specified it will skip `CRC` check after file was transfered. Normally it compares the `CRC` of the file in `path1` before coping with the `CRC` of the file in `path1` after transferred. This ensures the transfer was successful. **Checking `CRC` is higly recommend if any of `path1` or `path2` are accessed over the network.**
+- `--dry-run`: this simulates the sync. Will not actually create or change any of the files in `path1` `mnt` or `path2` `mnt`, will just print the operations that would have normally be applied to both ends
+- `--checksum`: (disabled by default): if specified it will calculate `MD5 hash` for files when comparing file in `path1` with the file in `path2` when applying `Add` and `Modify` operations. **It will be considerably slower when activated**
+- `--no-crc`: (disabled by default): if specified it will skip `CRC` check after file was transferred. Without this it compares the `CRC` of the file in `path1` before transfer with the `CRC` of the file in `path1` after transferred. This ensures the transfer was successful. **Checking `CRC` is highly recommend if any of `path1` or `path2` are accessed over the network.**
 
 ## Limitations
 
