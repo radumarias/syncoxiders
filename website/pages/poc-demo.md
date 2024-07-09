@@ -67,3 +67,36 @@ Other args:
 
 - merge changes trees between `path1` and `path2` and resolve conflicts
 - apply changes to both `path1` and `path2`
+
+# Compile it from source code
+
+## Clone the repo
+
+```bash
+git clone git@github.com:radumarias/syncoxiders.git
+```
+
+## Install rust
+
+[Install Rust](https://www.rust-lang.org/tools/install)
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Accordingly, it is customary for Rust developers to include this directory in their `PATH` environment variable. During installation rustup will attempt to configure the PATH. Because of differences between platforms, command shells, and bugs in rustup, the modifications to PATH may not take effect until the console is restarted, or the user is logged out, or it may not succeed at all.
+
+If, after installation, running `rustc --version` in the console fails, this is the most likely reason. In that case please add it to the `PATH` manually.
+
+You can try this also:
+
+```bash
+$HOME/.cargo/env
+```
+
+## Compile the code
+
+```bash
+cargo build --release
+./target/release/syncoxiders -a <PATH1-MNT> -B <PATH2-MNT> -R -a <PATH-REPO>
+```
