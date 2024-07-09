@@ -1,0 +1,31 @@
+name: ci
+on:
+  push:
+    branches: [ main, release ]
+  pull_request:
+    branches: [ main, release ]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+  
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0 # TODO: remove this when we cache the builds
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Rust
+      run: rustup update
+
+    - name: build
+      run: cargo build --all --release
+
+    - name: upload binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: syncoxiders
+        path: ./target/release/syncoxiders
