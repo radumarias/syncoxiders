@@ -122,3 +122,12 @@ pub fn git_commit(repo: &Path) -> Result<()> {
     )?;
     Ok(())
 }
+
+pub fn git_delete_history(repo: &Path) -> Result<()> {
+    command("git", vec!["checkout", "--orphan", "latest_branch"], repo)?;
+    git_add(repo, "-A")?;
+    git_commit(repo)?;
+    command("git", vec!["branch", "-D", "master"], repo)?;
+    command("git", vec!["branch", "-m", "master"], repo)?;
+    Ok(())
+}

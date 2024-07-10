@@ -37,12 +37,13 @@ pub fn apply(
     let items_path1 = Arc::new(Mutex::new(items_path1));
     let items_path2 = Arc::new(Mutex::new(items_path2));
     let mut to_process = vec![];
-    let batch_size = 1000;
+    let process_batch_size = 1000;
+    let print_batch_size = 100;
     let commit_after_size_bytes = 64 * 1024 * 1024;
     let git_lock = Arc::new(Mutex::new(()));
     for (change, path) in changes {
         to_process.push((change.clone(), path.to_string()));
-        if to_process.len() % batch_size == 0 {
+        if to_process.len() % process_batch_size == 0 {
             // Process the collection in parallel
             let res: Vec<Result<()>> = to_process
                 .par_iter() // Convert the vector into a parallel iterator
@@ -61,7 +62,7 @@ pub fn apply(
                         crc,
                         &total,
                         git_lock.clone(),
-                        batch_size,
+                        print_batch_size,
                         &synced,
                         &applied_size_since_commit,
                         commit_after_size_bytes,
@@ -104,7 +105,7 @@ pub fn apply(
                 crc,
                 &total,
                 git_lock.clone(),
-                batch_size,
+                print_batch_size,
                 &synced,
                 &applied_size_since_commit,
                 commit_after_size_bytes,

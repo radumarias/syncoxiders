@@ -11,7 +11,7 @@ use file_tree_merge::change_tree_merge::MergeStrategy;
 use file_tree_merge::path_walker::PathWalker;
 use file_tree_merge::tree_creator::{Item, TreeCreator};
 use file_tree_merge::{
-    apply_change, change_tree, change_tree_merge, git_add, git_commit, TREE_DIR,
+    apply_change, change_tree, change_tree_merge, git_add, git_commit, git_delete_history, TREE_DIR,
 };
 
 #[derive(Parser, Debug)]
@@ -119,9 +119,12 @@ fn main() -> Result<()> {
             args.checksum,
             !args.no_crc,
         )?;
+        println!("{}", "Cleanup repo...".cyan());
+        git_delete_history(&args.path_repo.join("1"))?;
         // todo: dst -> src
         git_add(&args.path_repo.join("1"), ".")?;
         git_commit(&args.path_repo.join("2"))?;
+        git_delete_history(&args.path_repo.join("2"))?;
         Ok(())
     })?;
 

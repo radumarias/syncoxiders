@@ -49,7 +49,7 @@ impl Iterator for Iter {
             entry
                 .map(|entry| {
                     let path = entry.path();
-                    if self.ctr % 1000 == 0 {
+                    if self.ctr % 100 == 0 {
                         println!(
                             "{}",
                             format!("Checking '{}'", path.to_str().unwrap()).cyan()
