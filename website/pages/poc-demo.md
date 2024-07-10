@@ -32,7 +32,7 @@
 
 # Using CLI
 
-You can take the binaries for Linux from [here](https://github.com/radumarias/syncoxiders/actions/runs/9867658376).
+You can take the binaries for Linux from [here](https://github.com/radumarias/syncoxiders/actions/runs/9868365005).
 ```bash
 file syncoxiders
 syncoxiders: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=fb37cbf4c9c42a2a42edd3bb6b880f0292670839, for GNU/Linux 3.2.0, not stripped
