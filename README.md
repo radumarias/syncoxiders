@@ -20,7 +20,7 @@ In many cases we'll use present tense for several functionality, even though it'
 
 # POC
 
-You can play with the [CLI app](website/pages/poc-demo.md#using-cli) and see a demo.
+You can play with the [CLI app](website/pages/poc-demo.md#using-cli) and see a short [demo](https://www.youtube.com/watch?v=JHQC1XpCzQw).
 
 Working on having these in up to 2 months:
 - in Docker ability to sync 2 folders in the filesystem
