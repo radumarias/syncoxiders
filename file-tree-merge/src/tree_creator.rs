@@ -1,15 +1,17 @@
-use crate::IterRef;
-use anyhow::Result;
-use colored::Colorize;
-use rayon::iter::ParallelIterator;
-use rayon::prelude::IntoParallelRefIterator;
 use std::fmt::{Debug, Formatter};
 use std::fs::{File, FileTimes};
 use std::io::Write;
 use std::path::Path;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fs, io};
+
+use anyhow::Result;
+use colored::Colorize;
+use rayon::iter::ParallelIterator;
+use rayon::prelude::IntoParallelRefIterator;
+
+use crate::IterRef;
 
 // pub(crate) const PATH_SEPARATOR: &str = "／";
 pub(crate) const PATH_SEPARATOR: &str = "|";
@@ -73,8 +75,6 @@ impl<I: Iterator<Item = io::Result<Item>>, Iter: IterRef<Iter = I>> TreeCreator<
         let errors = Arc::new(Mutex::new(vec![]));
         let mut to_process = vec![];
         let batch_size = 1000;
-
-        // let (tx, rx) = mpsc::channel();
 
         for item in self.iter.iter() {
             if first {
