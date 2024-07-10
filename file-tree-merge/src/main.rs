@@ -20,22 +20,6 @@ struct Args {
     #[arg(
         short,
         long,
-        short = 'a',
-        help = "First directory where actual files that needs to be synced are located."
-    )]
-    path1: PathBuf,
-
-    #[arg(
-        short,
-        long,
-        short = 'b',
-        help = "Second directory where actual files that needs to be synced are located."
-    )]
-    path2: PathBuf,
-
-    #[arg(
-        short,
-        long,
         short = 'r',
         help = "A directory where we'll keep a git repo to detect changes. Should persist between runs. MUST NOT BE INSIDE ANY OF path1 or path2 DIRECTORIES"
     )]
@@ -66,6 +50,9 @@ struct Args {
         help = "If specified it will skip CRC check after file was transferred. Without this it compares the CRC of the file in path1 before transfer with the CRC of the file in path2 after transferred. This ensures the transfer was successful. Checking CRC is highly recommend if any of path1 or path1 are accessed over the network"
     )]
     no_crc: bool,
+
+    #[arg(help = "Endpoints where data to be synced resides")]
+    inputs: Vec<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -89,11 +76,23 @@ fn main() -> Result<()> {
         println!("{}", "Dry-run mode enabled, it will not touch create, modify ot delete any files, will just print the changes!".yellow().bold());
     }
 
+    if args.inputs.len() < 2 {
+        println!(
+            "{}",
+            "You need to specify at least two paths to sync!"
+                .red()
+                .bold()
+        );
+        anyhow::bail!("You need to specify at least two paths to sync!");
+    } else {
+        std::fs::create_dir_all(&args.repo)?;
+    }
+
     println!("{}", "Building changes trees...".cyan());
     let (changes_tree1, errors1) =
-        changes_tree(PathWalker::new(&args.path1), &args.repo.join("1"))?;
+        changes_tree(PathWalker::new(&args.inputs[0]), &args.repo.join("1"))?;
     let (changes_tree2, errors2) =
-        changes_tree(PathWalker::new(&args.path2), &args.repo.join("2"))?;
+        changes_tree(PathWalker::new(&args.inputs[1]), &args.repo.join("2"))?;
 
     println!("{}", "Merging changes trees...".cyan());
     change_tree_merge::merge(changes_tree1, changes_tree2, MergeStrategy::OneWay)?.pipe(|x| {
@@ -111,8 +110,8 @@ fn main() -> Result<()> {
             changes_src,
             items_path1,
             items_path2,
-            &args.path1,
-            &args.path2,
+            &args.inputs[0],
+            &args.inputs[1],
             &args.repo.join("1"),
             &args.repo.join("2"),
             args.dry_run,
