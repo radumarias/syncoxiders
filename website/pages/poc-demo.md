@@ -25,10 +25,11 @@
 - changes are applied wth WAL logic, we use git changes as WAL
      - after we build the changes tree we unstage all changes
      - after we applied a change for a file we stage that file in git
-     - periodically we commit staged ones
+     - after each `64MB` we write we checkpointing (we do `git commit`)
      - after applying all changes we commit remainig staged ones
-     - like this if process is suddenly interrupted the next time it runs it will see as chnaged only not applied changes and will apply them
-     - this hapens until all pending changes are applied
+     - then we delete the history and keep just an index of all files so e can catch new changes
+     - like this if the process is suddenly interrupted the next time it runs it will see there are changes and will apply them
+         - this hapens until all pending changes are applied
 
 # Using CLI
 
