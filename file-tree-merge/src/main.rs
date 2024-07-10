@@ -21,7 +21,7 @@ struct Args {
         short,
         long,
         short = 'r',
-        help = "A directory where we'll keep a git repo to detect changes. Should persist between runs. MUST NOT BE INSIDE ANY OF path1 or path2 DIRECTORIES"
+        help = "A directory where we'll keep a git repo to detect changes. Should persist between runs. MUST NOT BE INSIDE ANY OF THE ENDPOINTS"
     )]
     repo: PathBuf,
 
@@ -29,7 +29,7 @@ struct Args {
         short,
         long,
         default_value_t = false,
-        help = "This simulates the sync. Will not actually create or change any of the files in path1 or path2, will just print the operations that would have normally be applied to both ends"
+        help = "This simulates the sync. Will not actually create, modify or delete any of the files on endpoints, will just print the operations that would have normally be applied to endpoints"
     )]
     dry_run: bool,
 
@@ -38,7 +38,7 @@ struct Args {
         long,
         short = 't',
         default_value_t = false,
-        help = "If specified it will calculate MD5 hash for files when comparing file in path1 with the file in path2 when applying Add and Modify operations. It will be considerably slower when activated"
+        help = "If specified it will calculate MD5 hash for files when comparing file in path1 with the file in path2 when applying Add and Modify operations between endpoints. It will be considerably slower when activated"
     )]
     checksum: bool,
 
@@ -47,7 +47,7 @@ struct Args {
         long,
         short = 'x',
         default_value_t = false,
-        help = "If specified it will skip CRC check after file was transferred. Without this it compares the CRC of the file in path1 before transfer with the CRC of the file in path2 after transferred. This ensures the transfer was successful. Checking CRC is highly recommend if any of path1 or path1 are accessed over the network"
+        help = "If specified it will skip CRC check after file was transferred. Without this it compares the CRC of the file in path1 before transfer with the CRC of the file in path2 after transferred. This ensures the transfer was successful. Checking CRC is highly recommend if any of endpoints are accessed over the network"
     )]
     no_crc: bool,
 
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
     if args.checksum {
         println!(
             "{}",
-            "Checksum mode enabled, it could be quite slow!"
+            "Checksum mode enabled, it will be quite slow!"
                 .yellow()
                 .bold()
         );
