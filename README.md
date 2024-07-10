@@ -6,7 +6,7 @@ The purpose of this project is to offer an easy and reliable way to sync files a
 It offers real time sync (from simple Copy One-way to Two-way Sync) all handled in the cloud, without the explicit need of local clients.
 
 > [!WARNING]  
-> For now it's in prototyping phase, it has some or the core components, like encryption and basic Google Drive client and a basic [CLI app](website/pages/poc-demo.md#using-cli).  
+> For now it's in prototyping phase, it has some or the core components, like encryption and basic Google Drive client and a basic [CLI app](website/pages/poc-demo.md#using-cli).
 
 It's using [rencfs](https://github.com/radumarias/rencfs) for encryption and [gdrive-rs](https://github.com/radumarias/gdrive-rs) for accesing Google Drive.
 
@@ -20,7 +20,7 @@ In many cases we'll use present tense for several functionality, even though it'
 
 # POC
 
-**You can play with the [CLI app](https://github.com/radumarias/syncoxiders/blob/main/website/pages/poc-demo.md#using-cli) and see some [demos](website/pages/poc-demo.md) so far.**
+You can play with the [CLI app](website/pages/poc-demo.md#using-cli) and see a demo.
 
 Working on having these in up to 2 months:
 - in Docker ability to sync 2 folders in the filesystem
