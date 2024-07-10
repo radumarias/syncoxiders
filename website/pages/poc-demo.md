@@ -32,7 +32,7 @@
 
 # Using CLI
 
-You can take the binaries for Linux from [here](https://github.com/radumarias/syncoxiders/actions/runs/9868365005).
+You can take the binaries for Linux from [here](https://github.com/radumarias/syncoxiders/actions/runs/9868594722).
 ```bash
 file syncoxiders
 syncoxiders: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=fb37cbf4c9c42a2a42edd3bb6b880f0292670839, for GNU/Linux 3.2.0, not stripped
@@ -45,9 +45,8 @@ You can run `syncoxiders -h` to see all args. The basic usage is like this:
 syncoxiders --path1 <PATH1> --path2 <PATH2> --repo <REPO>
 ```
 
-- `<PATH1>`: where the actual files are for `path1` side
-- `<PATH2>`: where the actual files are for `path2` side
-- `<REPO>`: a folder that should persist between runs, we create a `git` repo with metadata of files from `path1` and `path2`. **MUST NOT BE INSIDE ANY OF `path1` or `path2` DIRECTORIES**. If it doesn't persist next time it runs it will see all files in as `Add`ed, but will skip them if are already the same as on the other side
+- `inputs`: a lists of paths that will be synced. Let's call them `Endpoints`
+- `<REPO>`: a folder that should persist between runs, we create a `git` repo with metadata of files from all endpoints. **MUST NOT BE ON ANY OF THE ENDPOINTS**. If it doesn't persist next time it runs it will see all files in as `Add`ed, but will skip them if are already the same as on the other side
 
 For now, it does `One-way` sync propagating these operations from `path1` to `path2`:
 - `Add`, `Modify`, `Delete`, `Rename`
@@ -58,25 +57,25 @@ For now, it does `One-way` sync propagating these operations from `path1` to `pa
 By default it detects changes in files based on `size` and `mtime`. After copying to `path2` it will set also `atime` and `mtime` for the files.
 
 Other args:
-- `--dry-run`: this simulates the sync. Will not actually create or change any of the files in `path1` `path2`, will just print the operations that would have normally be applied to both ends
+- `--dry-run`: this simulates the sync. Will not actually create, modify or delete any of the files on endpoints, will just print the operations that would have normally be applied to endpoints
 - `--checksum`: (disabled by default): if specified it will calculate `MD5 hash` for files when comparing file in `path1` with the file in `path2` when applying `Add` and `Modify` operations. **It will be considerably slower when activated**
-- `--no-crc`: (disabled by default): if specified it will skip `CRC` check after file was transferred. Without this it compares the `CRC` of the file in `path1` before transfer with the `CRC` of the file in `path1` after transferred. This ensures the transfer was successful. **Checking `CRC` is highly recommend if any of `path1` or `path2` are accessed over the network.**
+- `--no-crc`: (disabled by default): if specified it will skip `CRC` check after file was transferred. Without this it compares the `CRC` of the file in `path1` before transfer with the `CRC` of the file in `path1` after transferred. This ensures the transfer was successful. **Checking `CRC` is highly recommend if any of the endpoitns is accessed over the network.**
 
 ## First sync
 
-For a more robust sync, if this is the first time you sync the 2 directories and `path2` is not empty, that if both `path1` and `path2` have some files but different ones (they are not in sync) you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files in `path1` compared to `path2`. This will result in a union from both `path1` and `path2`, no deletes will be made this first time.  
-Similarly you should do if you delete the `repo` dirctory.  
+For a more robust sync, if this is the first time you sync the endpoitns and they are  not empty, that if all have some files but different ones (they are not in sync) you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files. This will result in a union from all endpoints, no deletes will be made this first time.  
+Similarly you should do if you delete the `repo` directory.  
 After that you can run without the flag if you don't want to use the `MD5 hash` to determine changes.
 
 ## Limitations
 
 - Conflicts are not handled yet. If the file is changed in both `path1` and `path2` the winner is the one from `path1`. It's like `master-slave` sync where `path1` is the master
-- For now it doesn't sync any of `Add`, `Delete`, or `Rename` operations on empty folders. This is actually a limitation of `git` as it works only on files. The directory tree will be recreated in `path2` based on the file parent, but folders with no files in them will not be synced
+- For now it doesn't sync any of `Add`, `Delete`, or `Rename` operations on empty folders. This is actually a limitation of `git` as it works only on files. The directory tree will be recreated based on the file parent, but folders with no files in them will not be synced
 
 ## Troubleshooting
 
-In case you experience any inconsistencies in the way the files are synced, or not synced for that matter, you can delete the `repo` directory and run it again. It will see all files as new but will not copy them to the oher side if hey are already present in here and with the same content, it wil just copy the new or changed ones.  
-For a more robust first time sync after you removed the `repo` directory you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files in `path1` compared to `path2`. This will result in a union from both `path1` and `path2`, no deletes will be made this first time.  
+In case you experience any inconsistencies in the way the files are synced, or not synced for any matter, you can delete the `repo` directory and run it again. It will see all files as new but will not copy them to the oher sides if hey are already present and with the same content, it wil just copy the new or changed ones.  
+For a more robust first time sync or after you removed the `repo` directory you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files in `path1` compared to `path2`. This will result in a union from both `path1` and `path2`, no deletes will be made this first time.  
 After that you can run without the flag if you don't want to use the `MD5 hash` to determine changes.
 
 ## Logs
