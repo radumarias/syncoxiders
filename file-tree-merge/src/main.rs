@@ -21,7 +21,7 @@ struct Args {
         short,
         long,
         short = 'r',
-        help = "A directory where we'll keep a git repo to detect changes. Should persist between runs. MUST NOT BE INSIDE ANY OF THE ENDPOINTS"
+        help = "A directory where we'll keep a git repo to detect changes. Should persist between runs. MUST NOT BE ON ANY OF THE ENDPOINTS"
     )]
     repo: PathBuf,
 
