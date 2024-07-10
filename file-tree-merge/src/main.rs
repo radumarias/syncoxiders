@@ -89,20 +89,20 @@ fn main() -> Result<()> {
         println!("{}", "Dry-run mode enabled, it will not touch create, modify ot delete any files, will just print the changes!".yellow().bold());
     }
 
-    println!("{}", "Build changes trees...".cyan());
+    println!("{}", "Building changes trees...".cyan());
     let (changes_tree1, errors1) =
         changes_tree(PathWalker::new(&args.path1), &args.repo.join("1"))?;
     let (changes_tree2, errors2) =
         changes_tree(PathWalker::new(&args.path2), &args.repo.join("2"))?;
 
-    println!("{}", "Merge changes trees...".cyan());
+    println!("{}", "Merging changes trees...".cyan());
     change_tree_merge::merge(changes_tree1, changes_tree2, MergeStrategy::OneWay)?.pipe(|x| {
         if x.0 .0.is_empty() && x.1 .0.is_empty() {
-            println!("{}", "No changes to apply".green());
+            println!("{}", "No changes".green());
             return Ok::<(), anyhow::Error>(());
         }
         if !args.dry_run {
-            println!("{}", "Apply changes...".cyan());
+            println!("{}", "Applying changes...".cyan());
         }
         println!("{}", "src -> dst...".cyan());
         let (changes_src, items_path1) = x.0;
@@ -119,7 +119,7 @@ fn main() -> Result<()> {
             args.checksum,
             !args.no_crc,
         )?;
-        println!("{}", "Cleanup repo...".cyan());
+        println!("{}", "Cleaning up repo...".cyan());
         git_delete_history(&args.repo.join("1"))?;
         // todo: dst -> src
         git_add(&args.repo.join("1"), ".")?;
