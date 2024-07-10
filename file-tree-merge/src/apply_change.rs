@@ -29,7 +29,7 @@ pub fn apply(
     }
     println!(
         "{}",
-        format!("Applying {} changes...", changes.len()).cyan()
+        format!("Applying {} changes ...", changes.len()).cyan()
     );
     let total = AtomicU64::new(0);
     let synced = AtomicU64::new(0);
@@ -324,7 +324,7 @@ fn process(
     let _guard = git_lock.lock().unwrap();
     git_add(&repo1.join(TREE_DIR), path)?;
     if applied_size_since_commit.load(Ordering::SeqCst) > commit_after_size_bytes as u64 {
-        println!("{}", "Checkpointing applied changes...".cyan());
+        println!("{}", "Checkpointing applied changes ...".cyan());
         git_commit(repo1)?;
         applied_size_since_commit.store(0, Ordering::SeqCst);
     }

@@ -88,22 +88,22 @@ fn main() -> Result<()> {
         std::fs::create_dir_all(&args.repo)?;
     }
 
-    println!("{}", "Building changes trees...".cyan());
+    println!("{}", "Building changes trees ...".cyan());
     let (changes_tree1, errors1) =
         changes_tree(PathWalker::new(&args.inputs[0]), &args.repo.join("1"))?;
     let (changes_tree2, errors2) =
         changes_tree(PathWalker::new(&args.inputs[1]), &args.repo.join("2"))?;
 
-    println!("{}", "Merging changes trees...".cyan());
+    println!("{}", "Merging changes trees ...".cyan());
     change_tree_merge::merge(changes_tree1, changes_tree2, MergeStrategy::OneWay)?.pipe(|x| {
         if x.0 .0.is_empty() && x.1 .0.is_empty() {
             println!("{}", "No changes".green());
             return Ok::<(), anyhow::Error>(());
         }
         if !args.dry_run {
-            println!("{}", "Applying changes...".cyan());
+            println!("{}", "Applying changes ...".cyan());
         }
-        println!("{}", "src -> dst...".cyan());
+        println!("{}", "path1 -> * ...".cyan());
         let (changes_src, items_path1) = x.0;
         let (_changes_dst, items_path2) = x.1;
         apply_change::apply(
@@ -118,7 +118,7 @@ fn main() -> Result<()> {
             args.checksum,
             !args.no_crc,
         )?;
-        println!("{}", "Cleaning up repo...".cyan());
+        println!("{}", "Cleaning up repo ...".cyan());
         git_delete_history(&args.repo.join("1"))?;
         // todo: dst -> src
         git_add(&args.repo.join("1"), ".")?;
