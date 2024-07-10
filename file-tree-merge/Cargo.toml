@@ -20,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 colored.workspace = true
+rayon.workspace = true
 
 walkdir = "2.5.0"
 chksum-md5 = "0.0.0"

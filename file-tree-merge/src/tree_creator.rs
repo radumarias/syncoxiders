@@ -1,10 +1,13 @@
 use crate::IterRef;
 use anyhow::Result;
 use colored::Colorize;
+use rayon::iter::ParallelIterator;
+use rayon::prelude::IntoParallelRefIterator;
 use std::fmt::{Debug, Formatter};
 use std::fs::{File, FileTimes};
 use std::io::Write;
 use std::path::Path;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fs, io};
 
@@ -66,8 +69,13 @@ impl<I: Iterator<Item = io::Result<Item>>, Iter: IterRef<Iter = I>> TreeCreator<
             fs::create_dir_all(&dst)?;
         }
         let mut first = true;
-        let mut items = vec![];
-        let mut errors = vec![];
+        let items = Arc::new(Mutex::new(vec![]));
+        let errors = Arc::new(Mutex::new(vec![]));
+        let mut to_process = vec![];
+        let batch_size = 1000;
+
+        // let (tx, rx) = mpsc::channel();
+
         for item in self.iter.iter() {
             if first {
                 // skip root
@@ -76,33 +84,51 @@ impl<I: Iterator<Item = io::Result<Item>>, Iter: IterRef<Iter = I>> TreeCreator<
             }
             if let Err(err) = item {
                 println!("{}", format!("Error reading file: {:?}", err).red().bold());
-                errors.push(err);
+                errors.lock().unwrap().push(err);
                 continue;
             }
             let item = item?;
-            // let path_rel = item.path.replace('/', PATH_SEPARATOR);
-            // let path = dst.join(path_rel);
-            let path = dst.join(item.path.clone());
-            if item.is_dir {
-                // println!("Creating dir: {:?}", path);
-                fs::create_dir_all(&path)?;
-            } else {
-                // println!("Creating file: {:?}", path);
-                let mut file = File::create(&path)?;
-                Path::new(&path)
-                    .parent()
-                    .map_or(Ok(()), fs::create_dir_all)?;
-                file.write_all(&item.size.to_le_bytes())?;
-                file.write_all(&get_time_bytes(&item.mtime))?;
-                file.flush()?;
-                file.sync_all()?;
-                File::set_times(&file, item.times)?;
-                File::open(&path)?.sync_all()?;
-            }
-            File::open(path.parent().unwrap())?.sync_all()?;
-            items.push(item);
+            to_process.push(item);
+
+            if to_process.len() % batch_size == 0 {
+                // Process the collection in parallel
+                let res: Vec<io::Result<()>> = to_process
+                    .par_iter() // Convert the vector into a parallel iterator
+                    .map(|item| process(item.clone(), items.clone(), &dst))
+                    .collect();
+                for e in res {
+                    if let Err(err) = e {
+                        Err(err)?
+                    }
+                }
+                to_process.clear();
+            };
         }
-        Ok((items, errors))
+        // Process the collection in parallel
+        let res: Vec<io::Result<()>> = to_process
+            .par_iter() // Convert the vector into a parallel iterator
+            .map(|item| process(item.clone(), items.clone(), &dst))
+            .collect();
+        for e in res {
+            if let Err(err) = e {
+                Err(err)?
+            }
+        }
+
+        Ok((
+            Arc::into_inner(items)
+                .unwrap()
+                .into_inner()
+                .unwrap()
+                .clone(),
+            Arc::into_inner(errors)
+                .unwrap()
+                .into_inner()
+                .unwrap()
+                .into_iter()
+                .map(|e| io::Error::new(io::ErrorKind::Other, e))
+                .collect(),
+        ))
     }
 }
 
@@ -137,4 +163,31 @@ fn get_time_bytes(time: &SystemTime) -> Vec<u8> {
     bytes[8..].copy_from_slice(&nanos_bytes);
 
     bytes.to_vec()
+}
+
+fn process(item: Item, items: Arc<Mutex<Vec<Item>>>, dst: &Path) -> io::Result<()> {
+    // let path_rel = item.path.replace('/', PATH_SEPARATOR);
+    // let path = dst.join(path_rel);
+    let path = dst.join(item.path.clone());
+    if item.is_dir {
+        // println!("Creating dir: {:?}", path);
+        fs::create_dir_all(&path)?;
+    } else {
+        // println!("Creating file: {:?}", path);
+        fs::create_dir_all(path.parent().unwrap())?;
+        let mut file = File::create(&path)?;
+        Path::new(&path)
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)?;
+        file.write_all(&item.size.to_le_bytes())?;
+        file.write_all(&get_time_bytes(&item.mtime))?;
+        file.flush()?;
+        file.sync_all()?;
+        File::set_times(&file, item.times)?;
+        File::open(&path)?.sync_all()?;
+        File::open(path.parent().unwrap())?.sync_all()?;
+        items.lock().unwrap().push(item);
+    }
+
+    Ok(())
 }

@@ -80,7 +80,7 @@ pub fn build(items: Vec<Item>, repo: &Path) -> Result<(ChangeTree, BTreeMap<Stri
     };
 
     crate::git_add(repo.workdir().unwrap(), ".")?;
-    let mut items_map: BTreeMap<_, _> = items
+    let items_map: BTreeMap<_, _> = items
         .into_iter()
         .map(|data| (data.path.clone(), data))
         .collect();
@@ -184,7 +184,7 @@ pub fn build(items: Vec<Item>, repo: &Path) -> Result<(ChangeTree, BTreeMap<Stri
         let mut parent_node = tree.get_mut(parent_node_id).unwrap();
         if let Some(child_node_id) = nodes_idx.get(&path) {
             let mut child_node = tree.get_mut(*child_node_id).unwrap();
-            child_node.data().item = items_map.remove(&path);
+            child_node.data().item = items_map.get(&path).cloned();
             child_node.data().change = Some(change);
             continue;
         }

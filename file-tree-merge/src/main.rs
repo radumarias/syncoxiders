@@ -52,6 +52,7 @@ struct Args {
     #[arg(
         short,
         long,
+        short = 't',
         default_value_t = false,
         help = "If specified it will calculate MD5 hash for files when comparing file in <PATH1-MNT> with the file in <PATH2-MNT> when applying Add and Modify operations. It will be considerably slower when activated"
     )]
@@ -78,14 +79,14 @@ fn main() -> Result<()> {
     if args.checksum {
         println!(
             "{}",
-            "Checksum mode enabled, it could be very slow!"
+            "Checksum mode enabled, it could be quite slow!"
                 .yellow()
                 .bold()
         );
     }
 
     if args.dry_run {
-        println!("{}", "Dry-run mode enabled, it will not touch any files on dst, will just print the changes!".yellow().bold());
+        println!("{}", "Dry-run mode enabled, it will not touch create, modify ot delete any files, will just print the changes!".yellow().bold());
     }
 
     println!("{}", "Build changes trees...".cyan());
@@ -107,9 +108,9 @@ fn main() -> Result<()> {
         let (changes_src, items_path1) = x.0;
         let (_changes_dst, items_path2) = x.1;
         apply_change::apply(
-            &changes_src,
-            &items_path1,
-            &items_path2,
+            changes_src,
+            items_path1,
+            items_path2,
             &args.path1_mnt,
             &args.path2_mnt,
             &args.path_repo.join("1"),
@@ -125,14 +126,14 @@ fn main() -> Result<()> {
     })?;
 
     if !errors1.is_empty() {
-        println!("{}", "Errors reading from src:".red());
+        println!("{}", "Errors reading from path1:".red());
         for e in errors1 {
             println!("{}", e.to_string().red().bold());
         }
     }
 
     if !errors2.is_empty() {
-        println!("{}", "Errors reading from dst:".red());
+        println!("{}", "Errors reading from path2:".red());
         for e in errors2 {
             println!("{}", e.to_string().red().bold());
         }

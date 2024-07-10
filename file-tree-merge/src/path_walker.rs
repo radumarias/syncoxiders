@@ -1,8 +1,7 @@
+use colored::Colorize;
 use std::fs::FileTimes;
 use std::io;
 use std::path::{Path, PathBuf};
-
-use colored::Colorize;
 use walkdir::{DirEntry, WalkDir};
 
 use crate::{tree_creator, IterRef};
@@ -22,6 +21,7 @@ impl PathWalker {
 pub struct Iter {
     it: Box<dyn Iterator<Item = walkdir::Result<DirEntry>>>,
     path: PathBuf,
+    ctr: u64,
 }
 
 impl IterRef for PathWalker {
@@ -36,6 +36,7 @@ impl IterRef for PathWalker {
                     .into_iter(),
             ),
             path: self.path.clone(),
+            ctr: 0,
         }
     }
 }
@@ -48,10 +49,13 @@ impl Iterator for Iter {
             entry
                 .map(|entry| {
                     let path = entry.path();
-                    println!(
-                        "{}",
-                        format!("Checking '{}'", path.to_str().unwrap()).cyan()
-                    );
+                    if self.ctr % 1000 == 0 {
+                        println!(
+                            "{}",
+                            format!("Checking '{}'", path.to_str().unwrap()).cyan()
+                        );
+                    }
+                    self.ctr += 1;
                     let path_rel = path.strip_prefix(&self.path).unwrap();
                     let atime = entry.metadata().unwrap().accessed().unwrap();
                     let mtime = entry.metadata().unwrap().modified().unwrap();
