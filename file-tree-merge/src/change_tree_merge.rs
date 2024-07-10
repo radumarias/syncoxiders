@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::change_tree::{Change, ChangeTree};
+use crate::change_tree::{Change, PathChanges};
 use crate::tree_creator::Item;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 
 pub enum MergeStrategy {
     Copy,
@@ -12,26 +12,34 @@ pub enum MergeStrategy {
 }
 
 pub type Changes = Vec<(Change, String)>;
-pub type Items = BTreeMap<String, Item>;
-pub type Path1Changes = (Changes, Items);
-pub type Path2Changes = (Changes, Items);
+pub type SrcItems = (usize, BTreeMap<String, Item>);
+pub type DstItems = BTreeMap<String, Item>;
+pub type MergedChanges = (Changes, SrcItems, DstItems);
 
 pub fn merge(
-    changes_src: (ChangeTree, BTreeMap<String, Item>),
-    changes_dst: (ChangeTree, BTreeMap<String, Item>),
+    path_changes: Vec<PathChanges>,
     strategy: MergeStrategy,
-) -> Result<(Path1Changes, Path2Changes)> {
+) -> Result<Vec<MergedChanges>> {
+    if path_changes.len() < 2 {
+        return Err(anyhow!("Min 2 path_changes required for merge"));
+    }
     match strategy {
         MergeStrategy::Copy => unimplemented!(),
         MergeStrategy::Move => unimplemented!(),
-        MergeStrategy::OneWay => Ok((do_one_way(changes_src)?, (vec![], changes_dst.1))),
+        MergeStrategy::OneWay => do_one_way(path_changes),
         MergeStrategy::TwoWay => unimplemented!(),
     }
 }
 
-fn do_one_way(changes_path1: (ChangeTree, BTreeMap<String, Item>)) -> Result<Path1Changes> {
+fn do_one_way(mut path_changes: Vec<PathChanges>) -> Result<Vec<MergedChanges>> {
+    let mut merged_changes = vec![];
+    let (changes_path1, items_path1) = path_changes.remove(0);
+    merged_changes.push((
+        Default::default(),
+        (0, Default::default()),
+        Default::default(),
+    ));
     let mut changes = vec![];
-    let (changes_path1, items_path1) = changes_path1;
     if changes_path1.tree.root().unwrap().first_child().is_some() {
         let root = changes_path1.tree.root().unwrap();
         root.traverse_pre_order().for_each(|node| {
@@ -44,8 +52,16 @@ fn do_one_way(changes_path1: (ChangeTree, BTreeMap<String, Item>)) -> Result<Pat
             changes.push((change.clone(), path));
         });
     }
+    while !path_changes.is_empty() {
+        merged_changes.push((
+            changes.clone(),
+            // todo: use Arc
+            (0, items_path1.clone()),
+            path_changes.remove(0).1,
+        ));
+    }
 
-    Ok((changes, items_path1))
+    Ok(merged_changes)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,3 +1,4 @@
+use anyhow::Result;
 use colored::Colorize;
 use std::fs::FileTimes;
 use std::io;
@@ -11,10 +12,17 @@ pub struct PathWalker {
 }
 
 impl PathWalker {
-    pub fn new(path: &Path) -> Self {
-        Self {
-            path: path.to_path_buf(),
+    pub fn new(path: &Path) -> Result<Self> {
+        if !path.exists() {
+            println!(
+                "{}",
+                format!("Path '{}' does not exist", path.display()).red()
+            );
+            anyhow::bail!("Path '{}' does not exist", path.display())
         }
+        Ok(Self {
+            path: path.to_path_buf(),
+        })
     }
 }
 
@@ -52,7 +60,7 @@ impl Iterator for Iter {
                     if self.ctr % 100 == 0 {
                         println!(
                             "{}",
-                            format!("Checking '{}'", path.to_str().unwrap()).cyan()
+                            format!("Checking '{}'", path.to_string_lossy()).cyan()
                         );
                     }
                     self.ctr += 1;
@@ -63,7 +71,7 @@ impl Iterator for Iter {
                     let size = entry.metadata().unwrap().len();
                     let is_dir = entry.metadata().unwrap().is_dir();
                     tree_creator::Item {
-                        path: path_rel.to_str().unwrap().to_string(),
+                        path: path_rel.to_string_lossy().to_string(),
                         times,
                         atime,
                         mtime,

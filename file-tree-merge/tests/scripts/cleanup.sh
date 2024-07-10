@@ -1,0 +1,1 @@
+rm -rf "$setup_base_path"

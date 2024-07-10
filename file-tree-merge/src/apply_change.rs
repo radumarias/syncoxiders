@@ -1,21 +1,21 @@
-use crate::change_tree::Change;
-use crate::change_tree_merge::{Changes, HashKind, Items};
-use crate::tree_creator::Item;
-use crate::{crc_eq, file_hash, git_add, git_commit, TREE_DIR};
-use anyhow::Result;
-use colored::*;
-use rayon::iter::ParallelIterator;
-use rayon::prelude::IntoParallelRefIterator;
 use std::fs::File;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{fs, io};
 
+use anyhow::Result;
+use colored::*;
+use rayon::iter::ParallelIterator;
+use rayon::prelude::IntoParallelRefIterator;
+
+use crate::change_tree::Change;
+use crate::change_tree_merge::{DstItems, HashKind, MergedChanges};
+use crate::tree_creator::Item;
+use crate::{crc_eq, file_hash, git_add, git_commit, TREE_DIR};
+
 pub fn apply(
-    changes: Changes,
-    items_path1: Items,
-    items_path2: Items,
+    changes: MergedChanges,
     path1: &Path,
     path2: &Path,
     repo1: &Path,
@@ -23,9 +23,19 @@ pub fn apply(
     dry_run: bool,
     checksum: bool,
     crc: bool,
+    print_all_changes: bool,
 ) -> Result<()> {
+    let (changes, (_, items_path1), items_path2) = changes;
     if changes.is_empty() {
         return Ok(());
+    }
+    if !path1.exists() {
+        println!("{}", "path1 does not exist".red().bold());
+        anyhow::bail!("path1 does not exist");
+    }
+    if !path2.exists() {
+        println!("{}", "path2 does not exist".red().bold());
+        anyhow::bail!("path2 does not exist");
     }
     println!(
         "{}",
@@ -66,6 +76,7 @@ pub fn apply(
                         &synced,
                         &applied_size_since_commit,
                         commit_after_size_bytes,
+                        print_all_changes,
                     )
                 })
                 .collect();
@@ -74,7 +85,7 @@ pub fn apply(
                     println!(
                         "{}",
                         format!(
-                            "Synced {}/{}",
+                            "Applied {}/{} changes",
                             synced.load(Ordering::SeqCst),
                             total.load(Ordering::SeqCst)
                         )
@@ -109,6 +120,7 @@ pub fn apply(
                 &synced,
                 &applied_size_since_commit,
                 commit_after_size_bytes,
+                print_all_changes,
             )
         })
         .collect();
@@ -118,7 +130,7 @@ pub fn apply(
                 println!(
                     "{}",
                     format!(
-                        "Synced {}/{}",
+                        "Applied {}/{} changes",
                         synced.load(Ordering::SeqCst),
                         total.load(Ordering::SeqCst)
                     )
@@ -133,7 +145,7 @@ pub fn apply(
         println!(
             "{}",
             format!(
-                "Synced {}/{}",
+                "Applied {}/{} changes",
                 synced.load(Ordering::SeqCst),
                 total.load(Ordering::SeqCst)
             )
@@ -141,7 +153,7 @@ pub fn apply(
             .bold()
         );
     }
-    git_add(&repo1.join(TREE_DIR), ".")?;
+    // git_add(&repo1.join(TREE_DIR), ".")?;
     git_commit(repo1)?;
 
     Ok(())
@@ -170,8 +182,8 @@ fn items_content_eq(
 fn process(
     change: &Change,
     path: &String,
-    items_path1: Arc<Mutex<Items>>,
-    items_path2: Arc<Mutex<Items>>,
+    items_path1: Arc<Mutex<DstItems>>,
+    path1_item2: Arc<Mutex<DstItems>>,
     path1: &Path,
     path2: &Path,
     repo1: &Path,
@@ -185,23 +197,30 @@ fn process(
     synced: &AtomicU64,
     applied_size_since_commit: &AtomicU64,
     commit_after_size_bytes: i32,
+    print_all_changes: bool,
 ) -> Result<()> {
     let dst = path2.join(path);
     ctr.fetch_add(1, Ordering::SeqCst);
     match change.clone() {
         Change::Add | Change::Modify => {
-            if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 {
+            if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 || print_all_changes {
                 if matches!(change, Change::Add) {
-                    println!("{} '{}'", change.to_string().green(), path.green());
+                    println!(
+                        "{}",
+                        format!("{} '{}'", change.to_string().green(), path.green())
+                    );
                 } else {
-                    println!("{} '{}'", change.to_string().blue(), path.blue());
+                    println!(
+                        "{}",
+                        format!("{} '{}'", change.to_string().blue(), path.blue())
+                    );
                 }
             }
             // check if it's the same as in dst
             let mut add = true;
             let guard = items_path1.lock().unwrap();
             let path1_item = guard.get(path).unwrap();
-            if let Some(dst_item) = items_path2.lock().unwrap().get(path) {
+            if let Some(dst_item) = path1_item2.lock().unwrap().get(path) {
                 if items_content_eq(&path1, &path1_item, &path2, &dst_item, checksum)? {
                     add = false;
                 }
@@ -225,7 +244,7 @@ fn process(
                 }
                 synced.fetch_add(1, Ordering::SeqCst);
                 applied_size_since_commit.fetch_add(path1_item.size, Ordering::SeqCst);
-            } else if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 {
+            } else if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 || print_all_changes {
                 println!(
                     "{}",
                     "   skip, already present in path2 with the same content".yellow()
@@ -233,7 +252,7 @@ fn process(
             }
         }
         Change::Delete => {
-            if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 {
+            if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 || print_all_changes {
                 println!("{} '{}'", change.to_string().red(), path.red().bold());
             }
             if dst.exists() {
@@ -242,13 +261,13 @@ fn process(
                 }
                 fs::remove_file(dst.clone())?;
                 File::open(dst.parent().unwrap())?.sync_all()?;
-            } else if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 {
+            } else if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 || print_all_changes {
                 println!("{}", "  skip, not present in path2".yellow());
             }
             synced.fetch_add(1, Ordering::SeqCst);
         }
         Change::Rename(old_path) => {
-            if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 {
+            if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 || print_all_changes {
                 println!("{} '{}'", change.to_string().magenta(), path.magenta());
             }
             let guard = items_path1.lock().unwrap();
@@ -286,7 +305,7 @@ fn process(
             synced.fetch_add(1, Ordering::SeqCst);
         }
         Change::Copy(old_path) => {
-            if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 {
+            if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 || print_all_changes {
                 println!("{} '{}'", change.to_string().blue(), path.blue());
             }
             let guard = items_path1.lock().unwrap();
@@ -321,12 +340,13 @@ fn process(
             applied_size_since_commit.fetch_add(path1_item.size, Ordering::SeqCst);
         }
     }
-    let _guard = git_lock.lock().unwrap();
-    git_add(&repo1.join(TREE_DIR), path)?;
-    if applied_size_since_commit.load(Ordering::SeqCst) > commit_after_size_bytes as u64 {
-        println!("{}", "Checkpointing applied changes ...".cyan());
-        git_commit(repo1)?;
-        applied_size_since_commit.store(0, Ordering::SeqCst);
-    }
+    // todo: uncomment when we group changes per src
+    // let _guard = git_lock.lock().unwrap();
+    // git_add(&repo1.join(TREE_DIR), path)?;
+    // if applied_size_since_commit.load(Ordering::SeqCst) > commit_after_size_bytes as u64 {
+    //     println!("{}", "Checkpointing applied changes ...".cyan());
+    //     git_commit(repo1)?;
+    //     applied_size_since_commit.store(0, Ordering::SeqCst);
+    // }
     Ok(())
 }

@@ -10,6 +10,8 @@ use crate::git_status;
 use crate::tree_creator::Item;
 use crate::{git_restore_staged, tree_creator};
 
+pub type PathChanges = (ChangeTree, BTreeMap<String, Item>);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
     Add,
@@ -60,7 +62,7 @@ pub struct ChangeTree {
     pub idx: HashMap<String, NodeId>,
 }
 
-pub fn build(items: Vec<Item>, repo: &Path) -> Result<(ChangeTree, BTreeMap<String, Item>)> {
+pub fn build(items: Vec<Item>, repo: &Path) -> Result<PathChanges> {
     use crate::TREE_DIR;
 
     if repo.exists() && !repo.is_dir() {
