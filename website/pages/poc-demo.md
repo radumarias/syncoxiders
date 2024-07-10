@@ -75,6 +75,10 @@ In case you experience any inconsistencies in the way the files are synced, or n
 For a more robust first time sync after you removed the `<PATH-REPO>` directory you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files in `<PATH1-MNT>` compared to `<PATH2-MNT>`. This will result in a union from both `<PATH1-MNT>` and `<PATH2-MNT>`, no deletes will be made this first time.  
 After that you can run without the flag if you don't want to use the `MD5 hash` to determine changes.
 
+## Logs
+
+It doesn't print each change in logs, but just one in 100 changes, so it won't clutter the logs.
+
 ## Compile it from source code
 
 ### Clone the repo
