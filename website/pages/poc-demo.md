@@ -42,7 +42,7 @@ For other targets you could clone the repo and build it.
 You can run `syncoxiders -h` to see all args. The basic usage is like this:
 
 ```bash
-syncoxiders --path1 <PATH1> --path2 <PATH2> --repo <REPO>
+syncoxiders --repo <REPO> <PATH1> <PATH2>
 ```
 
 - `inputs`: a lists of paths that will be synced. Let's call them `Endpoints`
@@ -120,7 +120,7 @@ cargo build --release
 ### Run it
 
 ```bash
-target/release/syncoxiders --path1 <PATH1> --path2 <PATH2> --repo <REPO>
+target/release/syncoxiders --repo <REPO> <PATH1> <PATH2>
 ```
 
 # Work in progress
