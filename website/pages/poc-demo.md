@@ -12,8 +12,7 @@
     - `Add`, `Modify`, `Delete`, `Rename`
 
 **We use `git` to catch the changes, how it works:**
-- we have 2 special directories for `path1` and `path2`
-    - `mnt`: where the actual files that needs to be sync are
+- we have a special directory `repo` shared for both endpoints. This will be used as a git repo that tracks changes. It should persist between runs
     - `repo`: a git repo we create that should persist between runs
 - inside the `repo` we create a `tree` directory and create the tree structure from `mnt` in there
 - in the files content we keep `size` and `mtime`
@@ -33,7 +32,7 @@
 
 # Using CLI
 
-You can take the binaries for Linux from [here](https://github.com/radumarias/syncoxiders/actions/runs/9867484234).
+You can take the binaries for Linux from [here](https://github.com/radumarias/syncoxiders/actions/runs/9867658376).
 ```bash
 file syncoxiders
 syncoxiders: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=fb37cbf4c9c42a2a42edd3bb6b880f0292670839, for GNU/Linux 3.2.0, not stripped
@@ -43,12 +42,12 @@ For other targets you could clone the repo and build it.
 You can run `syncoxiders -h` to see all args. The basic usage is like this:
 
 ```bash
-syncoxiders --path1-mnt <PATH1-MNT> --path2-mnt <PATH2-MNT> --path-repo <PATH-REPO>
+syncoxiders --path1 <PATH1> --path2 <PATH2> --repo <REPO>
 ```
 
-- `<PATH1-MNT>`: where the actual files are for `path1` side
-- `<PATH2-MNT>`: where the actual files are for `path2` side
-- `<PATH-REPO>`: a folder that should persist between runs, we create a `git` repo with metadata of files from `path1` and `path2`. **MUST NOT BE INSIDE ANY OF `<PATH1-MNT>` or `<PATH1-MNT>` DIRECTORIES**. If it doesn't persist next time it runs it will see all files in as `Add`ed, but will skip them if are already the same as on the other side
+- `<PATH1>`: where the actual files are for `path1` side
+- `<PATH2>`: where the actual files are for `path2` side
+- `<REPO>`: a folder that should persist between runs, we create a `git` repo with metadata of files from `path1` and `path2`. **MUST NOT BE INSIDE ANY OF `path1` or `path2` DIRECTORIES**. If it doesn't persist next time it runs it will see all files in as `Add`ed, but will skip them if are already the same as on the other side
 
 For now, it does `One-way` sync propagating these operations from `path1` to `path2`:
 - `Add`, `Modify`, `Delete`, `Rename`
@@ -59,14 +58,14 @@ For now, it does `One-way` sync propagating these operations from `path1` to `pa
 By default it detects changes in files based on `size` and `mtime`. After copying to `path2` it will set also `atime` and `mtime` for the files.
 
 Other args:
-- `--dry-run`: this simulates the sync. Will not actually create or change any of the files in `path1` `mnt` or `path2` `mnt`, will just print the operations that would have normally be applied to both ends
+- `--dry-run`: this simulates the sync. Will not actually create or change any of the files in `path1` `path2`, will just print the operations that would have normally be applied to both ends
 - `--checksum`: (disabled by default): if specified it will calculate `MD5 hash` for files when comparing file in `path1` with the file in `path2` when applying `Add` and `Modify` operations. **It will be considerably slower when activated**
 - `--no-crc`: (disabled by default): if specified it will skip `CRC` check after file was transferred. Without this it compares the `CRC` of the file in `path1` before transfer with the `CRC` of the file in `path1` after transferred. This ensures the transfer was successful. **Checking `CRC` is highly recommend if any of `path1` or `path2` are accessed over the network.**
 
 ## First sync
 
-For a more robust sync, if this is the first time you sync the 2 directories and `<PATH2-MNT>` is not empty, that is if both `<PATH1-MNT>` and `<PATH2-MNT>` have some files but different ones (they are not in sync) you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files in `<PATH1-MNT>` compared to `<PATH2-MNT>`. This will result in a union from both `<PATH1-MNT>` and `<PATH2-MNT>`, no deletes will be made this first time.  
-Similarly you should do if you delete the `<REPO-MNT>` dirctory.  
+For a more robust sync, if this is the first time you sync the 2 directories and `path2` is not empty, that if both `path1` and `path2` have some files but different ones (they are not in sync) you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files in `path1` compared to `path2`. This will result in a union from both `path1` and `path2`, no deletes will be made this first time.  
+Similarly you should do if you delete the `repo` dirctory.  
 After that you can run without the flag if you don't want to use the `MD5 hash` to determine changes.
 
 ## Limitations
@@ -76,13 +75,13 @@ After that you can run without the flag if you don't want to use the `MD5 hash` 
 
 ## Troubleshooting
 
-In case you experience any inconsistencies in the way the files are synced, or not synced for that matter, you can delete the `<PATH-REPO>` directory and run it again. It will see all files as new but will not copy them to the oher side if hey are already present in here and with the same content, it wil just copy the new or changed ones.  
-For a more robust first time sync after you removed the `<PATH-REPO>` directory you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files in `<PATH1-MNT>` compared to `<PATH2-MNT>`. This will result in a union from both `<PATH1-MNT>` and `<PATH2-MNT>`, no deletes will be made this first time.  
+In case you experience any inconsistencies in the way the files are synced, or not synced for that matter, you can delete the `repo` directory and run it again. It will see all files as new but will not copy them to the oher side if hey are already present in here and with the same content, it wil just copy the new or changed ones.  
+For a more robust first time sync after you removed the `repo` directory you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files in `path1` compared to `path2`. This will result in a union from both `path1` and `path2`, no deletes will be made this first time.  
 After that you can run without the flag if you don't want to use the `MD5 hash` to determine changes.
 
 ## Logs
 
-It doesn't print each change in logs, but just one in 100 changes, so it won't clutter the logs.
+It doesn't print each change in logs, but every 100th change, so it won't clutter the logs.
 
 ## Compile it from source code
 
@@ -122,7 +121,7 @@ cargo build --release
 ### Run it
 
 ```bash
-target/release/syncoxiders --path1-mnt <PATH1-MNT> --path2-mnt <PATH2-MNT> --path-repo <PATH-REPO>
+target/release/syncoxiders --path1 <PATH1> --path2 <PATH2> --repo <REPO>
 ```
 
 # Work in progress
