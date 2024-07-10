@@ -16,10 +16,10 @@ pub fn apply(
     changes: Changes,
     items_path1: Items,
     items_path2: Items,
-    path1_mnt: &Path,
-    path2_mnt: &Path,
-    path1_repo: &Path,
-    _path2_repo: &Path,
+    path1: &Path,
+    path2: &Path,
+    repo1: &Path,
+    repo2: &Path,
     dry_run: bool,
     checksum: bool,
     crc: bool,
@@ -53,10 +53,10 @@ pub fn apply(
                         path,
                         items_path1.clone(),
                         items_path2.clone(),
-                        path1_mnt,
-                        path2_mnt,
-                        path1_repo,
-                        _path2_repo,
+                        path1,
+                        path2,
+                        repo1,
+                        repo2,
                         dry_run,
                         checksum,
                         crc,
@@ -96,10 +96,10 @@ pub fn apply(
                 path,
                 items_path1.clone(),
                 items_path2.clone(),
-                path1_mnt,
-                path2_mnt,
-                path1_repo,
-                _path2_repo,
+                path1,
+                path2,
+                repo1,
+                repo2,
                 dry_run,
                 checksum,
                 crc,
@@ -141,23 +141,23 @@ pub fn apply(
             .bold()
         );
     }
-    git_add(&path1_repo.join(TREE_DIR), ".")?;
-    git_commit(path1_repo)?;
+    git_add(&repo1.join(TREE_DIR), ".")?;
+    git_commit(repo1)?;
 
     Ok(())
 }
 
 fn items_content_eq(
-    path1_mnt: &&Path,
+    path1: &&Path,
     a: &Item,
-    path2_mnt: &&Path,
+    path2: &&Path,
     b: &Item,
     checksum: bool,
 ) -> io::Result<bool> {
     if a.size == b.size && a.mtime == b.mtime {
         if checksum {
-            let hash1 = file_hash(&path1_mnt.join(&a.path), HashKind::Md5)?;
-            let hash2 = file_hash(&path2_mnt.join(&b.path), HashKind::Md5)?;
+            let hash1 = file_hash(&path1.join(&a.path), HashKind::Md5)?;
+            let hash2 = file_hash(&path2.join(&b.path), HashKind::Md5)?;
             Ok(hash1.eq(&hash2))
         } else {
             Ok(true)
@@ -172,10 +172,10 @@ fn process(
     path: &String,
     items_path1: Arc<Mutex<Items>>,
     items_path2: Arc<Mutex<Items>>,
-    path1_mnt: &Path,
-    path2_mnt: &Path,
-    path1_repo: &Path,
-    _path2_repo: &Path,
+    path1: &Path,
+    path2: &Path,
+    repo1: &Path,
+    _repo2: &Path,
     dry_run: bool,
     checksum: bool,
     crc: bool,
@@ -186,7 +186,7 @@ fn process(
     applied_size_since_commit: &AtomicU64,
     commit_after_size_bytes: i32,
 ) -> Result<()> {
-    let path2 = path2_mnt.join(path);
+    let dst = path2.join(path);
     ctr.fetch_add(1, Ordering::SeqCst);
     match change.clone() {
         Change::Add | Change::Modify => {
@@ -202,7 +202,7 @@ fn process(
             let guard = items_path1.lock().unwrap();
             let path1_item = guard.get(path).unwrap();
             if let Some(dst_item) = items_path2.lock().unwrap().get(path) {
-                if items_content_eq(&path1_mnt, &path1_item, &path2_mnt, &dst_item, checksum)? {
+                if items_content_eq(&path1, &path1_item, &path2, &dst_item, checksum)? {
                     add = false;
                 }
             }
@@ -210,12 +210,12 @@ fn process(
                 if dry_run {
                     return Ok(());
                 }
-                fs::create_dir_all(path2.parent().unwrap())?;
-                fs::copy(path1_mnt.join(&path), path2.clone())?;
-                File::set_times(&File::open(path2.clone())?, path1_item.times)?;
-                File::open(path2.clone())?.sync_all()?;
-                File::open(path2.parent().unwrap())?.sync_all()?;
-                if crc && !crc_eq(&path1_mnt.join(&path), &path2.clone())? {
+                fs::create_dir_all(dst.parent().unwrap())?;
+                fs::copy(path1.join(&path), dst.clone())?;
+                File::set_times(&File::open(dst.clone())?, path1_item.times)?;
+                File::open(dst.clone())?.sync_all()?;
+                File::open(dst.parent().unwrap())?.sync_all()?;
+                if crc && !crc_eq(&path1.join(&path), &dst.clone())? {
                     // todo: collect in errors
                     println!(
                         "{}",
@@ -236,12 +236,12 @@ fn process(
             if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 {
                 println!("{} '{}'", change.to_string().red(), path.red().bold());
             }
-            if path2.exists() {
+            if dst.exists() {
                 if dry_run {
                     return Ok(());
                 }
-                fs::remove_file(path2.clone())?;
-                File::open(path2.parent().unwrap())?.sync_all()?;
+                fs::remove_file(dst.clone())?;
+                File::open(dst.parent().unwrap())?.sync_all()?;
             } else if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 {
                 println!("{}", "  skip, not present in path2".yellow());
             }
@@ -254,26 +254,26 @@ fn process(
             let guard = items_path1.lock().unwrap();
             let path1_item = guard.get(path).unwrap();
             // todo: compare if old file hash in src is same as old file hash in dst
-            if path2_mnt.join(&old_path).exists() {
+            if path2.join(&old_path).exists() {
                 if dry_run {
                     return Ok(());
                 }
-                fs::create_dir_all(path2.parent().unwrap())?;
-                fs::rename(path2_mnt.join(&old_path), path2.clone())?;
-                File::set_times(&File::open(path2.clone())?, path1_item.times)?;
-                File::open(path2.clone())?.sync_all()?;
-                File::open(path2.parent().unwrap())?.sync_all()?;
+                fs::create_dir_all(dst.parent().unwrap())?;
+                fs::rename(path2.join(&old_path), dst.clone())?;
+                File::set_times(&File::open(dst.clone())?, path1_item.times)?;
+                File::open(dst.clone())?.sync_all()?;
+                File::open(dst.parent().unwrap())?.sync_all()?;
             } else {
                 println!("{}", format!("  cannot R '{old_path}' -> '{path}', old file not present in path2. Will copy instead from path1 to the new destination").yellow());
                 if dry_run {
                     return Ok(());
                 }
-                fs::create_dir_all(path2_mnt.join(path).parent().unwrap())?;
-                fs::copy(path1_mnt.join(path), path2.clone())?;
-                File::set_times(&File::open(path2.clone())?, path1_item.times)?;
-                File::open(path2.clone())?.sync_all()?;
-                File::open(path2.parent().unwrap())?.sync_all()?;
-                if crc && !crc_eq(&path1_mnt.join(path), &path2.clone())? {
+                fs::create_dir_all(path2.join(path).parent().unwrap())?;
+                fs::copy(path1.join(path), dst.clone())?;
+                File::set_times(&File::open(dst.clone())?, path1_item.times)?;
+                File::open(dst.clone())?.sync_all()?;
+                File::open(dst.parent().unwrap())?.sync_all()?;
+                if crc && !crc_eq(&path1.join(path), &dst.clone())? {
                     // todo: collect in errors
                     println!(
                         "{}",
@@ -292,24 +292,24 @@ fn process(
             let guard = items_path1.lock().unwrap();
             let path1_item = guard.get(path).unwrap();
             // todo: compare if old file hash in src is same as old file hash in dst
-            if path2_mnt.join(&old_path).exists() {
+            if path2.join(&old_path).exists() {
                 if dry_run {
                     return Ok(());
                 }
-                fs::create_dir_all(path2.clone().parent().unwrap())?;
-                fs::copy(path2_mnt.join(&old_path), path2.clone())?;
-                File::set_times(&File::open(path2.clone())?, path1_item.times)?;
-                File::open(path2.clone())?.sync_all()?;
-                File::open(path2.parent().unwrap())?.sync_all()?;
+                fs::create_dir_all(dst.clone().parent().unwrap())?;
+                fs::copy(path2.join(&old_path), dst.clone())?;
+                File::set_times(&File::open(dst.clone())?, path1_item.times)?;
+                File::open(dst.clone())?.sync_all()?;
+                File::open(dst.parent().unwrap())?.sync_all()?;
             } else {
                 println!("{}", format!("  cannot C '{old_path}' -> '{path}', old file not present in path2. Will copy instead from path1 to the new destination").yellow());
                 if dry_run {
                     return Ok(());
                 }
-                fs::create_dir_all(path2.parent().unwrap())?;
-                fs::copy(path1_mnt.join(path), path2.clone())?;
+                fs::create_dir_all(dst.parent().unwrap())?;
+                fs::copy(path1.join(path), dst.clone())?;
             }
-            if crc && !crc_eq(&path1_mnt.join(path), &path2.clone())? {
+            if crc && !crc_eq(&path1.join(path), &dst.clone())? {
                 // todo: collect in errors
                 println!(
                     "{}",
@@ -322,10 +322,10 @@ fn process(
         }
     }
     let _guard = git_lock.lock().unwrap();
-    git_add(&path1_repo.join(TREE_DIR), path)?;
+    git_add(&repo1.join(TREE_DIR), path)?;
     if applied_size_since_commit.load(Ordering::SeqCst) > commit_after_size_bytes as u64 {
         println!("{}", "Checkpointing applied changes...".cyan());
-        git_commit(path1_repo)?;
+        git_commit(repo1)?;
         applied_size_since_commit.store(0, Ordering::SeqCst);
     }
     Ok(())

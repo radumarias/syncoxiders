@@ -21,31 +21,31 @@ struct Args {
         short,
         long,
         short = 'a',
-        help = "First mount point, where actual files that needs to be synced are located."
+        help = "First directory where actual files that needs to be synced are located."
     )]
-    path1_mnt: PathBuf,
+    path1: PathBuf,
 
     #[arg(
         short,
         long,
         short = 'b',
-        help = "Second mount point, where actual files that needs to be synced are located."
+        help = "Second directory where actual files that needs to be synced are located."
     )]
-    path2_mnt: PathBuf,
+    path2: PathBuf,
 
     #[arg(
         short,
         long,
         short = 'r',
-        help = "A directory where we'll keep a git repo to detect changes. Should persist between runs. MUST NOT BE INSIDE ANY OF <PATH1-MNT> or <PATH2-MNT> DIRECTORIES"
+        help = "A directory where we'll keep a git repo to detect changes. Should persist between runs. MUST NOT BE INSIDE ANY OF path1 or path2 DIRECTORIES"
     )]
-    path_repo: PathBuf,
+    repo: PathBuf,
 
     #[arg(
         short,
         long,
         default_value_t = false,
-        help = "This simulates the sync. Will not actually create or change any of the files in <PATH1-MNT> or <PATH2-MNT>, will just print the operations that would have normally be applied to both ends"
+        help = "This simulates the sync. Will not actually create or change any of the files in path1 or path2, will just print the operations that would have normally be applied to both ends"
     )]
     dry_run: bool,
 
@@ -54,7 +54,7 @@ struct Args {
         long,
         short = 't',
         default_value_t = false,
-        help = "If specified it will calculate MD5 hash for files when comparing file in <PATH1-MNT> with the file in <PATH2-MNT> when applying Add and Modify operations. It will be considerably slower when activated"
+        help = "If specified it will calculate MD5 hash for files when comparing file in path1 with the file in path2 when applying Add and Modify operations. It will be considerably slower when activated"
     )]
     checksum: bool,
 
@@ -63,7 +63,7 @@ struct Args {
         long,
         short = 'x',
         default_value_t = false,
-        help = "If specified it will skip CRC check after file was transferred. Without this it compares the CRC of the file in <PATH1-MNT> before transfer with the CRC of the file in <PATH2-MNT> after transferred. This ensures the transfer was successful. Checking CRC is highly recommend if any of <PATH1-MNT> or <PATH1-MNT> are accessed over the network"
+        help = "If specified it will skip CRC check after file was transferred. Without this it compares the CRC of the file in path1 before transfer with the CRC of the file in path2 after transferred. This ensures the transfer was successful. Checking CRC is highly recommend if any of path1 or path1 are accessed over the network"
     )]
     no_crc: bool,
 }
@@ -91,9 +91,9 @@ fn main() -> Result<()> {
 
     println!("{}", "Build changes trees...".cyan());
     let (changes_tree1, errors1) =
-        changes_tree(PathWalker::new(&args.path1_mnt), &args.path_repo.join("1"))?;
+        changes_tree(PathWalker::new(&args.path1), &args.repo.join("1"))?;
     let (changes_tree2, errors2) =
-        changes_tree(PathWalker::new(&args.path2_mnt), &args.path_repo.join("2"))?;
+        changes_tree(PathWalker::new(&args.path2), &args.repo.join("2"))?;
 
     println!("{}", "Merge changes trees...".cyan());
     change_tree_merge::merge(changes_tree1, changes_tree2, MergeStrategy::OneWay)?.pipe(|x| {
@@ -111,20 +111,20 @@ fn main() -> Result<()> {
             changes_src,
             items_path1,
             items_path2,
-            &args.path1_mnt,
-            &args.path2_mnt,
-            &args.path_repo.join("1"),
-            &args.path_repo.join("2"),
+            &args.path1,
+            &args.path2,
+            &args.repo.join("1"),
+            &args.repo.join("2"),
             args.dry_run,
             args.checksum,
             !args.no_crc,
         )?;
         println!("{}", "Cleanup repo...".cyan());
-        git_delete_history(&args.path_repo.join("1"))?;
+        git_delete_history(&args.repo.join("1"))?;
         // todo: dst -> src
-        git_add(&args.path_repo.join("1"), ".")?;
-        git_commit(&args.path_repo.join("2"))?;
-        git_delete_history(&args.path_repo.join("2"))?;
+        git_add(&args.repo.join("1"), ".")?;
+        git_commit(&args.repo.join("2"))?;
+        git_delete_history(&args.repo.join("2"))?;
         Ok(())
     })?;
 
