@@ -13,7 +13,7 @@ env:
   CARGO_INCREMENTAL: 0 # TODO: remove this when we cache the builds
 
 jobs:
-  build:
+  ci:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
