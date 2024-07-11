@@ -6,10 +6,10 @@ export setup_base_path=/tmp/syncoxiders_test
 export setup_num_paths=2
 export setup_num_initial_files=0
 
-BIN="$(dirname $0)/../../../../../target/release/syncoxiders"
+BIN="$(dirname $0)/../../../../target/release/syncoxiders"
 
-source ../../common.sh
-source ../../setup.sh
+source ../common.sh
+source ../setup.sh
 
 for i in {1..5}; do
   size=$(generate_random_size 1 100)
@@ -35,4 +35,4 @@ for i in {1..5}; do
   fi
 done
 
-source ../../cleanup.sh
+source ../cleanup.sh

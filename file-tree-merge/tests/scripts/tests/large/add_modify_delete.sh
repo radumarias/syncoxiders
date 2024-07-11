@@ -6,7 +6,7 @@ export setup_base_path=~/tmp/syncoxiders_test
 export setup_num_paths=2
 export setup_num_initial_files=0
 
-BIN="$(dirname $0)/../../../../../target/release/syncoxiders"
+BIN="$(dirname $0)/../../../../.../target/release/syncoxiders"
 
 source ../../common.sh
 source ../../setup.sh

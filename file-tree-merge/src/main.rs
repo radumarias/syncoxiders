@@ -29,7 +29,7 @@ struct Args {
         short,
         long,
         default_value_t = false,
-        help = "This simulates the sync. Will not actually create, modify or delete any of the files on endpoints, will just print the operations that would have normally be applied to endpoints"
+        help = "This simulates the sync. Will not apply any operations to the files, will just print the operations that would have normally be applied to endpoints"
     )]
     dry_run: bool,
 
