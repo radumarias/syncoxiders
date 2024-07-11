@@ -2,8 +2,10 @@
 
 # How it works for now
 
-`One-way` sync for `Add`, `Modify`, `Delete`, `Rename` operations. You can see here a short demo:  
+`One-way` `One-to-Many` sync for `Add`, `Modify`, `Delete`, `Rename` operations. You can see here a short demo:  
 [![Watch the video](https://img.youtube.com/vi/JHQC1XpCzQw/0.jpg)](https://www.youtube.com/watch?v=JHQC1XpCzQw)
+
+We'll exemplify for 2 paths, from `path1` to `path2` but it works with multiple paths, it will Sync from `path1` to others.
 
 **`One-way` sync:**
 - have 2 mounted folders with rclone (`path1`, `path2`)
@@ -48,7 +50,7 @@ syncoxiders --repo <REPO> <PATH1> <PATH2>
 - `inputs`: a lists of paths that will be synced. Let's call them `Endpoints`
 - `<REPO>`: a folder that should persist between runs, we create a `git` repo with metadata of files from all endpoints. **MUST NOT BE ON ANY OF THE ENDPOINTS**. If it doesn't persist next time it runs it will see all files in as `Add`ed, but will skip them if are already the same as on the other side
 
-For now, it does `One-way` sync propagating these operations from `path1` to `path2`:
+For now, it does `One-way` sync propagating the changes from `path1` to other paths:
 - `Add`, `Modify`, `Delete`, `Rename`
 - on `Add` and `Modify` we check if the file is already present in `path2` and if it's the same as in `path1` we skip it
 - comparison between the files is made using `size`, `mtime` and `MD5 hash`, if enabled, see `--checksum` arg below
