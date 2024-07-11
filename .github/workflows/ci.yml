@@ -24,6 +24,11 @@ jobs:
     - name: build
       run: cargo build --all --release
 
+    - name: test
+      run: |
+        cd file-tree-merge/tests/scripts
+        sh tests.sh
+
     - name: upload binary
       uses: actions/upload-artifact@v4
       with:
