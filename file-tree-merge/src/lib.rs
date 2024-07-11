@@ -2,10 +2,11 @@ use anyhow::Result;
 use change_tree_merge::HashKind;
 use crc32fast::Hasher;
 use std::fs::File;
-use std::io;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
+use std::{io, thread};
 
 pub mod apply_change;
 pub mod change_tree;
@@ -128,4 +129,23 @@ pub fn git_delete_history(repo: &Path) -> Result<()> {
     command("git", vec!["branch", "-D", "master"], repo)?;
     command("git", vec!["branch", "-m", "master"], repo)?;
     Ok(())
+}
+
+fn retry<F, R>(f: F, count: usize) -> Result<R>
+where
+    F: Fn() -> Result<R>,
+{
+    let mut retries = 0;
+    loop {
+        match f() {
+            Ok(r) => return Ok(r),
+            Err(e) => {
+                if retries > count {
+                    return Err(e);
+                }
+                thread::sleep(Duration::from_secs(2_u64.pow(retries as u32)));
+                retries += 1;
+            }
+        }
+    }
 }

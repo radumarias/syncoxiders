@@ -12,7 +12,7 @@ use rayon::prelude::IntoParallelRefIterator;
 use crate::change_tree::Change;
 use crate::change_tree_merge::{DstItems, HashKind, MergedChanges};
 use crate::tree_creator::Item;
-use crate::{crc_eq, file_hash, git_add, git_commit, TREE_DIR};
+use crate::{crc_eq, file_hash, git_add, git_commit, retry, TREE_DIR};
 
 pub fn apply(
     changes: MergedChanges,
@@ -153,9 +153,14 @@ pub fn apply(
             .bold()
         );
     }
-    // git_add(&repo1.join(TREE_DIR), ".")?;
-    git_commit(repo1)?;
-
+    retry(
+        || {
+            // git_add(&repo1.join(TREE_DIR), ".")?;
+            git_commit(repo1)?;
+            Ok(())
+        },
+        5,
+    )?;
     Ok(())
 }
 
@@ -229,11 +234,17 @@ fn process(
                 if dry_run {
                     return Ok(());
                 }
-                fs::create_dir_all(dst.parent().unwrap())?;
-                fs::copy(path1.join(&path), dst.clone())?;
-                File::set_times(&File::open(dst.clone())?, path1_item.times)?;
-                File::open(dst.clone())?.sync_all()?;
-                File::open(dst.parent().unwrap())?.sync_all()?;
+                retry(
+                    || {
+                        fs::create_dir_all(dst.parent().unwrap())?;
+                        fs::copy(path1.join(&path), dst.clone())?;
+                        File::set_times(&File::open(dst.clone())?, path1_item.times)?;
+                        File::open(dst.clone())?.sync_all()?;
+                        File::open(dst.parent().unwrap())?.sync_all()?;
+                        Ok(())
+                    },
+                    5,
+                )?;
                 if crc && !crc_eq(&path1.join(&path), &dst.clone())? {
                     // todo: collect in errors
                     println!(
@@ -259,8 +270,14 @@ fn process(
                 if dry_run {
                     return Ok(());
                 }
-                fs::remove_file(dst.clone())?;
-                File::open(dst.parent().unwrap())?.sync_all()?;
+                retry(
+                    || {
+                        fs::remove_file(dst.clone())?;
+                        File::open(dst.parent().unwrap())?.sync_all()?;
+                        Ok(())
+                    },
+                    5,
+                )?;
             } else if ctr.load(Ordering::SeqCst) % batch_size as u64 == 0 || print_all_changes {
                 println!("{}", "  skip, not present in path2".yellow());
             }
@@ -277,21 +294,33 @@ fn process(
                 if dry_run {
                     return Ok(());
                 }
-                fs::create_dir_all(dst.parent().unwrap())?;
-                fs::rename(path2.join(&old_path), dst.clone())?;
-                File::set_times(&File::open(dst.clone())?, path1_item.times)?;
-                File::open(dst.clone())?.sync_all()?;
-                File::open(dst.parent().unwrap())?.sync_all()?;
+                retry(
+                    || {
+                        fs::create_dir_all(dst.parent().unwrap())?;
+                        fs::rename(path2.join(&old_path), dst.clone())?;
+                        File::set_times(&File::open(dst.clone())?, path1_item.times)?;
+                        File::open(dst.clone())?.sync_all()?;
+                        File::open(dst.parent().unwrap())?.sync_all()?;
+                        Ok(())
+                    },
+                    5,
+                )?;
             } else {
                 println!("{}", format!("  cannot R '{old_path}' -> '{path}', old file not present in path2. Will copy instead from path1 to the new destination").yellow());
                 if dry_run {
                     return Ok(());
                 }
-                fs::create_dir_all(path2.join(path).parent().unwrap())?;
-                fs::copy(path1.join(path), dst.clone())?;
-                File::set_times(&File::open(dst.clone())?, path1_item.times)?;
-                File::open(dst.clone())?.sync_all()?;
-                File::open(dst.parent().unwrap())?.sync_all()?;
+                retry(
+                    || {
+                        fs::create_dir_all(path2.join(path).parent().unwrap())?;
+                        fs::copy(path1.join(path), dst.clone())?;
+                        File::set_times(&File::open(dst.clone())?, path1_item.times)?;
+                        File::open(dst.clone())?.sync_all()?;
+                        File::open(dst.parent().unwrap())?.sync_all()?;
+                        Ok(())
+                    },
+                    5,
+                )?;
                 if crc && !crc_eq(&path1.join(path), &dst.clone())? {
                     // todo: collect in errors
                     println!(
@@ -315,18 +344,33 @@ fn process(
                 if dry_run {
                     return Ok(());
                 }
-                fs::create_dir_all(dst.clone().parent().unwrap())?;
-                fs::copy(path2.join(&old_path), dst.clone())?;
-                File::set_times(&File::open(dst.clone())?, path1_item.times)?;
-                File::open(dst.clone())?.sync_all()?;
-                File::open(dst.parent().unwrap())?.sync_all()?;
+                retry(
+                    || {
+                        fs::create_dir_all(dst.clone().parent().unwrap())?;
+                        fs::copy(path2.join(&old_path), dst.clone())?;
+                        File::set_times(&File::open(dst.clone())?, path1_item.times)?;
+                        File::open(dst.clone())?.sync_all()?;
+                        File::open(dst.parent().unwrap())?.sync_all()?;
+                        Ok(())
+                    },
+                    5,
+                )?;
             } else {
                 println!("{}", format!("  cannot C '{old_path}' -> '{path}', old file not present in path2. Will copy instead from path1 to the new destination").yellow());
                 if dry_run {
                     return Ok(());
                 }
-                fs::create_dir_all(dst.parent().unwrap())?;
-                fs::copy(path1.join(path), dst.clone())?;
+                retry(
+                    || {
+                        fs::create_dir_all(dst.parent().unwrap())?;
+                        fs::copy(path1.join(path), dst.clone())?;
+                        File::set_times(&File::open(dst.clone())?, path1_item.times)?;
+                        File::open(dst.clone())?.sync_all()?;
+                        File::open(dst.parent().unwrap())?.sync_all()?;
+                        Ok(())
+                    },
+                    5,
+                )?;
             }
             if crc && !crc_eq(&path1.join(path), &dst.clone())? {
                 // todo: collect in errors

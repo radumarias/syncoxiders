@@ -11,7 +11,7 @@ use colored::Colorize;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefIterator;
 
-use crate::IterRef;
+use crate::{git_commit, retry, IterRef};
 
 // pub(crate) const PATH_SEPARATOR: &str = "／";
 pub(crate) const PATH_SEPARATOR: &str = "|";
@@ -62,14 +62,21 @@ impl<I: Iterator<Item = io::Result<Item>>, Iter: IterRef<Iter = I>> TreeCreator<
 
     pub fn create(&self, tree_dir: &Path) -> Result<(Vec<Item>, Vec<io::Error>)> {
         let dst = tree_dir.to_path_buf();
-        if dst.exists() {
-            if !dst.is_dir() {
-                anyhow::bail!("Destination is not a directory");
-            }
-            remove_all_from_dir(&dst)?;
-        } else {
-            fs::create_dir_all(&dst)?;
-        }
+        retry(
+            || {
+                if dst.exists() {
+                    if !dst.is_dir() {
+                        anyhow::bail!("Destination is not a directory");
+                    }
+                    remove_all_from_dir(&dst)?;
+                } else {
+                    fs::create_dir_all(&dst)?;
+                }
+                Ok(())
+            },
+            5,
+        )?;
+
         let mut first = true;
         let items = Arc::new(Mutex::new(vec![]));
         let errors = Arc::new(Mutex::new(vec![]));
@@ -92,9 +99,13 @@ impl<I: Iterator<Item = io::Result<Item>>, Iter: IterRef<Iter = I>> TreeCreator<
 
             if to_process.len() % batch_size == 0 {
                 // Process the collection in parallel
-                let res: Vec<io::Result<()>> = to_process
+                let res: Vec<Result<()>> = to_process
                     .par_iter() // Convert the vector into a parallel iterator
-                    .map(|item| process(item.clone(), items.clone(), &dst))
+                    .map(|item| process(item.clone(), &dst))
+                    .map(|item| {
+                        items.lock().unwrap().push(item?);
+                        Ok(())
+                    })
                     .collect();
                 for e in res {
                     if let Err(err) = e {
@@ -105,9 +116,13 @@ impl<I: Iterator<Item = io::Result<Item>>, Iter: IterRef<Iter = I>> TreeCreator<
             };
         }
         // Process the collection in parallel
-        let res: Vec<io::Result<()>> = to_process
+        let res: Vec<Result<()>> = to_process
             .par_iter() // Convert the vector into a parallel iterator
-            .map(|item| process(item.clone(), items.clone(), &dst))
+            .map(|item| process(item.clone(), &dst))
+            .map(|item| {
+                items.lock().unwrap().push(item?);
+                Ok(())
+            })
             .collect();
         for e in res {
             if let Err(err) = e {
@@ -165,29 +180,33 @@ fn get_time_bytes(time: &SystemTime) -> Vec<u8> {
     bytes.to_vec()
 }
 
-fn process(item: Item, items: Arc<Mutex<Vec<Item>>>, dst: &Path) -> io::Result<()> {
+fn process(item: Item, dst: &Path) -> Result<Item> {
     // let path_rel = item.path.replace('/', PATH_SEPARATOR);
     // let path = dst.join(path_rel);
     let path = dst.join(item.path.clone());
-    if item.is_dir {
-        // println!("Creating dir: {:?}", path);
-        fs::create_dir_all(&path)?;
-    } else {
-        // println!("Creating file: {:?}", path);
-        fs::create_dir_all(path.parent().unwrap())?;
-        let mut file = File::create(&path)?;
-        Path::new(&path)
-            .parent()
-            .map_or(Ok(()), fs::create_dir_all)?;
-        file.write_all(&item.size.to_le_bytes())?;
-        file.write_all(&get_time_bytes(&item.mtime))?;
-        file.flush()?;
-        file.sync_all()?;
-        File::set_times(&file, item.times)?;
-        File::open(&path)?.sync_all()?;
-        File::open(path.parent().unwrap())?.sync_all()?;
-        items.lock().unwrap().push(item);
-    }
-
-    Ok(())
+    retry(
+        || {
+            if item.is_dir {
+                // println!("Creating dir: {:?}", path);
+                fs::create_dir_all(&path)?;
+            } else {
+                // println!("Creating file: {:?}", path);
+                fs::create_dir_all(path.parent().unwrap())?;
+                let mut file = File::create(&path)?;
+                Path::new(&path)
+                    .parent()
+                    .map_or(Ok(()), fs::create_dir_all)?;
+                file.write_all(&item.size.to_le_bytes())?;
+                file.write_all(&get_time_bytes(&item.mtime))?;
+                file.flush()?;
+                file.sync_all()?;
+                File::set_times(&file, item.times)?;
+                File::open(&path)?.sync_all()?;
+                File::open(path.parent().unwrap())?.sync_all()?;
+            }
+            Ok(())
+        },
+        5,
+    )?;
+    Ok(item)
 }

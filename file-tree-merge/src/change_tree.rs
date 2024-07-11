@@ -6,9 +6,9 @@ use anyhow::Result;
 use git2::{Repository, Status};
 use slab_tree::{NodeId, Tree, TreeBuilder};
 
-use crate::git_status;
 use crate::tree_creator::Item;
 use crate::{git_restore_staged, tree_creator};
+use crate::{git_status, retry};
 
 pub type PathChanges = (ChangeTree, BTreeMap<String, Item>);
 
@@ -68,6 +68,9 @@ pub fn build(items: Vec<Item>, repo: &Path) -> Result<PathChanges> {
     if repo.exists() && !repo.is_dir() {
         anyhow::bail!("Destination is not a directory");
     }
+
+    retry(|| Ok(()), 5)?;
+
     if !repo.exists() {
         fs::create_dir_all(repo)?;
     }

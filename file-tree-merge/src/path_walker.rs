@@ -1,8 +1,9 @@
 use anyhow::Result;
 use colored::Colorize;
 use std::fs::FileTimes;
-use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+use std::{io, thread};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::{tree_creator, IterRef};
@@ -53,7 +54,24 @@ impl Iterator for Iter {
     type Item = io::Result<tree_creator::Item>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.it.next().map(|entry| {
+        let next = {
+            let mut retries = 0;
+            loop {
+                let n = self.it.next();
+                if n.is_none() {
+                    return None;
+                } else if n.as_ref().unwrap().is_ok() {
+                    break n;
+                } else {
+                    retries += 1;
+                    thread::sleep(Duration::from_millis(2_u64.pow(retries)));
+                }
+                if retries > 5 {
+                    return None;
+                }
+            }
+        };
+        next.map(|entry| {
             entry
                 .map(|entry| {
                     let path = entry.path();
