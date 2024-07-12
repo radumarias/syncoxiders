@@ -22,7 +22,7 @@ Takes a comma-separated list, with the currently supported values being `size`, 
 
 ## Conflict resolution
 
-If configured first it will try to `auto-merge` (see below). This is disabled by default as it needs to download the remote file to perform the merge. if it doesn’t succeed it will keep the content based on `keep-content-mode` and will copy the other file to a new file with suffix in name like `conflict-<other>-date` indicating the other identifier and the date when the change was made.
+If configured first it will try to `auto-merge` (see below). This is disabled by default as it needs to download the remote file to perform the merge. if it doesn’t succeed it will keep the content based on `keep-mode` and will copy the other file to a new file with suffix in name like `conflict-<other>-date` indicating the other identifier and the date when the change was made.
 
 ## auto-merge
 
