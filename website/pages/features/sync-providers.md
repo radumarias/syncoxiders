@@ -11,14 +11,14 @@ This is useful when you want to keep files in sync between multiple and/or diffe
 ## Sync modes
 
 There are 4 modes to sync the files:
-1. `Copy`: it will copy new files and changes from source to destination. No deletes or renames will occur. In case the file is changed on destination also (see how this is determined based on **compare-mode** below) it will resolve the conflict based on conflict resolution (see below)
-2. `One-way`: like Copy but will also delete and rename files o destination. Conflicts are handled based on conflict resolution
-3. `Move`: will move the changed files from source to destination, deleting them from source after transferred. Conflicts are handled based on conflict resolution
+1. `Copy`: it will copy new and changes files from source to destination. No deletes or renames will occur on dst. In case the file is changed on destination also (see how this is determined based on **compare-mode** below) it will resolve the conflict using `keep-mode: path1` (see below)
+2. `Move`: like `Copy` but will move files from source to destination, deleting them from source after transferred
+3. `One-way`: like Copy but will also delete and rename files on destination. Conflicts are handled based on conflict resolution
 4. `Two-way`: will propagate changes in both directions. In case of changes on both sides conflicts are handled based on conflict resolution
 
 ## compare-mode
 
-Takes a comma-separated list, with the currently supported values being `size`, `modtime`, and `checksum`. For example, you could compare size and modtime but not the checksum.
+Takes a comma-separated list, with the currently supported values being `size`, `modtime`, and `hash`. For example, you could compare `size` and `modtime` but not the `hash`.
 
 ## Conflict resolution
 
