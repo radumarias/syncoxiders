@@ -53,19 +53,20 @@ syncoxiders --repo <REPO> <PATH1> <PATH2>
 For now, it does `One-way` sync propagating the changes from `path1` to other paths:
 - `Add`, `Modify`, `Delete`, `Rename`
 - on `Add` and `Modify` we check if the file is already present in `path2` and if it's the same as in `path1` we skip it
-- comparison between the files is made using `size`, `mtime` and `MD5 hash`, if enabled, see `--checksum` arg below
+- comparison between the files is made using `size`, `mtime` or `MD5 hash` (if enabled, see `--checksum` arg below)
 - on `Rename` if the `old` file is not present in the `path2` to move it, we copy it from `path1`
 
 By default it detects changes in files based on `size` and `mtime`. After copying to `path2` it will set also `atime` and `mtime` for the files.
 
 Other args:
 - `--dry-run`: this simulates the sync. Will not actually create, modify or delete any of the files on endpoints, will just print the operations that would have normally be applied to endpoints
-- `--checksum`: (disabled by default): if specified it will calculate `MD5 hash` for files when comparing file in `path1` with the file in `path2` when applying `Add` and `Modify` operations. **It will be considerably slower when activated**
+- `--checksum`: (disabled by default): if specified it will calculate `MD5 hash` for files when detecting changes and when comparing file in `path1` with the file in `path2` when applying `Add` and `Modify` operations. **It will be considerably slower when activated**.  
+    This is useful if any of the endpoints doesn't support `mtime` or even `size` or if the clocks on endpoints are out of sync
 - `--no-crc`: (disabled by default): if specified it will skip `CRC` check after file was transferred. Without this it compares the `CRC` of the file in `path1` before transfer with the `CRC` of the file in `path1` after transferred. This ensures the transfer was successful. **Checking `CRC` is highly recommend if any of the endpoitns is accessed over the network.**
 
 ## First sync
 
-For a more robust sync, if this is the first time you sync the endpoitns and they are  not empty, that if all have some files but different ones (they are not in sync) you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files. This will result in a union from all endpoints, no deletes will be made this first time.  
+For a more robust sync, if this is the first time you sync the endpoitns and they are  not empty, that if all have some files but different ones (they are not in sync) you should run the command with `--checksum` first time to compare also the `MD5 hash` when checking for changed files. This will result in a union from all endpoints, no deletes will be made this first time.  Please note, the second time you run if it's without `--checksum` it will see all files as new (this is because first time we saved the hash of files and second time we run it will not have new hash so it will see as different) but will not actually copy any files to `path2` if they have the same `size` and `modtime`. From the third run on it will see exact changes.  
 Similarly you should do if you delete the `repo` directory.  
 After that you can run without the flag if you don't want to use the `MD5 hash` to determine changes.
 
