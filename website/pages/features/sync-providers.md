@@ -29,13 +29,13 @@ If configured first it will try to `auto-merge` (see below). This is disabled by
 - `text files`: it will try to merge the changes similar to Git. If there are changes on different lines the files will be merged, if the changes are on the same line it’s a conflict and will not merge anything. This is disabled by default as it needs to download the remote file
 - `binary files`: it will not do any auto-merge
 
-## keep-content-mode
+## keep-mode
 - `newer (default)`: the newer file (by modtime) is considered the winner, regardless of which side it came from. This may result in having a mix of some winners from `Path1`, and some winners from `Path2`
 - `older`: same as newer, except the older file is considered the winner
-- `larger`: the larger file (by `size`) is considered the winner (regardless of `modtime`, if any). This can be a useful option for remotes without `modtime` support, or with the kinds of files (such as logs) that tend to grow but not shrink, over time
-`smaller`: the smaller file (by `size`) is considered the winner (regardless of `modtime`, if any)
-`path1`: the version from `Path1` is unconditionally considered the winner (regardless of `modtime` and `size`, if any). This can be useful if one side is more trusted or up-to-date than the other
-`path2`: same as `path1`, except the `path2` version is considered the winner
+- `bigger`: the bigger file (by `size`) is considered the winner (regardless of `modtime`, if any). This can be a useful option for remotes without `modtime` support, or with the kinds of files (such as logs) that tend to grow but not shrink, over time
+- `smaller`: the smaller file (by `size`) is considered the winner (regardless of `modtime`, if any)
+- `path1`: the version from `Path1` is unconditionally considered the winner (regardless of `modtime` and `size`, if any). This can be useful if one side is more trusted or up-to-date than the other
+- `path2`: same as `path1`, except the `path2` version is considered the winner
 
 If either of the underlying remotes lacks support for the chosen method, it will be ignored and will fall back to the default of `newer`. If `modtime` is not supported either by the remote it will fallback to `path1`.
 
