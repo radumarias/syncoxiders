@@ -8,10 +8,6 @@ export setup_num_initial_files=0
 
 BIN="$(dirname $0)/../../../../target/release/syncoxiders"
 
-pwd
-file ../common.sh
-file ../setup.sh
-
 source ../common.sh
 source ../setup.sh
 
