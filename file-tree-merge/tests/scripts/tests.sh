@@ -15,6 +15,7 @@ find tests -type f -name "*.sh" | while read -r file; do
 
   parent_dir=$(dirname "$file")
   # Change to the parent directory
+  echo "parent dir $parent_dir"
   cd "$parent_dir" || exit
   
   first_parent=$(basename "$parent_dir")
