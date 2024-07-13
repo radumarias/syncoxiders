@@ -40,7 +40,15 @@ jobs:
       run: echo "ext=$(if [[ '${{ matrix.runner }}' == windows* ]]; then echo '.exe'; else echo ''; fi)" >> $GITHUB_ENV
 
     - name: upload binary
+      if: ! startsWith(matrix.runner, 'windows')
       uses: actions/upload-artifact@v4
       with:
         name: syncoxiders_${{ matrix.runner }}
-        path: target/release/syncoxiders${{ env.ext }}
+        path: target/release/syncoxiders
+
+    - name: upload binary
+      if: startsWith(matrix.runner, 'windows')
+      uses: actions/upload-artifact@v4
+      with:
+        name: syncoxiders_${{ matrix.runner }}
+        path: target/release/syncoxiders.exe
