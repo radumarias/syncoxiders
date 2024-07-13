@@ -53,7 +53,7 @@ It would be possible to have something in about 6 months with this functionality
 
 This is what it's planned to have in the end.
 
-![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/services.png?raw=true)
+<img src="website/resources/services.png" style = "width: 100%; max-width: 1000px; height: auto;">
 
 [Use cases](website/pages/use-cases.md)
 
