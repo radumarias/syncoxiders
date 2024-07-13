@@ -43,5 +43,5 @@ jobs:
     - name: upload binary
       uses: actions/upload-artifact@v4
       with:
-        name: syncoxiders
+        name: syncoxiders_${{ matrix.runner }}
         path: target/release/syncoxiders
