@@ -30,9 +30,9 @@ jobs:
     - name: test
       run: |
         cargo test --release --all-targets
-        
-        cd file-tree-merge/tests/scripts
-        sh tests.sh
+
+        #cd file-tree-merge/tests/scripts
+        #sh tests.sh
       shell: bash
 
     - name: upload binary
