@@ -35,13 +35,12 @@ jobs:
         #sh tests.sh
       shell: bash
 
-    - name: check
-      run: |
-        ls target
-        ls target/release
+    - name: Set file extension
+      id: set_ext
+      run: echo "ext=$(if [[ '${{ matrix.runner }}' == windows* ]]; then echo '.exe'; else echo ''; fi)" >> $GITHUB_ENV
 
     - name: upload binary
       uses: actions/upload-artifact@v4
       with:
         name: syncoxiders_${{ matrix.runner }}
-        path: target/release/syncoxiders
+        path: target/release/syncoxiders${{ env.ext }}
