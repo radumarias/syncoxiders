@@ -34,12 +34,14 @@ We'll exemplify for 2 paths, from `path1` to `path2` but it works with multiple 
 
 # Using CLI
 
-You can take the binaries for Linux from [here](https://github.com/radumarias/syncoxiders/actions/runs/9868594722).
+You can find the binaries [here](https://github.com/radumarias/syncoxiders/actions/workflows/ci.yml). Select the last run and at the bottom you should have binaries for multiple OSs.
+
 ```bash
 file syncoxiders
 syncoxiders: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=fb37cbf4c9c42a2a42edd3bb6b880f0292670839, for GNU/Linux 3.2.0, not stripped
-```  
-For other targets you could clone the repo and build it.
+```
+
+For other targets you could clone the repo and build it, see below how.
 
 You can run `syncoxiders -h` to see all args. The basic usage is like this:
 
@@ -129,4 +131,4 @@ target/release/syncoxiders --repo <REPO> <PATH1> <PATH2>
 # Work in progress
 
 - merge changes trees between `path1` and `path2` and resolve conflicts
-- apply changes to both `path1` and `path2`
+- apply changes to both `path1` and `path2`, Two-way sync
