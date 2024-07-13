@@ -35,12 +35,8 @@ jobs:
         #sh tests.sh
       shell: bash
 
-    - name: Set file extension
-      id: set_ext
-      run: echo "ext=$(if [[ '${{ matrix.runner }}' == windows* ]]; then echo '.exe'; else echo ''; fi)" >> $GITHUB_ENV
-
     - name: upload binary
-      if: {{ !startsWith(matrix.runner, 'windows') }}
+      if: {{ ! startsWith(matrix.runner, 'windows') }}
       uses: actions/upload-artifact@v4
       with:
         name: syncoxiders_${{ matrix.runner }}
