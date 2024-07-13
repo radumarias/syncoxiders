@@ -27,7 +27,7 @@ jobs:
     - name: test
       run: |
         cd file-tree-merge/tests/scripts
-        sh tests.sh
+        ./tests.sh
 
     - name: upload binary
       uses: actions/upload-artifact@v4
