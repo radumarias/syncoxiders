@@ -35,6 +35,9 @@ jobs:
         #sh tests.sh
       shell: bash
 
+    - name: check
+      run: tree target
+
     - name: upload binary
       uses: actions/upload-artifact@v4
       with:
