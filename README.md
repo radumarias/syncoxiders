@@ -32,7 +32,7 @@ Working on having these in up to 2 months:
 - save files encrypted using rencfs and have sync working
   - this will save encrypted data on the mount points of rclone and expose them with FUSE
 
-![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/poc.png?raw=true)
+<img src="website/resources/poc.png" style = "width: 100%; max-width: 1000px; height: auto;">
 
 # MVP
 
@@ -47,7 +47,7 @@ It would be possible to have something in about 6 months with this functionality
 - some basic functionality of sharing local files, no sync between them
 - Encryption
 
-![](https://github.com/radumarias/syncoxiders/blob/main/website/resources/mvp.png?raw=true)
+<img src="website/resources/mvp.png" style = "width: 100%; max-width: 1000px; height: auto;">
 
 # The big picture
 
