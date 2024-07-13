@@ -36,7 +36,7 @@ jobs:
       shell: bash
 
     - name: upload binary
-      if: {{ ! startsWith(matrix.runner, 'windows') }}
+      if: ${{ !startsWith(matrix.runner, 'windows') }}
       uses: actions/upload-artifact@v4
       with:
         name: syncoxiders_${{ matrix.runner }}
