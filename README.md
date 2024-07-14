@@ -18,7 +18,7 @@ In many cases we'll use present tense for several functionality, even though it'
 
 [What's with the name](website/pages/name.md)
 
-# POC
+# PoC
 
 You can play with the [CLI app](website/pages/poc-demo.md#using-cli) and see a short [demo](https://www.youtube.com/watch?v=JHQC1XpCzQw).
 
