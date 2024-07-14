@@ -13,7 +13,7 @@ We'll exemplify for 2 paths, from `path1` to `path2` but it works with multiple 
 - apply changes from `path1` to `path2` for these operations:
     - `Add`, `Modify`, `Delete`, `Rename`
 
-**We use `git` to catch the changes, how it works:**
+We use `git` to catch the changes, how it works:
 - we have a special directory `repo` shared for both endpoints. This will be used as a git repo that tracks changes. It should persist between runs
     - `repo`: a git repo we create that should persist between runs
 - inside the `repo` we create a `tree` directory and create the tree structure from `mnt` in there
