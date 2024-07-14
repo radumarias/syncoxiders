@@ -43,8 +43,8 @@ You can run `syncoxiders -h` to see all args. The basic usage is like this:
 syncoxiders --repo <REPO> <PATH1> <PATH2>
 ```
 
-- `inputs`, `<PATH1> <PATH2>`: a lists of paths that will be synced
-- `<REPO>`: a folder that should persist between runs, we create a `git` repo with metadata of files from all paths. **MUST NOT BE ON ANY OF THE PATHS**. If it doesn't persist, next time it runs it will see all files in as `Add`ed, but will skip copying them if are already the same as on the other side
+- `inputs` (`<PATH1> <PATH2>`): a lists of paths that will be synced
+- `<REPO>`: a directory that should persist between runs, we create a `git` repo with metadata of files from all paths. **MUST NOT BE IN ANY OF THE PATHS**. If it doesn't persist, next time it runs it will see all files as `Add`ed, but will skip copying them if already the same as on the other side
 
 For now, it does `One-way` sync propagating the changes from `path1` to other paths:
 - `Add`, `Modify`, `Delete`, `Rename`
@@ -56,11 +56,12 @@ By default it detects changes in files based on `size` and `mtime`. After copyin
 
 Other args:
 - `--checksum`: (disabled by default): if specified it will calculate `MD5 hash` for files when detecting changes and when comparing file in `path1` with the file in `path2` when applying `Add` and `Modify` operations.  
-    **This is useful if any of the paths doesn't support `mtime` or even `size` or if the clocks on endpoints are out of sync**
-    **It will be considerably slower when activated**
-- `--no-crc`: (disabled by default): if specified it will skip `CRC` check after file was transferred. Without this it compares the `CRC` of the file in `path1` before transfer with the `CRC` of the file in `path2` after transferred. This ensures the file integrity after transfered. **Checking `CRC` is highly recommend if any of the endpoitns is accessed over the network.**
-- `--dry-run`: this simulates the sync. Will not actually create, modify or delete any of the files on paths, will just print the operations that would have normally be applied to paths
-- `log-all-changes`: by default it doesn't log each change that is applied, but every 100th change, so it won't clutter the logs. Setting this param will log all changes
+    **This is especially useful if any pf the paths is accessed over the network and doesn't support `mtime` or even `size` or if the clocks are out of sync**
+    **It will be considerably slower when enabled**
+- `--no-crc`: (disabled by default): if specified it will skip `CRC` check after file was transferred. Without this it compares the `CRC` of the file in `path1` with the `CRC` of the file in `path2` after transferred. This ensures the file integrity after transfered.
+    **Checking `CRC` is highly recommend if any of the paths is accessed over the network.**
+- `--dry-run`: this simulates the sync. Will not apply any changes to the paths, will just print the operations that would have normally be applied to paths
+- `log-all-changes`: by default it doesn't log each change that is applied, but every 100th change so it won't clutter the logs. Setting this will log all changes
 
 ## Limitations
 
@@ -70,10 +71,6 @@ Other args:
 ## Troubleshooting
 
 In case you experience any inconsistencies in the way the files are synced, or not synced, you can delete the `repo` directory and run it again. It will see all files as new but will not copy them to the oher sides if already present and the same, it will just copy the new or changed ones.
-
-## Logs
-
-It doesn't print each change in logs, but every 100th change, so it won't clutter the logs.
 
 ## Compile it from source code
 
@@ -118,5 +115,5 @@ target/release/syncoxiders --repo <REPO> <PATH1> <PATH2>
 
 # Work in progress
 
-- merge changes trees between `path1` and `path2` and resolve conflicts
+- resolve conflicts
 - apply changes to both `path1` and `path2`, Two-way sync
