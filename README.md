@@ -20,24 +20,23 @@ In many cases we'll use present tense for several functionality, even though it'
 
 # PoC
 
-You can play with the [CLI app](website/pages/poc-demo.md#using-cli) and see a short [demo](https://www.youtube.com/watch?v=JHQC1XpCzQw).
+You can see more [details](website/pages/poc-demo.md) on what's working now, play with the [CLI app](website/pages/poc-demo.md#using-cli) and see a short [demo](https://www.youtube.com/watch?v=JHQC1XpCzQw).
 
 Working on having these in up to 2 months:
-- in Docker ability to sync 2 folders in the filesystem
-- run rclone in Docker and mount Google Drive and Dropbox or MS OneDrive in 2 folders
-- from CLI trigger a sync which will make a Two-Way sync between the folders, first sync will do a union between the 2, no deletes will be performed
-- make sure files are synced between the two folders and on the remote storage providers
-- do some changes in both folders and trigger a sync, this and from now on will propagate deletes also, make sure folders are in sync and also on remotes
-- do some changes on the remotes, trigger a sync and make sure changes are propagated in both folders and on remotes
-- save files encrypted using rencfs and have sync working
-  - this will save encrypted data on the mount points of rclone and expose them with FUSE
+- in `Docker` ability to sync 2 folders in the filesystem
+- run `rclone` in `Docker` and mount `Google Drive` and `Dropbox` or `MS OneDrive` in 2 folders
+- from CLI trigger a sync which will make a Two-Way sync between the folders, first sync will do a union between the 2, no delete or rename will be performed
+- do some changes in both local folders and trigger a sync, from now on it will propagate deletes and renames also
+- do some changes on the remotes, trigger a sync and make sure changes are propagated in both local folders and on remotes
+- save files encrypted using `rencfs`
+  - this will save encrypted data on the mount points of `rclone` and expose them with `FUSE`
 
 <img src="website/resources/poc.png" style = "width: 100%; max-width: 1000px; height: auto;">
 
 # MVP
 
 It would be possible to have something in about 6 months with this functionality:
-- integration with Google Drive and Dropbox or MS OneDrive
+- integration with `Google Drive` and `Dropbox` or `MS OneDrive`
 - Sync between the two
 - Share files from providers with another user
 - browser app with basic functionality like:
@@ -45,7 +44,7 @@ It would be possible to have something in about 6 months with this functionality
   - setup sync rules
   - share between providers
 - some basic functionality of sharing local files, no sync between them
-- Encryption
+- encryption
 
 <img src="website/resources/mvp.png" style = "width: 100%; max-width: 1000px; height: auto;">
 
