@@ -1,4 +1,4 @@
-[⟵ Back](../../README.md#poc)
+[< Back](../../README.md#poc)
 
 # How it works for now
 
