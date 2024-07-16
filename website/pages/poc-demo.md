@@ -78,6 +78,7 @@ In case you experience any inconsistencies in the way the files are synced, or n
 
 ```bash
 git clone git@github.com:radumarias/syncoxiders.git
+cd syncoxiders
 ```
 
 ### Install rust
