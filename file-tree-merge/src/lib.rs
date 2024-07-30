@@ -14,7 +14,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::significant_drop_tightening)]
 #![allow(clippy::redundant_closure)]
-#![allow(clippy::missing_errors_doc)]//! # Encrypted File System
+#![allow(clippy::missing_errors_doc)]
 use anyhow::Result;
 use change_tree_merge::HashKind;
 use crc32fast::Hasher;
