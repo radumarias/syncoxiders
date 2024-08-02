@@ -12,7 +12,7 @@ use rayon::prelude::IntoParallelRefIterator;
 use crate::change_tree::Change;
 use crate::change_tree_merge::{DstItems, HashKind, MergedChanges};
 use crate::tree_creator::Item;
-use crate::{crc_eq, file_hash, git_add, git_commit, retry, TREE_DIR};
+use crate::{crc_eq, file_hash, git_commit, retry};
 
 pub fn apply(
     changes: MergedChanges,
@@ -191,17 +191,17 @@ fn process(
     path1_item2: Arc<Mutex<DstItems>>,
     path1: &Path,
     path2: &Path,
-    repo1: &Path,
+    _repo1: &Path,
     _repo2: &Path,
     dry_run: bool,
     checksum: bool,
     crc: bool,
     ctr: &AtomicU64,
-    git_lock: Arc<Mutex<()>>,
+    _git_lock: Arc<Mutex<()>>,
     batch_size: usize,
     synced: &AtomicU64,
     applied_size_since_commit: &AtomicU64,
-    commit_after_size_bytes: i32,
+    _commit_after_size_bytes: i32,
     print_all_changes: bool,
 ) -> Result<()> {
     let dst = path2.join(path);

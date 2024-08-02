@@ -11,7 +11,7 @@ use colored::Colorize;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefIterator;
 
-use crate::{git_commit, retry, IterRef};
+use crate::{retry, IterRef};
 
 // pub(crate) const PATH_SEPARATOR: &str = "／";
 pub(crate) const PATH_SEPARATOR: &str = "|";

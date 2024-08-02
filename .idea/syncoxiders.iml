@@ -6,6 +6,7 @@
       <sourceFolder url="file://$MODULE_DIR$/file-change-router/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/file-tree-merge/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/file-watcher/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/file-tree-merge/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
