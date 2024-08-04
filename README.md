@@ -46,11 +46,11 @@ It would be possible to have something in about 6 months with this functionality
 - some basic functionality of sharing local files, no sync between them
 - encryption
 
-For this phase we will still be using rclone to access providers, this is to simplify the access. But for future plan is to:
+For this phase we will still be using `rclone` to access providers, this is to simplify the access. But for future plan is to:
 - implement our own clients that will directly communicate with the providers API
 - receive changes in close to real-time
-- store the changes in Kafka and window them (group them) with Flink
-- feed them as changes tree to the files tree sync algorithm which will do the merge, resolve conflicts and applying changes to the other providers or local files
+- store the changes in `Kafka` and window them (group them) with `Flink`
+- feed them as changes tree to the `files tree merge` algorithm which will do the merge, resolve conflicts and applying changes to the other providers or local files
 
 <img src="website/resources/mvp.png" style = "width: 100%; max-width: 1000px; height: auto;">
 
