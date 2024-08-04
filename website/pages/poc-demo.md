@@ -145,4 +145,7 @@ target/release/syncoxiders --repo <REPO> <PATH1> <PATH2>
 # Work in progress
 
 - resolve conflicts
-- apply changes to both `path1` and `path2`, Two-way sync
+- `One-to-Many` sync optimization (read one time from `path1` when applying changes to multiple paths)
+- apply changes by chunks in parallel
+- apply changes to both `path1` and `path2`, `Two-Way` sync
+- apply changes between multiple paths, `N-Way` sync
