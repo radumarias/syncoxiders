@@ -69,3 +69,11 @@ This is what it's planned to have in the end.
 [How it works](website/pages/how-it-works.md)
 
 [Tech stack](website/pages/stack.md)
+
+# Contribute
+
+Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like sharing pull requests are always appreciated.
+
+## How to contribute
+
+Please see [CONTRIBUTING.md](https://github.com/radumarias/rencfs/blob/main/CONTRIBUTING.md).
