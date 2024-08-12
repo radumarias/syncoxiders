@@ -2,7 +2,7 @@
 
 # How it works for now
 
-`One-way` `One-to-Many` sync for `Add`, `Modify`, `Delete`, `Rename` operations. You can see here a short demo:  
+`One-way` `One-to-Many` sync for `Add`, `Modify`, `Delete`, `Rename` operations. You can see here a short video demo:  
 [![Watch the video](https://img.youtube.com/vi/JHQC1XpCzQw/0.jpg)](https://www.youtube.com/watch?v=JHQC1XpCzQw)
 
 We'll exemplify for 2 paths, from `path1` to `path2` but it works with multiple paths, it will Sync from `path1` to
