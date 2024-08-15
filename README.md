@@ -13,6 +13,8 @@ It's using [rencfs](https://github.com/radumarias/rencfs) for encryption and [gd
 > [!IMPORTANT]  
 > It you could take this [**SURVEY**](https://forms.gle/qgnWBJhzCpzPLSmv5) to express your opinion about the current solution and offer your opinion on what features you would want from a service like this it would help a lot.
 
+You can see rhe [results](https://docs.google.com/forms/d/1d4V8BZB7TGp08NhY6_L0kUgcGe0glRFOjp4rjrt7_bs/viewanalytics?chromeless=1) of the survey.
+
 > [!NOTE]  
 In many cases we'll use present tense for several functionality, even though they are not yet implemented, it's used to give an idea of what the system could be.
 
