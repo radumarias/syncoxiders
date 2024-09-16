@@ -78,4 +78,121 @@ Feel free to fork it, change and use it in any way that you want. If you build s
 
 ## How to contribute
 
+### Browser
+
+If you want to give it a quick try and not setup anything locally you can  
+[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/radumarias/syncoxiders)
+
+[![Open Rustlings On Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new/?repo=radumarias%2Fsyncoxiders&ref=main)
+
+You can compile it, run it, and give it a quick try in browser. After you start it from above
+
+```bash
+sudo apt-get update && sudo apt-get install fuse3
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+mkdir sync && mkdir sync/repo sync/a sync/b
+```
+
+Add some files in `sync/a` and then run th sync
+
+```bash
+cargo run --release --bin syncoxiders -- --repo sync/repo sync/a sync/b
+```
+
+Now check `sync/b` it should have same content as `file/a`.
+
+For now this **is working**
+- sync files: create, delete, update, move
+- sync one to many, you can put several paths, it will sync from path1 to all others
+
+It **DOESN'T** work
+- folders sync: create, delete, rename, will be fixed soon
+
+### Locally
+
+#### Getting the sources
+
+```bash
+git clone git@github.com:radumarias/syncoxiders.git && cd syncoxiders
+````
+
+#### Dependencies
+
+##### Rust
+
+To build from source, you need to have Rust installed, you can see more details on how to install
+it [here](https://www.rust-lang.org/tools/install).
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+````
+
+Accordingly, it is customary for Rust developers to include this directory in their `PATH` environment variable.
+During installation `rustup` will attempt to configure the `PATH`. Because of differences between platforms, command
+shells,
+and bugs in `rustup`, the modifications to `PATH` may not take effect until the console is restarted, or the user is
+logged out, or it may not succeed at all.
+
+If, after installation, running `rustc --version` in the console fails, this is the most likely reason.
+In that case please add it to the `PATH` manually.
+
+Project is setup to use `nightly` toolchain in `rust-toolchain.toml`, on first build you will see it fetch the nightly.
+
+Make sure to add this you your `$PATH` too
+
+```bash
+export PATH="$PATH::$HOME/.cargo/bin"
+```
+
+##### Other dependencies
+
+Also, these deps are required (or based on your distribution):
+
+###### Arch
+
+```bash
+sudo pacman -Syu && sudo pacman -S base-devel act
+```
+
+###### Ubuntu
+
+```bash
+sudo apt-get update && sudo apt-get install build-essential act
+```
+
+###### Fedora
+
+```bash
+sudo dnf update && sudo dnf install && dnf install @development-tools act
+```
+
+#### Build for debug
+
+```bash
+cargo build
+```
+
+#### Build release
+
+```bash
+cargo build --release
+```
+
+### Run
+
+```bash
+cargo run --release --bin syncoxiders -- --repo REPO A B
+```
+
+### Developing inside a Container
+
+See here how to configure for [RustRover](https://www.jetbrains.com/help/rust/connect-to-devcontainer.html) and for [VsCode](https://code.visualstudio.com/docs/devcontainers/containers).
+
+You can use the `.devcontainer` directory from the project to start a container with all the necessary tools to build
+and run the app.
+
 Please see [CONTRIBUTING.md](https://github.com/radumarias/rencfs/blob/main/CONTRIBUTING.md).
+
+# Minimum Supported Rust Version (MSRV)
+
+The minimum supported version is `1.75`.
