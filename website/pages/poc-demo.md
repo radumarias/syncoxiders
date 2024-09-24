@@ -80,7 +80,7 @@ Other args:
   **Checking `CRC` is highly recommend if any of the paths is accessed over the network.**
 - `--dry-run`: this simulates the sync. Will not apply any changes to the paths, will just print the operations that
   would have normally be applied to paths
-- `log-all-changes`: by default it doesn't log each change that is applied, but every 100th change so it won't clutter
+- `--log-all-changes`: by default it doesn't log each change that is applied, but every 100th change so it won't clutter
   the logs. Setting this will log all changes
 
 ## Limitations
