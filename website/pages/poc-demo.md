@@ -99,6 +99,10 @@ the same, it will just copy the new or changed ones.
 
 ## Compile it from source code
 
+### Windows
+
+You need to have `gcc` installed locally.
+
 ### Clone the repo
 
 ```bash
