@@ -39,6 +39,8 @@ We use `git` to catch the changes, how it works:
 
 # Using CLI
 
+**For now you need to have the `git` client installed locally.**
+
 You can find the binaries [here](https://github.com/radumarias/syncoxiders/actions/workflows/ci.yml).
 Select the last successful run and at the bottom you should have binaries for multiple OSs.
 
