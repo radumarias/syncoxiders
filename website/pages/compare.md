@@ -13,7 +13,9 @@ Some of them are hard to use especially for non-technical users and also they la
 - `odrive` doesn’t have sync between providers but just offers a unified view between all your providers. For sharing it offers the other person just a view of the shared files in odrive apps, they cannot add the files to their provider for accessing in there and keeping them in sync, or save them locally and keep them in sync
 - `Resilio Sync` is also great but is not of the scale I'm proposing, it only handles your local files sync, not between storage providers and also doesn't have such an easy sharing
 
-**What all are missing is an easy way to send a file to someone with just the browser for example and Share between storage providers.**
+**What all are missing is:**
+- **An easy way to send a file to someone with just the browser**
+- **Share between storage providers**
 
 ## What we offer better or additionally
 
@@ -24,11 +26,11 @@ Main 2 ones are:
 Additionally:
 - Receiving files, like S3 presigned URLs but it creates a dest folder where others can upload more files and even folders
 - Can combine both local files for Sync and Share and files on storage providers
-- Encryption for stored directories 
+- Encryption for stored files
 - Backup solution with borgbackup and repo
-- Built very efficiently with Rust
+- Performant, efficient, and secure (implemented in RUST and other modern technologies)
 - Search and analytics
 - WAL (Write-Ahead Logging) to ensure file integrity
 - Handles very large files efficiently with concurrent and resumable transfers
-- Similar browser, desktop and mobile apps
+- Unified browser, desktop and mobile apps
 - Extensive cilents and access, libs, CLI app, REST API and gRPC service
