@@ -19,9 +19,9 @@ Some of them are hard to use especially for non-technical users and also they la
 
 ## What we offer better or additionally
 
-Main 2 ones are:
-- True real-time `Sync` and especially `Share` between storage providers (but also for local files)
-- Simple and quick way to `Share` files with someone using minimal tools, ideally only a browser
+**Main 2 ones are:**
+- **True real-time `Sync` and especially `Share` between storage providers (but also for local files)**
+- **Simple and quick way to `Share` files with someone using minimal tools, ideally only a browser**
 
 Additionally:
 - Receiving files, like S3 presigned URLs but it creates a dest folder where others can upload more files and even folders
