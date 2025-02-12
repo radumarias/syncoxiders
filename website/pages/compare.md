@@ -22,7 +22,7 @@ Some of them are hard to use especially for non-technical users and also they la
 **Main ones are:**
 - **True real-time `bi-directional Sync` and especially `Share` between storage providers (but also for local files)**
 - **Simple and quick way to `Share` files with someone using minimal tools, ideally only a browser**
-- **Inter-cloud encryption made simple and secure**
+- **Simple and secure inter-cloud Encryption**
 
 Additionally:
 - Receiving files, like S3 presigned URLs but it creates a dest folder where others can upload more files and even folders
