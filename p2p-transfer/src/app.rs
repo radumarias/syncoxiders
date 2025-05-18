@@ -1,6 +1,17 @@
 use eframe::egui;
-use egui::{Color32, RichText, Ui, Vec2};
+use egui::{Button, Color32, Grid, Label, RichText, TextStyle, Ui, Vec2};
 use serde::{Deserialize, Serialize};
+use webtorrent_rs_wrapper::WebTorrentClient;
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+struct TorrentInfo{
+    magnet_uri : Option<String>,
+    download_progress: f32,
+    peers_count: usize,
+    is_download: bool,
+    is_seeding: bool,
+    download_complete: bool
+}
 
 #[derive(Deserialize, Serialize)]
 #[serde(default)]
@@ -19,6 +30,14 @@ pub struct P2PTransfer {
     #[cfg(target_arch = "wasm32")]
     #[serde(skip)]
     picked_file_size: std::sync::Arc<std::sync::Mutex<Option<u64>>>,
+    #[cfg(target_arch = "wasm32")]
+    #[serde(skip)]
+    web_torrent_client: Option<WebTorrentClient>,
+    #[serde(skip)]
+    torrent_info: std::sync::Arc<std::sync::Mutex<TorrentInfo>>,
+    #[serde(skip)]
+    magnet_input: String
+
 }
 
 impl Default for P2PTransfer {
@@ -33,6 +52,10 @@ impl Default for P2PTransfer {
             picked_file_path: std::sync::Arc::new(std::sync::Mutex::new(None)),
             #[cfg(target_arch = "wasm32")]
             picked_file_size: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            #[cfg(target_arch = "wasm32")]
+            web_torrent_client: Some(WebTorrentClient::new()),
+            torrent_info: std::sync::Arc::new(std::sync::Mutex::new(TorrentInfo::default())),
+            magnet_input: String::new(),
         }
     }
 }
@@ -137,48 +160,117 @@ impl P2PTransfer {
         }
     }
 
+    // Added this method to fix the missing generate_magnet_uri error
+    fn generate_magnet_uri(&self, _path: &str) -> Option<String> {
+        // Placeholder implementation - replace with actual magnet URI generation
+        Some("magnet:?xt=urn:btih:example_hash&dn=example_name".to_string())
+    }
+
     fn show_file_info(&mut self, ui: &mut Ui) {
-        let has_file = match (
-            self.picked_file_name.lock().ok().as_ref().map(|f| f.as_ref().cloned()),
-            self.picked_file_path.lock().ok().as_ref().map(|f| f.as_ref().cloned()),
-            self.picked_file_size.lock().ok().as_ref().map(|f| f.as_ref().cloned()),
-        ) {
-            (Some(Some(name)), Some(Some(path)), Some(Some(size))) => {
-                ui.add_space(10.0);
-                ui.group(|ui| {
-                    ui.set_width(ui.available_width());
-                    ui.vertical(|ui| {
-                        ui.heading(RichText::new("Selected File").color(Color32::from_rgb(50, 150, 200)));
-                        ui.add_space(5.0);
+        // Scope the mutex locks to extract data and drop guards early
+        let (name, path, size) = {
+            let file_name_binding = self.picked_file_name.lock().ok();
+            let file_path_binding = self.picked_file_path.lock().ok();
+            let file_size_binding = self.picked_file_size.lock().ok();
 
-                        // File name
-                        ui.horizontal(|ui| {
-                            ui.strong("Name:");
-                            ui.label(name);
-                        });
-
-                        // File path
-                        ui.horizontal(|ui| {
-                            ui.strong("Path:");
-                            ui.label(path);
-                        });
-
-                        // File size
-                        ui.horizontal(|ui| {
-                            ui.strong("Size:");
-                            ui.label(self.format_size(size));
-                        });
+            match (
+                file_name_binding.as_ref().map(|f| f.as_ref().cloned()),
+                file_path_binding.as_ref().map(|f| f.as_ref().cloned()),
+                file_size_binding.as_ref().map(|f| f.as_ref().cloned()),
+            ) {
+                (Some(Some(name)), Some(Some(path)), Some(Some(size))) => (name, path, size),
+                _ => {
+                    // No file selected, display message and return
+                    ui.add_space(15.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        ui.label(RichText::new("📄").color(Color32::GRAY));
+                        ui.label(RichText::new("No file selected").color(Color32::GRAY));
                     });
-                });
-                true
-            },
-            _ => false,
+                    return;
+                }
+            }
         };
 
-        if !has_file {
-            ui.add_space(10.0);
-            ui.label(RichText::new("No file selected").color(Color32::GRAY));
+        // Generate magnet URI before entering the closure
+        if let Some(magnet_uri) = self.generate_magnet_uri(&path) {
+            self.magnet_input = magnet_uri;
         }
+
+        ui.add_space(15.0);
+        ui.group(|ui| {
+            ui.set_width(ui.available_width());
+            ui.vertical(|ui| {
+                // Header with icon
+                ui.horizontal(|ui| {
+                    ui.add(Label::new(RichText::new("📁").heading()));
+                    ui.heading(RichText::new("Selected File").color(Color32::from_rgb(50, 150, 200)));
+                });
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // File info in a more compact layout
+                Grid::new("file_info_grid")
+                    .num_columns(2)
+                    .spacing([10.0, 4.0])
+                    .show(ui, |ui| {
+                        // File name
+                        ui.strong("Name:");
+                        ui.label(&name);
+                        ui.end_row();
+
+                        // File path
+                        ui.strong("Path:");
+                        ui.label(&path);
+                        ui.end_row();
+
+                        // File size
+                        ui.strong("Size:");
+                        #[cfg(target_arch = "wasm32")]
+                        web_sys::console::log_1(&format!("============{:?}", size).into());
+                        ui.label(self.format_size(size));
+                        ui.end_row();
+                    });
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(10.0);
+
+                // Action buttons
+                ui.horizontal(|ui| {
+                    // Share button with icon
+                    let share_btn = ui.add(
+                        Button::new(RichText::new("🔗 Share").text_style(TextStyle::Button))
+                    );
+                    share_btn.clone().on_hover_text("Generate magnet URI for this file");
+
+                    if share_btn.clicked() {
+                        if let Some(magnet_uri) = self.generate_magnet_uri(&path) {
+                            self.magnet_input = magnet_uri;
+                        }
+                    }
+                });
+
+                // Display generated magnet URI if available
+                if !self.magnet_input.is_empty() {
+                    ui.add_space(10.0);
+                    ui.group(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new("Magnet URI:").strong());
+                            ui.add_space(5.0);
+                            ui.label(&self.magnet_input);
+                            ui.add_space(5.0);
+
+                            if ui.button("📋 Copy").clicked() {
+                                ui.ctx().copy_text(self.magnet_input.clone());
+                            }
+                        });
+                    });
+                }
+            });
+        });
     }
 }
 

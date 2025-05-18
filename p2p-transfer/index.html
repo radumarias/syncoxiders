@@ -26,6 +26,7 @@
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="white">
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#404040">
 
+
     <style>
         html {
             touch-action: manipulation;
@@ -116,10 +117,10 @@
         <div class="lds-dual-ring"></div>
     </div>
 
-    <script>
+    <script src="https://cdn.jsdelivr.net/npm/webtorrent@latest/webtorrent.min.js">
 
-        if ('serviceWorker' in navigator && window.location.hash !== "#dev") {
-            window.addEventListener('load', function () {
+    if ('serviceWorker' in navigator && window.location.hash !== "#dev") {
+    window.addEventListener('load', function () {
                 navigator.serviceWorker.register('sw.js');
             });
         }

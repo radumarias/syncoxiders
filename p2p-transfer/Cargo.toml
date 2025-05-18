@@ -37,6 +37,7 @@ wasm-bindgen = "0.2.100"
 web-sys = "0.3.77"
 tracing-wasm = "0.2.1"
 console_error_panic_hook = "0.1.7"
+webtorrent-rs-wrapper = "0.1.19"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
