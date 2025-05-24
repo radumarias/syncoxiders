@@ -7,6 +7,8 @@
       <sourceFolder url="file://$MODULE_DIR$/file-tree-merge/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/file-watcher/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/file-tree-merge/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/p2p-transfer/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/ui/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

@@ -1,5 +1,5 @@
 [workspace]
-members = ["file-change-consumer", "file-change-router", "file-tree-merge", "file-watcher"]
+members = ["file-change-consumer", "file-change-router", "file-tree-merge", "file-watcher", "p2p-transfer"]
 
 resolver = "2"
 
