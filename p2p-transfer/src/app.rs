@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui::{Button, Color32, Grid, Label, RichText, TextStyle, Ui, Vec2};
 use serde::{Deserialize, Serialize};
-use webtorrent_rs_wrapper::WebTorrentClient;
+use wasm_bindgen::{JsCast, JsValue};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct TorrentInfo{
@@ -30,9 +30,6 @@ pub struct P2PTransfer {
     #[cfg(target_arch = "wasm32")]
     #[serde(skip)]
     picked_file_size: std::sync::Arc<std::sync::Mutex<Option<u64>>>,
-    #[cfg(target_arch = "wasm32")]
-    #[serde(skip)]
-    web_torrent_client: Option<WebTorrentClient>,
     #[serde(skip)]
     torrent_info: std::sync::Arc<std::sync::Mutex<TorrentInfo>>,
     #[serde(skip)]
@@ -52,8 +49,6 @@ impl Default for P2PTransfer {
             picked_file_path: std::sync::Arc::new(std::sync::Mutex::new(None)),
             #[cfg(target_arch = "wasm32")]
             picked_file_size: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            #[cfg(target_arch = "wasm32")]
-            web_torrent_client: Some(WebTorrentClient::new()),
             torrent_info: std::sync::Arc::new(std::sync::Mutex::new(TorrentInfo::default())),
             magnet_input: String::new(),
         }
@@ -161,10 +156,7 @@ impl P2PTransfer {
     }
 
     // Added this method to fix the missing generate_magnet_uri error
-    fn generate_magnet_uri(&self, _path: &str) -> Option<String> {
-        // Placeholder implementation - replace with actual magnet URI generation
-        Some("magnet:?xt=urn:btih:example_hash&dn=example_name".to_string())
-    }
+
 
     fn show_file_info(&mut self, ui: &mut Ui) {
         // Scope the mutex locks to extract data and drop guards early
@@ -193,9 +185,9 @@ impl P2PTransfer {
         };
 
         // Generate magnet URI before entering the closure
-        if let Some(magnet_uri) = self.generate_magnet_uri(&path) {
-            self.magnet_input = magnet_uri;
-        }
+        // if let Some(magnet_uri) = self.generate_magnet_uri(&path) {
+        //     self.magnet_input = magnet_uri;
+        // }
 
         ui.add_space(15.0);
         ui.group(|ui| {
@@ -247,9 +239,9 @@ impl P2PTransfer {
                     share_btn.clone().on_hover_text("Generate magnet URI for this file");
 
                     if share_btn.clicked() {
-                        if let Some(magnet_uri) = self.generate_magnet_uri(&path) {
-                            self.magnet_input = magnet_uri;
-                        }
+                        // if let Some(magnet_uri) = self.generate_magnet_uri(&path) {
+                        //     self.magnet_input = magnet_uri;
+                        // }
                     }
                 });
 
@@ -352,5 +344,12 @@ impl eframe::App for P2PTransfer {
                     egui::warn_if_debug_build(ui);
                 });
             });
+
+        egui::CentralPanel::default()
+        .frame(frame)
+        .show(ctx, |ui| {
+            ui.label("Iroh node working");
+        });
+
     }
 }
