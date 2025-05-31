@@ -21,13 +21,10 @@ pub struct P2PTransfer {
     #[cfg(target_arch = "wasm32")]
     #[serde(skip)]
     file_input_closure: Option<wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>>,
-    #[cfg(target_arch = "wasm32")]
     #[serde(skip)]
     picked_file_name: std::sync::Arc<std::sync::Mutex<Option<String>>>,
-    #[cfg(target_arch = "wasm32")]
     #[serde(skip)]
     picked_file_path: std::sync::Arc<std::sync::Mutex<Option<String>>>,
-    #[cfg(target_arch = "wasm32")]
     #[serde(skip)]
     picked_file_size: std::sync::Arc<std::sync::Mutex<Option<u64>>>,
     #[serde(skip)]
@@ -43,11 +40,8 @@ impl Default for P2PTransfer {
             value: 0.0,
             #[cfg(target_arch = "wasm32")]
             file_input_closure: None,
-            #[cfg(target_arch = "wasm32")]
             picked_file_name: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            #[cfg(target_arch = "wasm32")]
             picked_file_path: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            #[cfg(target_arch = "wasm32")]
             picked_file_size: std::sync::Arc::new(std::sync::Mutex::new(None)),
             torrent_info: std::sync::Arc::new(std::sync::Mutex::new(TorrentInfo::default())),
             magnet_input: String::new(),
@@ -345,11 +339,11 @@ impl eframe::App for P2PTransfer {
                 });
             });
 
-        egui::CentralPanel::default()
-        .frame(frame)
-        .show(ctx, |ui| {
-            ui.label("Iroh node working");
-        });
+        // egui::CentralPanel::default()
+        // .frame(frame)
+        // .show(ctx, |ui| {
+        //     ui.label("Iroh node working");
+        // });
 
     }
 }

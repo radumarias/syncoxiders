@@ -1814,6 +1814,7 @@ version = "0.1.0"
 name = "file-tree-merge"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chksum-md5",
  "clap",
  "colored",
