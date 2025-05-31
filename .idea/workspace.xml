@@ -1,0 +1,406 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="ALL" />
+  </component>
+  <component name="CargoProjects">
+    <cargoProject FILE="$PROJECT_DIR$/Cargo.toml" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="c98dc7b7-7809-4581-84d0-8f3094cf2249" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/syncoxiders.iml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.lock" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Rust File" />
+      </list>
+    </option>
+  </component>
+  <component name="FormatOnSaveOptions">
+    <option name="myRunOnSave" value="true" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+    <option name="UPDATE_TYPE" value="REBASE" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;radumarias&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;git@github.com:radumarias/syncoxiders.git&quot;,
+    &quot;accountId&quot;: &quot;ad45fd04-ccea-4615-bd2e-de3c37de088c&quot;
+  }
+}</component>
+  <component name="JsbtTreeLayoutManager">
+    <layout place="tools.popupGrunt">
+      <scroll-view-position x="0" y="0" />
+    </layout>
+  </component>
+  <component name="MacroExpansionManager">
+    <option name="directoryName" value="4iclv3je" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 4
+}</component>
+  <component name="ProjectId" id="2iYvvlhhCqEEYsjO5KRU3JF7Ati" />
+  <component name="ProjectLevelVcsManager" settingsEditedManually="true">
+    <OptionsSetting value="false" id="Update" />
+    <ConfirmationsSetting value="2" id="Add" />
+  </component>
+  <component name="ProjectViewState">
+    <option name="autoscrollFromSource" value="true" />
+    <option name="autoscrollToSource" value="true" />
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ASKED_ADD_EXTERNAL_FILES": "true",
+    "ASKED_SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "Cargo.Run.executor": "Run",
+    "Docker.Dockerfile runtime.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.rust.reset.selective.auto.import": "true",
+    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "code.cleanup.on.save": "true",
+    "com.codeium.enabled": "true",
+    "git-widget-placeholder": "main",
+    "last_opened_file_path": "/home/gnome/dev/RustroverProjects/syncoxiders",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
+    "org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon": "",
+    "org.rust.first.attach.projects": "true",
+    "rearrange.code.on.save": "true",
+    "settings.editor.selected.configurable": "project.propVCSSupport.DirectoryMappings",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$" />
+      <recent name="$PROJECT_DIR$/file-tree-merge/tests/scripts/tests/small" />
+      <recent name="$PROJECT_DIR$/file-tree-merge/tests/scripts/tests/large" />
+      <recent name="$PROJECT_DIR$/file-tree-merge/tests/scripts" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$" />
+      <recent name="$PROJECT_DIR$/file-tree-merge" />
+      <recent name="$PROJECT_DIR$/file-tree-merge/bin" />
+      <recent name="$PROJECT_DIR$/file-tree-merge/tests/scripts/tests/small" />
+      <recent name="$PROJECT_DIR$/file-tree-merge/tests/scripts" />
+    </key>
+  </component>
+  <component name="RsExternalLinterProjectSettings">
+    <option name="runOnTheFly" value="true" />
+    <option name="tool" value="Clippy" />
+  </component>
+  <component name="RunManager" selected="Cargo.Run">
+    <configuration name="Run" type="CargoCommandRunConfiguration" factoryName="Cargo Command" nameIsGenerated="true">
+      <option name="command" value="run --package file-tree-merge --bin syncoxiders -- -r sync/r sync/a sync/b" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Dockerfile: Compose Deployment" type="docker-deploy" factoryName="dockerfile" temporary="true" server-name="Docker">
+      <deployment type="dockerfile">
+        <settings>
+          <option name="imageTag" value="alpine3.19.1_runtime" />
+          <option name="buildCliOptions" value="--target runtime" />
+          <option name="buildOnly" value="true" />
+          <option name="sourceFilePath" value="Dockerfile" />
+        </settings>
+      </deployment>
+      <method v="2" />
+    </configuration>
+    <configuration default="true" type="docker-deploy" factoryName="dockerfile" temporary="true">
+      <deployment type="dockerfile">
+        <settings />
+      </deployment>
+      <method v="2" />
+    </configuration>
+    <list>
+      <item itemvalue="Cargo.Run" />
+      <item itemvalue="Docker.Dockerfile: Compose Deployment" />
+    </list>
+  </component>
+  <component name="RustProjectSettings">
+    <option name="toolchainHomeDirectory" value="/usr/bin" />
+  </component>
+  <component name="RustfmtProjectSettings">
+    <option name="useRustfmt" value="true" />
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="c98dc7b7-7809-4581-84d0-8f3094cf2249" name="Changes" comment="" />
+      <created>1719680557875</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1719680557875</updated>
+      <workItem from="1719680558950" duration="1656000" />
+      <workItem from="1719770884060" duration="848000" />
+      <workItem from="1719771764977" duration="12111000" />
+      <workItem from="1719783900469" duration="15321000" />
+      <workItem from="1719830313958" duration="6000" />
+      <workItem from="1719831115515" duration="13000" />
+      <workItem from="1720431819233" duration="47181000" />
+      <workItem from="1720513388387" duration="18239000" />
+      <workItem from="1720560813990" duration="22713000" />
+      <workItem from="1720587005952" duration="2954000" />
+      <workItem from="1720632332108" duration="22714000" />
+      <workItem from="1720655833613" duration="2756000" />
+      <workItem from="1720658899233" duration="1666000" />
+      <workItem from="1720693572983" duration="256000" />
+      <workItem from="1720791959833" duration="4526000" />
+      <workItem from="1720796579482" duration="5696000" />
+      <workItem from="1720804039866" duration="3300000" />
+      <workItem from="1720860383703" duration="4963000" />
+      <workItem from="1721036070053" duration="5035000" />
+      <workItem from="1721299727191" duration="4257000" />
+      <workItem from="1721566824222" duration="16963000" />
+      <workItem from="1722358165135" duration="221000" />
+      <workItem from="1722634003711" duration="800000" />
+      <workItem from="1722896543664" duration="100000" />
+      <workItem from="1722897102927" duration="58000" />
+      <workItem from="1725460881950" duration="1847000" />
+      <workItem from="1725528459604" duration="880000" />
+      <workItem from="1726226018582" duration="2321000" />
+      <workItem from="1726239128057" duration="4535000" />
+      <workItem from="1726578325174" duration="1000" />
+      <workItem from="1726578340515" duration="3370000" />
+      <workItem from="1730733239846" duration="22770000" />
+      <workItem from="1731680176999" duration="3744000" />
+      <workItem from="1731856457402" duration="23763000" />
+      <workItem from="1732015179069" duration="1336000" />
+      <workItem from="1732033679121" duration="3800000" />
+      <workItem from="1733398886659" duration="2210000" />
+      <workItem from="1733679208306" duration="104000" />
+      <workItem from="1747576485396" duration="685000" />
+      <workItem from="1748686558372" duration="355000" />
+      <workItem from="1748686963653" duration="69000" />
+    </task>
+    <task id="LOCAL-00001" summary="sync one way with git and apply changes to dst">
+      <option name="closed" value="true" />
+      <created>1720470231416</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1720470231417</updated>
+    </task>
+    <task id="LOCAL-00002" summary="docs and path1 and path2 terminology">
+      <option name="closed" value="true" />
+      <created>1720518358163</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1720518358163</updated>
+    </task>
+    <task id="LOCAL-00003" summary="use WAL concept when applying changes to path2&#10;- we unstage git changes after we built the change tree&#10;- we stage file one by one as it gets processed&#10;- periodically commit changes&#10;- commit changes after all changes have been applied">
+      <option name="closed" value="true" />
+      <created>1720527335199</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1720527335199</updated>
+    </task>
+    <task id="LOCAL-00004" summary="unify both repos in one">
+      <option name="closed" value="true" />
+      <created>1720533905495</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1720533905495</updated>
+    </task>
+    <task id="LOCAL-00005" summary="process in parallel for build tree and applying changes">
+      <option name="closed" value="true" />
+      <created>1720573184826</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1720573184826</updated>
+    </task>
+    <task id="LOCAL-00006" summary="git commit after applied size threshold&#10;print num to sync and synced">
+      <option name="closed" value="true" />
+      <created>1720577027746</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1720577027746</updated>
+    </task>
+    <task id="LOCAL-00007" summary="delete git history, keep just index of all files, so we can detect new changes">
+      <option name="closed" value="true" />
+      <created>1720579734806</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1720579734806</updated>
+    </task>
+    <task id="LOCAL-00008" summary="remove concept of mnt and path_repo, use simply `path1`, `path2`, `repo`, `repo1` and `repo2`">
+      <option name="closed" value="true" />
+      <created>1720581631815</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1720581631815</updated>
+    </task>
+    <task id="LOCAL-00009" summary="logs">
+      <option name="closed" value="true" />
+      <created>1720587014016</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1720587014016</updated>
+    </task>
+    <task id="LOCAL-00010" summary="move `path1` and `path2` to input args in preparation for multiple paths to sync">
+      <option name="closed" value="true" />
+      <created>1720588081946</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1720588081946</updated>
+    </task>
+    <task id="LOCAL-00011" summary="add space before `...`">
+      <option name="closed" value="true" />
+      <created>1720588165119</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1720588165119</updated>
+    </task>
+    <task id="LOCAL-00012" summary="CLI args docs">
+      <option name="closed" value="true" />
+      <created>1720588605019</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1720588605019</updated>
+    </task>
+    <task id="LOCAL-00013" summary="CLI args docs">
+      <option name="closed" value="true" />
+      <created>1720588637872</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1720588637872</updated>
+    </task>
+    <task id="LOCAL-00014" summary="add One-to-Many sync&#10;add test scripts for various scenarios">
+      <option name="closed" value="true" />
+      <created>1720655879992</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1720655879992</updated>
+    </task>
+    <task id="LOCAL-00015" summary="add retry logic">
+      <option name="closed" value="true" />
+      <created>1720658263302</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1720658263302</updated>
+    </task>
+    <task id="LOCAL-00016" summary="move tests">
+      <option name="closed" value="true" />
+      <created>1720658932279</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1720658932279</updated>
+    </task>
+    <task id="LOCAL-00017" summary="change import paths in tests&#10;docs">
+      <option name="closed" value="true" />
+      <created>1720659206399</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1720659206399</updated>
+    </task>
+    <task id="LOCAL-00018" summary="Fix doc and remove some unused imports.">
+      <option name="closed" value="true" />
+      <created>1722634191095</created>
+      <option name="number" value="00018" />
+      <option name="presentableId" value="LOCAL-00018" />
+      <option name="project" value="LOCAL" />
+      <updated>1722634191095</updated>
+    </task>
+    <option name="localTasksCounter" value="19" />
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <option name="CHECK_CODE_SMELLS_BEFORE_PROJECT_COMMIT" value="false" />
+    <option name="CHECK_NEW_TODO" value="false" />
+    <option name="ADD_EXTERNAL_FILES_SILENTLY" value="true" />
+    <ignored-roots>
+      <path value="$PROJECT_DIR$/p2p-transfer" />
+    </ignored-roots>
+    <MESSAGE value="sync one way with git and apply changes to dst" />
+    <MESSAGE value="docs and path1 and path2 terminology" />
+    <MESSAGE value="use WAL concept when applying changes to path2&#10;- we unstage git changes after we built the change tree&#10;- we stage file one by one as it gets processed&#10;- periodically commit changes&#10;- commit changes after all changes have been applied" />
+    <MESSAGE value="unify both repos in one" />
+    <MESSAGE value="process in parallel for build tree and applying changes" />
+    <MESSAGE value="git commit after applied size threshold&#10;print num to sync and synced" />
+    <MESSAGE value="delete git history, keep just index of all files, so we can detect new changes" />
+    <MESSAGE value="remove concept of mnt and path_repo, use simply `path1`, `path2`, `repo`, `repo1` and `repo2`" />
+    <MESSAGE value="logs" />
+    <MESSAGE value="move `path1` and `path2` to input args in preparation for multiple paths to sync" />
+    <MESSAGE value="add space before `...`" />
+    <MESSAGE value="CLI args docs" />
+    <MESSAGE value="add One-to-Many sync&#10;add test scripts for various scenarios" />
+    <MESSAGE value="add retry logic" />
+    <MESSAGE value="move tests" />
+    <MESSAGE value="change import paths in tests&#10;docs" />
+    <MESSAGE value="Fix doc and remove some unused imports." />
+    <option name="LAST_COMMIT_MESSAGE" value="Fix doc and remove some unused imports." />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/file-tree-merge/src/change_tree.rs</url>
+          <line>133</line>
+          <option name="timeStamp" value="2" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
+    <watches-manager>
+      <configuration name="CargoCommandRunConfiguration">
+        <watch expression="git_status(&amp;repo.workdir().unwrap())" language="Rust" />
+      </configuration>
+    </watches-manager>
+  </component>
+</project>
