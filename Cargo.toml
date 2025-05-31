@@ -21,6 +21,6 @@ exclude = [".github/"]
 panic = "abort"
 
 [workspace.dependencies]
-anyhow = { version = "1.0.44", features = ["backtrace"] }
 colored = "2.1.0"
 rayon = "^1.10.0"
+anyhow = "1.0.80"
