@@ -701,8 +701,9 @@ impl P2PTransfer {
                                 crate::node::ConnectEvent::Sent { .. } => {}
                                 crate::node::ConnectEvent::Transfer(transfer_event) => {
                                     match transfer_event {
-                                        crate::node::TransferEvent::FileStart { file_name, file_size, total_chunks } => {
-                                            web_sys::console::log_1(&format!("📥 Starting file: {} ({} bytes, {} chunks)", file_name, file_size, total_chunks).into());
+                                        crate::node::TransferEvent::FileStart { file_name, file_size, total_chunks, blob_hash } => {
+                                            let hash_info = blob_hash.as_ref().map(|h| format!(" hash: {}...", &h[..16])).unwrap_or_default();
+                                            web_sys::console::log_1(&format!("📥 Starting file: {} ({} bytes, {} chunks{})", file_name, file_size, total_chunks, hash_info).into());
                                             if let Ok(mut status) = status_shared.lock() {
                                                 *status = format!("Receiving: {} (0%)", file_name);
                                             }
@@ -718,8 +719,13 @@ impl P2PTransfer {
                                             }
                                             ctx_clone.request_repaint();
                                         }
-                                        crate::node::TransferEvent::FileComplete { file_name, total_bytes } => {
-                                            web_sys::console::log_1(&format!("✅ File complete: {} ({} bytes)", file_name, total_bytes).into());
+                                        crate::node::TransferEvent::FileComplete { file_name, total_bytes, hash_verified } => {
+                                            let verify_status = match hash_verified {
+                                                Some(true) => " ✓ verified",
+                                                Some(false) => " ⚠ hash mismatch",
+                                                None => "",
+                                            };
+                                            web_sys::console::log_1(&format!("✅ File complete: {} ({} bytes{})", file_name, total_bytes, verify_status).into());
 
                                             // Combine all chunks and trigger download
                                             if let Some((name, chunks)) = current_file.take() {
@@ -840,8 +846,9 @@ impl P2PTransfer {
                                 }
                                 crate::node::ConnectEvent::Transfer(transfer_event) => {
                                     match transfer_event {
-                                        crate::node::TransferEvent::FileStart { file_name, file_size, total_chunks } => {
-                                            let log_msg = format!("📥 Starting file: {} ({} bytes, {} chunks)", file_name, file_size, total_chunks);
+                                        crate::node::TransferEvent::FileStart { file_name, file_size, total_chunks, blob_hash } => {
+                                            let hash_info = blob_hash.as_ref().map(|h| format!(" hash: {}...", &h[..16])).unwrap_or_default();
+                                            let log_msg = format!("📥 Starting file: {} ({} bytes, {} chunks{})", file_name, file_size, total_chunks, hash_info);
                                             println!("{}", log_msg);
 
                                             if let Ok(mut logs) = logs_shared.lock() {
@@ -909,8 +916,13 @@ impl P2PTransfer {
 
                                             ctx_clone.request_repaint();
                                         }
-                                        crate::node::TransferEvent::FileComplete { file_name, total_bytes } => {
-                                            let log_msg = format!("✅ File complete: {} ({} bytes)", file_name, total_bytes);
+                                        crate::node::TransferEvent::FileComplete { file_name, total_bytes, hash_verified } => {
+                                            let verify_status = match hash_verified {
+                                                Some(true) => " ✓ verified",
+                                                Some(false) => " ⚠ hash mismatch",
+                                                None => "",
+                                            };
+                                            let log_msg = format!("✅ File complete: {} ({} bytes{})", file_name, total_bytes, verify_status);
                                             println!("{}", log_msg);
 
                                             if let Ok(mut logs) = logs_shared.lock() {
@@ -1076,8 +1088,9 @@ impl P2PTransfer {
                     }
                     crate::node::ConnectEvent::Transfer(transfer_event) => {
                         match transfer_event {
-                            crate::node::TransferEvent::FileStart { file_name, file_size, total_chunks } => {
-                                let log_msg = format!("📥 Starting file: {} ({} bytes, {} chunks)", file_name, file_size, total_chunks);
+                            crate::node::TransferEvent::FileStart { file_name, file_size, total_chunks, blob_hash } => {
+                                let hash_info = blob_hash.as_ref().map(|h| format!(" hash: {}...", &h[..16])).unwrap_or_default();
+                                let log_msg = format!("📥 Starting file: {} ({} bytes, {} chunks{})", file_name, file_size, total_chunks, hash_info);
                                 println!("{}", log_msg);
 
                         if let Ok(mut logs) = logs_shared.lock() {
@@ -1163,7 +1176,7 @@ impl P2PTransfer {
 
                                 ctx_clone.request_repaint();
                             }
-                            crate::node::TransferEvent::FileComplete { file_name, total_bytes } => {
+                            crate::node::TransferEvent::FileComplete { file_name, total_bytes, hash_verified } => {
                                 // Check if file already exists
                                 let file_exists = if let Ok(files) = received_files_shared.lock() {
                                     files.iter().any(|f| f.name == file_name)
@@ -1172,7 +1185,12 @@ impl P2PTransfer {
                                 };
 
                                 if !file_exists {
-                                    let log_msg = format!("✅ File complete: {} ({} bytes)", file_name, total_bytes);
+                                    let verify_status = match hash_verified {
+                                        Some(true) => " ✓ verified",
+                                        Some(false) => " ⚠ hash mismatch",
+                                        None => "",
+                                    };
+                                    let log_msg = format!("✅ File complete: {} ({} bytes{})", file_name, total_bytes, verify_status);
                             println!("{}", log_msg);
 
                             if let Ok(mut logs) = logs_shared.lock() {
@@ -1291,8 +1309,9 @@ impl P2PTransfer {
                         }
                         crate::node::ConnectEvent::Transfer(transfer_event) => {
                             match transfer_event {
-                                crate::node::TransferEvent::FileStart { file_name, file_size, total_chunks } => {
-                                    web_sys::console::log_1(&format!("📥 Starting file: {} ({} bytes, {} chunks)", file_name, file_size, total_chunks).into());
+                                crate::node::TransferEvent::FileStart { file_name, file_size, total_chunks, blob_hash } => {
+                                    let hash_info = blob_hash.as_ref().map(|h| format!(" hash: {}...", &h[..16])).unwrap_or_default();
+                                    web_sys::console::log_1(&format!("📥 Starting file: {} ({} bytes, {} chunks{})", file_name, file_size, total_chunks, hash_info).into());
 
                                     if let Ok(mut status) = status_shared.lock() {
                                         *status = format!("Receiving: {} (0%)", file_name);
@@ -1322,7 +1341,7 @@ impl P2PTransfer {
                                     }
                                     ctx_clone.request_repaint();
                                 }
-                                crate::node::TransferEvent::FileComplete { file_name, total_bytes } => {
+                                crate::node::TransferEvent::FileComplete { file_name, total_bytes, hash_verified } => {
                                     // Check if file already exists
                                     let file_exists = if let Ok(files) = received_files_shared.lock() {
                                         files.iter().any(|f| f.name == file_name)
@@ -1331,7 +1350,12 @@ impl P2PTransfer {
                                     };
 
                                     if !file_exists {
-                                        web_sys::console::log_1(&format!("✅ File complete: {} ({} bytes)", file_name, total_bytes).into());
+                                        let verify_status = match hash_verified {
+                                            Some(true) => " ✓ verified",
+                                            Some(false) => " ⚠ hash mismatch",
+                                            None => "",
+                                        };
+                                        web_sys::console::log_1(&format!("✅ File complete: {} ({} bytes{})", file_name, total_bytes, verify_status).into());
 
                                         // Combine all chunks and trigger download
                                         if let Some((name, chunks)) = current_file.take() {

@@ -42,6 +42,8 @@ wasm-bindgen-futures = "0.4.50"
 # Disable default features (metrics) to avoid pulling in portmapper/iroh-relay with tokio net
 iroh = { git = "https://github.com/anchalshivank/iroh", branch = "feature/webrtc-wasm-support", default-features = false }
 n0-future = "0.1.3"
+# Content-addressed blob storage (BLAKE3 hashing)
+blake3 = "1.5"
 
 # Fix for getrandom WASM support
 getrandom = { version = "0.3", features = ["wasm_js"] }
@@ -52,6 +54,8 @@ anyhow.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11.8"
 tokio = "1.45.0"
+# Bao tree for BitTorrent-like verified streaming (merkle tree)
+bao-tree = "0.15"
 
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]

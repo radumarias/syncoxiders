@@ -7,11 +7,20 @@ use log::info;
 use n0_future::boxed::BoxFuture;
 use n0_future::{task, Stream};
 use std::sync::atomic::AtomicUsize;
+use crate::blob_store::{BlobStore, BlobHash, BlobCollection};
+
+// Native: Import Bao tree for BitTorrent-like verified streaming
+#[cfg(not(target_arch = "wasm32"))]
+use crate::blob_store::{BaoStore, BaoBlob};
 
 pub struct EchoNode{
     router: Router,
     accept_events: Sender<AcceptEvent>,
     shared_files: std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>,
+    blob_store: BlobStore,
+    /// Native only: Bao tree store for BitTorrent-like merkle verification
+    #[cfg(not(target_arch = "wasm32"))]
+    bao_store: Option<BaoStore>,
 }
 
 impl EchoNode {
@@ -20,6 +29,12 @@ impl EchoNode {
     }
 
     pub async fn spawn_with_files(files: Vec<(String, Vec<u8>)>) -> Result<Self> {
+        // Create blob store and add files
+        let blob_store = BlobStore::new();
+        for (name, data) in &files {
+            let hash = blob_store.add(name.clone(), data.clone());
+            info!("📦 Added blob: {} -> {}", name, hash);
+        }
 
         let endpoint = Endpoint::builder()
             .discovery_n0()
@@ -27,14 +42,87 @@ impl EchoNode {
             .bind_transport(TransportMode::WebrtcRelay)
             .await?;
         let (event_sender, _event_receiver) = unbounded();
-        let echo = Echo::new(event_sender.clone(), files);
+        let echo = Echo::new(event_sender.clone(), files, blob_store.clone());
         let shared_files = echo.files.clone();
         let router = Router::builder(endpoint)
             .accept(Echo::ALPN, echo)
             .spawn();
-        Ok(Self { router, accept_events: event_sender, shared_files })
+        Ok(Self {
+            router,
+            accept_events: event_sender,
+            shared_files,
+            blob_store,
+            #[cfg(not(target_arch = "wasm32"))]
+            bao_store: None,
+        })
+    }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn spawn_with_bao(files: Vec<(String, Vec<u8>)>) -> Result<Self> {
+        // Create both stores
+        let blob_store = BlobStore::new();
+        let bao_store = BaoStore::new();
 
+        // Add files to both stores
+        for (name, data) in &files {
+            // Simple blob store
+            let hash = blob_store.add(name.clone(), data.clone());
+            info!("📦 Added blob: {} -> {}", name, hash);
+
+            // Bao tree store (BitTorrent-like merkle tree)
+            let bao_blob = bao_store.add(name.clone(), data.clone());
+            info!("🌳 Added to Bao tree: {} -> {} ({} chunks)",
+                  name, bao_blob.hash, bao_blob.chunk_count());
+        }
+
+        let endpoint = Endpoint::builder()
+            .discovery_n0()
+            .alpns(vec![Echo::ALPN.to_vec()])
+            .bind_transport(TransportMode::WebrtcRelay)
+            .await?;
+
+        let (event_sender, _event_receiver) = unbounded();
+        let echo = Echo::new(event_sender.clone(), files, blob_store.clone());
+        let shared_files = echo.files.clone();
+
+        let router = Router::builder(endpoint)
+            .accept(Echo::ALPN, echo)
+            .spawn();
+
+        info!("🚀 Node started with Bao tree (BitTorrent-like) support");
+        info!("   Echo protocol: {:?}", String::from_utf8_lossy(Echo::ALPN));
+
+        Ok(Self {
+            router,
+            accept_events: event_sender,
+            shared_files,
+            blob_store,
+            bao_store: Some(bao_store),
+        })
+    }
+
+    /// Create a node with blob store for content-addressed storage
+    pub async fn spawn_with_blob_store(blob_store: BlobStore) -> Result<Self> {
+        let files = blob_store.get_all_files();
+        let endpoint = Endpoint::builder()
+            .discovery_n0()
+            .alpns(vec![Echo::ALPN.to_vec()])
+            .bind_transport(TransportMode::WebrtcRelay)
+            .await?;
+        let (event_sender, _event_receiver) = unbounded();
+        let echo = Echo::new(event_sender.clone(), files, blob_store.clone());
+        let shared_files = echo.files.clone();
+        let router = Router::builder(endpoint)
+            .accept(Echo::ALPN, echo)
+            .spawn();
+        Ok(Self {
+            router,
+            accept_events: event_sender,
+            shared_files,
+            blob_store,
+            #[cfg(not(target_arch = "wasm32"))]
+            bao_store: None,
+        })
     }
 
     pub fn endpoint(&self) -> &Endpoint {
@@ -43,6 +131,70 @@ impl EchoNode {
 
     pub fn get_shared_files(&self) -> std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>> {
         self.shared_files.clone()
+    }
+
+    /// Get the blob store for content-addressed operations
+    pub fn blob_store(&self) -> &BlobStore {
+        &self.blob_store
+    }
+
+    /// Add a file to the blob store and return its hash
+    pub fn add_blob(&self, name: String, data: Vec<u8>) -> BlobHash {
+        let hash = self.blob_store.add(name.clone(), data.clone());
+        // Also update the shared files list for compatibility
+        if let Ok(mut files) = self.shared_files.lock() {
+            files.push((name, data));
+        }
+        hash
+    }
+
+    /// Get a collection of all blob hashes for sharing
+    pub fn get_blob_collection(&self) -> BlobCollection {
+        let mut collection = BlobCollection::new();
+        for info in self.blob_store.list() {
+            collection.add(info.hash, info.name);
+        }
+        collection
+    }
+
+    /// Generate a shareable hash string for all blobs
+    pub fn get_share_string(&self) -> String {
+        self.get_blob_collection().to_share_string()
+    }
+
+    /// Native only: Get the Bao tree store
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn bao_store(&self) -> Option<&BaoStore> {
+        self.bao_store.as_ref()
+    }
+
+    /// Native only: Add a file to Bao store (with merkle tree)
+    ///
+    /// Returns the BaoBlob which contains the root hash and can be used for
+    /// BitTorrent-like chunk verification
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn add_to_bao(&self, name: String, data: Vec<u8>) -> Option<BaoBlob> {
+        self.bao_store.as_ref().map(|store| store.add(name, data))
+    }
+
+    /// Native only: Get a BaoBlob by its root hash
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_bao_blob(&self, hash: &BlobHash) -> Option<BaoBlob> {
+        self.bao_store.as_ref()?.get(hash)
+    }
+
+    /// Native only: Extract chunks from a BaoBlob for streaming transfer
+    ///
+    /// Returns a vector of (chunk_index, chunk_data) pairs that can be
+    /// sent over the network and verified on the receiving end
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_bao_chunks(&self, hash: &BlobHash) -> Option<Vec<(usize, Vec<u8>)>> {
+        let blob = self.bao_store.as_ref()?.get(hash)?;
+        let count = blob.chunk_count() as usize;
+        let chunks: Vec<_> = (0..count)
+            .filter_map(|i| blob.get_chunk(i as u64).map(|c| (i, c)))
+            .collect();
+        Some(chunks)
     }
 
     pub fn subscribe_accept_events(&self) -> Receiver<AcceptEvent> {
@@ -75,6 +227,8 @@ pub enum TransferEvent {
         file_name: String,
         file_size: u64,
         total_chunks: u32,
+        /// BLAKE3 hash of the file content (for verification)
+        blob_hash: Option<String>,
     },
     ChunkReceived {
         file_name: String,
@@ -85,6 +239,8 @@ pub enum TransferEvent {
     FileComplete {
         file_name: String,
         total_bytes: u64,
+        /// Whether the hash verification passed (None if not verified)
+        hash_verified: Option<bool>,
     },
 }
 
@@ -117,19 +273,22 @@ pub struct Echo{
     event_sender: Sender<AcceptEvent>,
     files: std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>, // (filename, filedata)
     current_file_index: std::sync::Arc<AtomicUsize>, // Round-robin index
+    blob_store: BlobStore,
 }
 
 impl Echo{
     pub const ALPN: &[u8] = b"iroh/example-browser-echo/0";
     pub fn new(
         event_sender: Sender<AcceptEvent>,
-        files: Vec<(String, Vec<u8>)>
+        files: Vec<(String, Vec<u8>)>,
+        blob_store: BlobStore,
     ) -> Self {
 
         Self {
             event_sender,
             files: std::sync::Arc::new(std::sync::Mutex::new(files)),
             current_file_index: std::sync::Arc::new(AtomicUsize::new(0)),
+            blob_store,
         }
 
     }
@@ -194,9 +353,12 @@ impl Echo{
 
         let mut total_bytes_sent = 4; // for num_files
 
-        // Send all files in chunks
+        // Send all files in chunks with blob hashes
         for (idx, (name, data)) in files_to_send.iter().enumerate() {
-            info!("📁 [{}/{}] Sending file: {} ({} bytes)", idx + 1, num_files, name, data.len());
+            // Compute BLAKE3 hash for content verification
+            let blob_hash = BlobHash::from_bytes(data);
+            let hash_hex = blob_hash.to_hex();
+            info!("📁 [{}/{}] Sending file: {} ({} bytes, hash: {})", idx + 1, num_files, name, data.len(), &hash_hex[..16]);
 
             let name_bytes = name.as_bytes();
             let name_len = name_bytes.len() as u32;
@@ -205,13 +367,16 @@ impl Echo{
 
             info!("  ⚙️  File will be sent in {} chunk(s) of {}KB each", total_chunks, CHUNK_SIZE / 1024);
 
+            // Send metadata including hash
             send.write_all(&name_len.to_le_bytes()).await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             send.write_all(name_bytes).await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             send.write_all(&data_len.to_le_bytes()).await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             send.write_all(&total_chunks.to_le_bytes()).await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-            info!("  ✓ Metadata sent");
+            // Send blob hash (32 bytes)
+            send.write_all(&blob_hash.0).await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            info!("  ✓ Metadata and hash sent");
 
-            total_bytes_sent += 4 + name_bytes.len() + 8 + 4;
+            total_bytes_sent += 4 + name_bytes.len() + 8 + 4 + 32;
 
             for chunk_idx in 0..total_chunks {
                 let offset = chunk_idx as usize * CHUNK_SIZE;
@@ -323,14 +488,23 @@ async fn connect(
         recv_stream.read_exact(&mut total_chunks_buf).await?;
         let total_chunks = u32::from_le_bytes(total_chunks_buf);
 
-        info!("  ✓ File: {} ({} bytes, {} chunks)", received_file_name, data_len, total_chunks);
+        // Read blob hash (32 bytes) for verification
+        let mut expected_hash_buf = [0u8; 32];
+        recv_stream.read_exact(&mut expected_hash_buf).await?;
+        let expected_hash = BlobHash(expected_hash_buf);
+        let hash_hex = expected_hash.to_hex();
+
+        info!("  ✓ File: {} ({} bytes, {} chunks, hash: {})", received_file_name, data_len, total_chunks, &hash_hex[..16]);
 
         event_sender.send(ConnectEvent::Transfer(TransferEvent::FileStart {
             file_name: received_file_name.clone(),
             file_size: data_len,
             total_chunks,
+            blob_hash: Some(hash_hex),
         })).await?;
 
+        // Collect all chunks for hash verification
+        let mut all_data = Vec::with_capacity(data_len as usize);
         let mut total_bytes_received = 0u64;
         for chunk_num in 0..total_chunks {
             let progress = ((chunk_num + 1) as f32 / total_chunks as f32 * 100.0) as u32;
@@ -347,6 +521,7 @@ async fn connect(
 
             let offset = chunk_index as u64 * 256 * 1024;
             total_bytes_received += chunk_size as u64;
+            all_data.extend_from_slice(&chunk_data);
 
             info!("  📥 Chunk {}/{} received ({}KB) - {}% complete", chunk_num + 1, total_chunks, chunk_size / 1024, progress);
 
@@ -358,11 +533,19 @@ async fn connect(
             })).await?;
         }
 
-        info!("✅ File complete: {} ({} bytes)", received_file_name, total_bytes_received);
+        // Verify hash after receiving all data
+        let computed_hash = BlobHash::from_bytes(&all_data);
+        let hash_verified = computed_hash == expected_hash;
+        if hash_verified {
+            info!("✅ File complete: {} ({} bytes) - Hash verified ✓", received_file_name, total_bytes_received);
+        } else {
+            info!("⚠️ File complete: {} ({} bytes) - Hash mismatch!", received_file_name, total_bytes_received);
+        }
 
         event_sender.send(ConnectEvent::Transfer(TransferEvent::FileComplete {
             file_name: received_file_name,
             total_bytes: total_bytes_received,
+            hash_verified: Some(hash_verified),
         })).await?;
     }
 
