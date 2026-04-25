@@ -37,11 +37,13 @@ wasm-bindgen = "0.2.100"
 web-sys = "0.3.77"
 tracing-wasm = "0.2.1"
 console_error_panic_hook = "0.1.7"
-tokio = "1.45.0"
 js-sys = "0.3.77"
 wasm-bindgen-futures = "0.4.50"
-iroh = "0.35.0"
+# Disable default features (metrics) to avoid pulling in portmapper/iroh-relay with tokio net
+iroh = { git = "https://github.com/anchalshivank/iroh", branch = "feature/webrtc-wasm-support", default-features = false }
 n0-future = "0.1.3"
+# Content-addressed blob storage (BLAKE3 hashing)
+blake3 = "1.5"
 
 # Fix for getrandom WASM support
 getrandom = { version = "0.3", features = ["wasm_js"] }
@@ -51,11 +53,16 @@ anyhow.workspace = true
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11.8"
+tokio = "1.45.0"
+# Bao tree for BitTorrent-like verified streaming (merkle tree)
+bao-tree = "0.15"
 
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4.50"
 web-sys = "0.3.70"              # to access the DOM (to hide the loading text)
+# Override tokio to exclude net feature for WASM
+tokio = { version = "1.45.0", default-features = false, features = ["io-util", "macros", "sync", "rt"] }
 
 [profile.release]
 opt-level = 2 # fast and small wasm
@@ -66,6 +73,9 @@ opt-level = 2
 
 
 [patch.crates-io]
+n0-watcher = { git = "https://github.com/anchalshivank/n0-watcher", branch = "feature/webrtc-wasm-support" }
+netwatch = { git = "https://github.com/anchalshivank/net-tools", branch = "main" }
+portmapper = { git = "https://github.com/anchalshivank/net-tools", branch = "main" }
 
 # If you want to use the bleeding edge version of egui and eframe:
 # egui = { git = "https://github.com/emilk/egui", branch = "master" }
@@ -73,4 +83,3 @@ opt-level = 2
 
 # If you fork https://github.com/emilk/egui you can test with:
 # egui = { path = "../egui/crates/egui" }
-# eframe = { path = "../egui/crates/eframe" }

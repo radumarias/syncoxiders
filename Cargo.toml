@@ -1,5 +1,6 @@
 [workspace]
 members = ["file-change-consumer", "file-change-router", "file-tree-merge", "file-watcher", "p2p-transfer"]
+default-members = ["p2p-transfer"]
 
 resolver = "2"
 
@@ -24,3 +25,15 @@ panic = "abort"
 colored = "2.1.0"
 rayon = "^1.10.0"
 anyhow = "1.0.80"
+[patch.crates-io]
+n0-watcher = { git = "https://github.com/anchalshivank/n0-watcher", branch = "feature/webrtc-wasm-support" }
+netwatch = { git = "https://github.com/anchalshivank/net-tools", branch = "main" }
+portmapper = { git = "https://github.com/anchalshivank/net-tools", branch = "main" }
+
+[patch."https://github.com/anchalshivank/iroh"]
+n0-watcher = { git = "https://github.com/anchalshivank/n0-watcher", branch = "feature/webrtc-wasm-support" }
+netwatch = { git = "https://github.com/anchalshivank/net-tools", branch = "main" }
+portmapper = { git = "https://github.com/anchalshivank/net-tools", branch = "main" }
+
+[patch."https://github.com/anchalshivank/net-tools"]
+n0-watcher = { git = "https://github.com/anchalshivank/n0-watcher", branch = "feature/webrtc-wasm-support" }
