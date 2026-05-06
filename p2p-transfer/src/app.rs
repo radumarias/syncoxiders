@@ -2612,19 +2612,30 @@ impl eframe::App for P2PTransfer {
             .fill(tc.surface_lowest)
             .stroke(Stroke::new(1.0, tc.outline_var))
             .inner_margin(egui::Margin { left: 20, right: 20, top: 0, bottom: 0 });
+        let terminal_height = if self.show_terminal_view { 200.0 } else { 44.0 };
         egui::TopBottomPanel::bottom("terminal_bar")
-            .exact_height(44.0)
+            .exact_height(terminal_height)
             .frame(terminal_frame)
             .show(ctx, |ui| {
-                ui.set_height(44.0);
-                ui.horizontal_centered(|ui| {
-                    ui.label(RichText::new("Terminal Output >_").color(tc.secondary).monospace().size(12.0));
+                // ── Header row ────────────────────────────────────────
+                ui.horizontal(|ui| {
+                    ui.set_height(44.0);
+                    let chevron = if self.show_terminal_view { "▼" } else { "▲" };
+                    let toggle_label = format!("{} Terminal Output >_", chevron);
+                    if ui.add(
+                        Button::new(RichText::new(toggle_label).color(tc.secondary).monospace().size(12.0))
+                            .fill(Color32::TRANSPARENT)
+                    ).clicked() {
+                        self.show_terminal_view = !self.show_terminal_view;
+                    }
                     ui.add_space(12.0);
 
-                    // Latest log entry
-                    if let Ok(logs) = self.terminal_logs.lock() {
-                        let msg = logs.last().map(|s| s.as_str()).unwrap_or("No logs yet…");
-                        ui.label(RichText::new(msg).color(tc.outline).monospace().size(12.0));
+                    // Latest log entry (preview when collapsed)
+                    if !self.show_terminal_view {
+                        if let Ok(logs) = self.terminal_logs.lock() {
+                            let msg = logs.last().map(|s| s.as_str()).unwrap_or("No logs yet…");
+                            ui.label(RichText::new(msg).color(tc.outline).monospace().size(12.0));
+                        }
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2636,6 +2647,25 @@ impl eframe::App for P2PTransfer {
                         }
                     });
                 });
+
+                // ── Expanded log view ─────────────────────────────────
+                if self.show_terminal_view {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            if let Ok(logs) = self.terminal_logs.lock() {
+                                if logs.is_empty() {
+                                    ui.label(RichText::new("No logs yet…").color(tc.outline_var).monospace().size(12.0));
+                                } else {
+                                    for line in logs.iter() {
+                                        ui.label(RichText::new(line).color(tc.on_surface_var).monospace().size(12.0));
+                                    }
+                                }
+                            }
+                        });
+                }
             });
 
         // ── Central content ───────────────────────────────────────────
