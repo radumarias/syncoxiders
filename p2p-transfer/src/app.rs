@@ -2344,7 +2344,7 @@ impl P2PTransfer {
                     ui.label(RichText::new("Paste a share link to download directly").color(tc.on_surface_var).size(14.0));
                     ui.add_space(20.0);
                     if ui.add(
-                        Button::new(RichText::new("Receive").color(Color32::from_rgb(0, 56, 36)).strong().size(15.0))
+                        Button::new(RichText::new("Receive").color(tc.on_secondary).strong().size(15.0))
                             .fill(tc.secondary)
                             .rounding(CornerRadius::same(8))
                             .min_size(Vec2::new(150.0, 38.0))
