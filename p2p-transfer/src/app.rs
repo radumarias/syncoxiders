@@ -2452,7 +2452,10 @@ impl P2PTransfer {
             // Status
             if let Ok(status) = self.receive_status.lock() {
                 if !status.is_empty() {
-                    let status_color = if status.starts_with("Error") { tc.error } else { tc.secondary };
+                    let status_color = if status.starts_with("Error")
+                        || status.starts_with("Connection failed")
+                        || status.starts_with("Invalid")
+                    { tc.error } else { tc.secondary };
                     ui.label(RichText::new(status.as_str()).color(status_color).size(13.0));
                     ui.add_space(8.0);
                 }
