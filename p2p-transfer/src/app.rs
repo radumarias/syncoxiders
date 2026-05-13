@@ -2177,8 +2177,6 @@ impl P2PTransfer {
         };
 
         let size_str = self.format_size(size);
-        #[cfg(target_arch = "wasm32")]
-        web_sys::console::log_1(&format!("============{:?}", size).into());
 
         ui.add_space(16.0);
         let card = egui::Frame::new()
