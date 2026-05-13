@@ -140,6 +140,8 @@ pub struct P2PTransfer {
     save_directory: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     #[serde(skip)]
     shareable_url: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    #[serde(skip)]
+    last_dark_mode: Option<bool>,
 
 }
 
@@ -173,6 +175,7 @@ impl Default for P2PTransfer {
             shared_files_data: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             save_directory: std::sync::Arc::new(std::sync::Mutex::new(None)),
             shareable_url: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            last_dark_mode: None,
         }
     }
 }
@@ -2534,7 +2537,11 @@ impl eframe::App for P2PTransfer {
             }
         }
 
-        Self::apply_theme(ctx);
+        let dark_mode = ctx.style().visuals.dark_mode;
+        if self.last_dark_mode != Some(dark_mode) {
+            Self::apply_theme(ctx);
+            self.last_dark_mode = Some(dark_mode);
+        }
         let tc = if ctx.style().visuals.dark_mode { Tc::dark() } else { Tc::light() };
 
         // ── Header ────────────────────────────────────────────────────
