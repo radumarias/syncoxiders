@@ -2087,7 +2087,7 @@ impl P2PTransfer {
         let card = egui::Frame::new()
             .fill(tc.surface_low)
             .rounding(CornerRadius::same(10))
-            .stroke(Stroke::new(1.0, Color32::from_rgba_unmultiplied(78, 222, 163, 60)))
+            .stroke(Stroke::new(1.0, Color32::from_rgba_unmultiplied(tc.secondary.r(), tc.secondary.g(), tc.secondary.b(), 60)))
             .inner_margin(16.0);
         card.show(ui, |ui| {
             ui.set_width(ui.available_width());
