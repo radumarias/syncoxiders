@@ -106,8 +106,6 @@ pub struct P2PTransfer {
     #[serde(skip)]
     torrent_info: std::sync::Arc<std::sync::Mutex<TorrentInfo>>,
     #[serde(skip)]
-    magnet_input: String,
-    #[serde(skip)]
     node: std::sync::Arc<std::sync::Mutex<Option<EchoNode>>>,
     #[serde(skip)]
     node_id: Option<NodeId>,
@@ -157,7 +155,6 @@ impl Default for P2PTransfer {
             #[cfg(target_arch = "wasm32")]
             picked_file_data: std::sync::Arc::new(std::sync::Mutex::new(None)),
             torrent_info: std::sync::Arc::new(std::sync::Mutex::new(TorrentInfo::default())),
-            magnet_input: String::new(),
             node: std::sync::Arc::new(std::sync::Mutex::new(None)),
             node_id: None,
             is_accepting: false,
@@ -1943,8 +1940,7 @@ impl P2PTransfer {
                                         .fill(tc.primary)
                                         .rounding(CornerRadius::same(6))
                                 );
-                                share_btn.clone().on_hover_text("Start sharing all files");
-                                if share_btn.clicked() {
+                                if share_btn.on_hover_text("Start sharing all files").clicked() {
                                     should_start_accepting = true;
                                 }
                             }
@@ -2228,28 +2224,7 @@ impl P2PTransfer {
                 }
             });
 
-            if !self.magnet_input.is_empty() {
-                ui.add_space(10.0);
-                let url_box = egui::Frame::new()
-                    .fill(tc.surface_lowest)
-                    .rounding(CornerRadius::same(6))
-                    .stroke(Stroke::new(1.0, tc.outline_var))
-                    .inner_margin(egui::Margin { left: 12, right: 12, top: 8, bottom: 8 });
-                url_box.show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(&self.magnet_input).color(tc.primary).monospace().size(12.0));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.add(
-                                Button::new(RichText::new("Copy").color(tc.on_primary).size(13.0))
-                                    .fill(tc.primary).rounding(CornerRadius::same(6))
-                            ).clicked() {
-                                ui.ctx().copy_text(self.magnet_input.clone());
-                            }
-                        });
-                    });
-                });
-            }
+
         });
     }
 }
@@ -2309,7 +2284,7 @@ impl P2PTransfer {
                 ui.set_min_height(200.0);
                 ui.vertical_centered(|ui| {
                     let (ico_rect, _) = ui.allocate_exact_size(Vec2::splat(56.0), egui::Sense::hover());
-                    ui.painter().circle_filled(ico_rect.center(), 28.0, Color32::from_rgba_unmultiplied(192, 193, 255, 30));
+                    ui.painter().circle_filled(ico_rect.center(), 28.0, Color32::from_rgba_unmultiplied(tc.primary.r(), tc.primary.g(), tc.primary.b(), 30));
                     ui.painter().text(ico_rect.center(), egui::Align2::CENTER_CENTER, "⬆", egui::FontId::proportional(28.0), tc.primary);
                     ui.add_space(14.0);
                     ui.label(RichText::new("Send a File").color(tc.on_surface).size(22.0).strong());
@@ -2337,7 +2312,7 @@ impl P2PTransfer {
                 ui.set_min_height(200.0);
                 ui.vertical_centered(|ui| {
                     let (ico_rect, _) = ui.allocate_exact_size(Vec2::splat(56.0), egui::Sense::hover());
-                    ui.painter().circle_filled(ico_rect.center(), 28.0, Color32::from_rgba_unmultiplied(78, 222, 163, 30));
+                    ui.painter().circle_filled(ico_rect.center(), 28.0, Color32::from_rgba_unmultiplied(tc.secondary.r(), tc.secondary.g(), tc.secondary.b(), 30));
                     ui.painter().text(ico_rect.center(), egui::Align2::CENTER_CENTER, "⬇", egui::FontId::proportional(28.0), tc.secondary);
                     ui.add_space(14.0);
                     ui.label(RichText::new("Receive a File").color(tc.on_surface).size(22.0).strong());
