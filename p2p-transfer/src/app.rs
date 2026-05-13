@@ -2694,8 +2694,8 @@ impl eframe::App for P2PTransfer {
                         self.show_file_info(ui);
                         self.show_shared_files(ui, ctx);
                         self.show_connection_status(ui);
-                        self.show_received_files(ui);
                     }
+                    self.show_received_files(ui);
                 });
             });
     }
