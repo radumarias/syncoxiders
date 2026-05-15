@@ -1,8 +1,72 @@
 use eframe::egui;
-use egui::{Button, Color32, Grid, Label, RichText, TextStyle, Ui, Vec2};
+use egui::{Button, Color32, CornerRadius, Grid, Label, RichText, Stroke, TextStyle, Ui, Vec2};
 use serde::{Deserialize, Serialize};
 use crate::node::EchoNode;
 use iroh::NodeId;
+
+// ── Stitch Design System — theme-aware color palette ──────────────────────────
+
+#[derive(Clone, Copy)]
+struct Tc {
+    bg:             Color32,
+    surface_lowest: Color32,
+    surface_low:    Color32,
+    surface:        Color32,
+    surface_high:   Color32,
+    primary:        Color32,
+    on_primary:     Color32,
+    secondary:      Color32,
+    on_secondary:   Color32,
+    on_surface:     Color32,
+    on_surface_var: Color32,
+    outline:        Color32,
+    outline_var:    Color32,
+    error:          Color32,
+}
+
+impl Tc {
+    const fn dark() -> Self {
+        Self {
+            bg:             Color32::from_rgb(19,  19,  27),   // #13131b
+            surface_lowest: Color32::from_rgb(13,  13,  21),   // #0d0d15
+            surface_low:    Color32::from_rgb(27,  27,  35),   // #1b1b23
+            surface:        Color32::from_rgb(31,  31,  39),   // #1f1f27
+            surface_high:   Color32::from_rgb(41,  41,  50),   // #292932
+            primary:        Color32::from_rgb(192, 193, 255),  // #c0c1ff
+            on_primary:     Color32::from_rgb(16,  0,   169),  // #1000a9
+            secondary:      Color32::from_rgb(78,  222, 163),  // #4edea3
+            on_secondary:   Color32::from_rgb(0,   56,  36),
+            on_surface:     Color32::from_rgb(228, 225, 237),  // #e4e1ed
+            on_surface_var: Color32::from_rgb(199, 196, 215),  // #c7c4d7
+            outline:        Color32::from_rgb(144, 143, 160),  // #908fa0
+            outline_var:    Color32::from_rgb(70,  69,  84),   // #464554
+            error:          Color32::from_rgb(255, 180, 171),  // #ffb4ab
+        }
+    }
+
+    const fn light() -> Self {
+        Self {
+            bg:             Color32::from_rgb(244, 243, 255),  // #f4f3ff
+            surface_lowest: Color32::from_rgb(255, 255, 255),  // #ffffff
+            surface_low:    Color32::from_rgb(238, 237, 255),  // #eeedff
+            surface:        Color32::from_rgb(230, 229, 249),  // #e6e5f9
+            surface_high:   Color32::from_rgb(216, 215, 235),  // #d8d7eb
+            primary:        Color32::from_rgb(65,  67,  199),  // #4143c7
+            on_primary:     Color32::from_rgb(255, 255, 255),  // #ffffff
+            secondary:      Color32::from_rgb(0,   108, 74),   // #006c4a
+            on_secondary:   Color32::from_rgb(255, 255, 255),
+            on_surface:     Color32::from_rgb(27,  26,  39),   // #1b1a27
+            on_surface_var: Color32::from_rgb(71,  69,  85),   // #474555
+            outline:        Color32::from_rgb(120, 118, 127),  // #78767f
+            outline_var:    Color32::from_rgb(199, 197, 208),  // #c7c5d0
+            error:          Color32::from_rgb(186, 26,  26),   // #ba1a1a
+        }
+    }
+
+    fn for_ui(ui: &Ui) -> Self {
+        if ui.visuals().dark_mode { Self::dark() } else { Self::light() }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ReceivedFile {
@@ -42,8 +106,6 @@ pub struct P2PTransfer {
     #[serde(skip)]
     torrent_info: std::sync::Arc<std::sync::Mutex<TorrentInfo>>,
     #[serde(skip)]
-    magnet_input: String,
-    #[serde(skip)]
     node: std::sync::Arc<std::sync::Mutex<Option<EchoNode>>>,
     #[serde(skip)]
     node_id: Option<NodeId>,
@@ -76,6 +138,8 @@ pub struct P2PTransfer {
     save_directory: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     #[serde(skip)]
     shareable_url: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    #[serde(skip)]
+    last_dark_mode: Option<bool>,
 
 }
 
@@ -91,7 +155,6 @@ impl Default for P2PTransfer {
             #[cfg(target_arch = "wasm32")]
             picked_file_data: std::sync::Arc::new(std::sync::Mutex::new(None)),
             torrent_info: std::sync::Arc::new(std::sync::Mutex::new(TorrentInfo::default())),
-            magnet_input: String::new(),
             node: std::sync::Arc::new(std::sync::Mutex::new(None)),
             node_id: None,
             is_accepting: false,
@@ -109,6 +172,7 @@ impl Default for P2PTransfer {
             shared_files_data: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             save_directory: std::sync::Arc::new(std::sync::Mutex::new(None)),
             shareable_url: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            last_dark_mode: None,
         }
     }
 }
@@ -1523,44 +1587,66 @@ impl P2PTransfer {
         web_sys::console::log_1(&format!("Download triggered for: {}", file_name).into());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-
     fn show_received_files(&mut self, ui: &mut Ui) {
+        let tc = Tc::for_ui(ui);
         if let Ok(files) = self.received_files.lock() {
             if files.is_empty() {
                 return;
             }
 
             ui.add_space(20.0);
-            ui.group(|ui| {
+            let card = egui::Frame::new()
+                .fill(tc.surface_low)
+                .rounding(CornerRadius::same(10))
+                .stroke(Stroke::new(1.0, tc.outline_var))
+                .inner_margin(0.0);
+            card.show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.vertical(|ui| {
-                    // Header
+
+                // Section header
+                let header_frame = egui::Frame::new()
+                    .fill(tc.surface_high)
+                    .rounding(CornerRadius { nw: 10, ne: 10, sw: 0, se: 0 })
+                    .inner_margin(egui::Margin { left: 16, right: 16, top: 10, bottom: 10 });
+                header_frame.show(ui, |ui| {
+                    ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        ui.add(Label::new(RichText::new("📦").heading()));
-                        ui.heading(RichText::new("Received Files").color(Color32::from_rgb(100, 200, 100)));
+                        ui.label(RichText::new("Received Files")
+                            .color(tc.on_surface).strong().size(15.0));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(RichText::new(format!("{} items", files.len()))
+                                .color(tc.outline).size(12.0));
+                        });
                     });
+                });
 
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-
-                    // Display each received file
-                    for (index, file) in files.iter().enumerate() {
-                        ui.group(|ui| {
+                ui.add_space(4.0);
+                for (index, file) in files.iter().enumerate() {
+                    let row_frame = egui::Frame::new()
+                        .inner_margin(egui::Margin { left: 16, right: 16, top: 10, bottom: 10 });
+                    row_frame.show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            // File icon area
+                            let (rect, _) = ui.allocate_exact_size(Vec2::new(36.0, 36.0), egui::Sense::hover());
+                            ui.painter().rect_filled(rect, CornerRadius::same(6), tc.surface_high);
+                            ui.painter().text(
+                                rect.center(), egui::Align2::CENTER_CENTER,
+                                "📥", egui::FontId::proportional(18.0), tc.secondary,
+                            );
+                            ui.add_space(10.0);
                             ui.vertical(|ui| {
-                                ui.strong(&file.name);
-                                ui.label(format!("Size: {}", self.format_size(file.size)));
-                                ui.label(format!("Saved to: {}", file.saved_path));
-                                ui.label(format!("Received: {}", file.timestamp));
+                                ui.label(RichText::new(&file.name).color(tc.on_surface).strong().size(14.0));
+                                ui.label(RichText::new(format!("{} · {}", self.format_size(file.size), &file.saved_path))
+                                    .color(tc.outline).size(12.0));
                             });
                         });
-
-                        if index < files.len() - 1 {
-                            ui.add_space(5.0);
-                        }
+                    });
+                    if index < files.len() - 1 {
+                        ui.add(egui::Separator::default().spacing(0.0).grow(0.0));
                     }
-                });
+                }
+                ui.add_space(4.0);
             });
         }
     }
@@ -1814,6 +1900,7 @@ impl P2PTransfer {
     }
 
     fn show_shared_files(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        let tc = Tc::for_ui(ui);
         let mut to_remove: Option<usize> = None;
         let should_restart;
         let mut should_start_accepting = false;
@@ -1826,54 +1913,74 @@ impl P2PTransfer {
 
             let files = files.unwrap();
 
-            ui.add_space(15.0);
-            ui.group(|ui| {
+            ui.add_space(16.0);
+            let card = egui::Frame::new()
+                .fill(tc.surface_low)
+                .rounding(CornerRadius::same(10))
+                .stroke(Stroke::new(1.0, tc.outline_var))
+                .inner_margin(0.0);
+            card.show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.add(Label::new(RichText::new("📤").heading()));
-                        ui.heading(RichText::new("Shared Files").color(Color32::from_rgb(50, 150, 200)));
 
+                // Section header
+                let header_frame = egui::Frame::new()
+                    .fill(tc.surface_high)
+                    .rounding(CornerRadius { nw: 10, ne: 10, sw: 0, se: 0 })
+                    .inner_margin(egui::Margin { left: 16, right: 16, top: 10, bottom: 10 });
+                header_frame.show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Files to Share").color(tc.on_surface).strong().size(15.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if !self.is_accepting {
                                 let share_btn = ui.add(
-                                    Button::new(RichText::new("🔗 Share").text_style(TextStyle::Button).color(Color32::WHITE))
-                                        .fill(Color32::from_rgb(100, 200, 100))
+                                    Button::new(RichText::new("Start Sharing").color(tc.on_primary).strong())
+                                        .fill(tc.primary)
+                                        .rounding(CornerRadius::same(6))
                                 );
-                                share_btn.clone().on_hover_text("Start accepting connections and share all files");
-
-                                if share_btn.clicked() {
+                                if share_btn.on_hover_text("Start sharing all files").clicked() {
                                     should_start_accepting = true;
                                 }
                             }
                         });
                     });
+                });
 
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-
-                    for (index, (name, _path, size)) in files.iter().enumerate() {
-                        ui.group(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.strong(name);
-                                    ui.label(format!("Size: {}", self.format_size(*size)));
-                                });
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button(RichText::new("🗑 Remove").color(Color32::WHITE)).clicked() {
-                                        to_remove = Some(index);
-                                    }
-                                });
+                for (index, (name, _path, size)) in files.iter().enumerate() {
+                    let row_frame = egui::Frame::new()
+                        .inner_margin(egui::Margin { left: 16, right: 16, top: 10, bottom: 10 });
+                    row_frame.show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            // File icon
+                            let (rect, _) = ui.allocate_exact_size(Vec2::new(36.0, 36.0), egui::Sense::hover());
+                            ui.painter().rect_filled(rect, CornerRadius::same(6), tc.surface_high);
+                            ui.painter().text(
+                                rect.center(), egui::Align2::CENTER_CENTER,
+                                "📄", egui::FontId::proportional(18.0), tc.primary,
+                            );
+                            ui.add_space(10.0);
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new(name).color(tc.on_surface).strong().size(14.0));
+                                ui.label(RichText::new(self.format_size(*size)).color(tc.outline).size(12.0));
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.add(
+                                    Button::new(RichText::new("Remove").color(tc.error).size(13.0))
+                                        .fill(Color32::TRANSPARENT)
+                                        .stroke(Stroke::new(1.0, tc.error))
+                                        .rounding(CornerRadius::same(6))
+                                ).clicked() {
+                                    to_remove = Some(index);
+                                }
                             });
                         });
-
-                        if index < files.len() - 1 {
-                            ui.add_space(5.0);
-                        }
+                    });
+                    if index < files.len() - 1 {
+                        ui.add(egui::Separator::default().spacing(0.0).grow(0.0));
                     }
-                });
+                }
+                ui.add_space(4.0);
             });
 
             should_restart = self.is_accepting;
@@ -1961,65 +2068,93 @@ impl P2PTransfer {
     }
 
     fn show_connection_status(&mut self, ui: &mut Ui) {
-        if self.is_accepting {
-            ui.add_space(15.0);
+        let tc = Tc::for_ui(ui);
+        if !self.is_accepting {
+            return;
+        }
 
-            let mut should_stop = false;
+        let mut should_stop = false;
 
-            ui.group(|ui| {
-                ui.set_width(ui.available_width());
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("🟢 Sharing Active").strong().color(Color32::from_rgb(100, 200, 100)));
+        ui.add_space(16.0);
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let stop_btn = ui.add(
-                                Button::new(RichText::new("⏹ Close Sharing").text_style(TextStyle::Button).color(Color32::WHITE))
-                                    .fill(Color32::from_rgb(200, 100, 100))
-                            );
-                            stop_btn.clone().on_hover_text("Stop sharing and close connections");
+        // Active share card – green-tinted border
+        let card = egui::Frame::new()
+            .fill(tc.surface_low)
+            .rounding(CornerRadius::same(10))
+            .stroke(Stroke::new(1.0, Color32::from_rgba_unmultiplied(tc.secondary.r(), tc.secondary.g(), tc.secondary.b(), 60)))
+            .inner_margin(16.0);
+        card.show(ui, |ui| {
+            ui.set_width(ui.available_width());
 
-                            if stop_btn.clicked() {
-                                should_stop = true;
-                            }
-                        });
-                    });
+            // Status row
+            ui.horizontal(|ui| {
+                // Pulsing green dot (approximated via a filled circle)
+                let (dot_rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
+                ui.painter().circle_filled(dot_rect.center(), 5.0, tc.secondary);
+                ui.add_space(4.0);
+                ui.label(RichText::new("Broadcasting Ready").color(tc.secondary).strong().size(16.0));
 
-                    // Check if shareable URL is available
-                    if let Ok(url_opt) = self.shareable_url.lock() {
-                        if let Some(share_url) = url_opt.as_ref() {
-                            ui.add_space(8.0);
-                            ui.separator();
-                            ui.add_space(8.0);
-
-                            ui.label(RichText::new("📤 Shareable Link:").strong());
-                            ui.add_space(5.0);
-
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(share_url).code());
-                                if ui.button(RichText::new("📋 Copy Link").color(Color32::WHITE)).clicked() {
-                                    ui.ctx().copy_text(share_url.clone());
-                                }
-                            });
-
-                            ui.add_space(8.0);
-                            ui.label(RichText::new("💡 Share this link with anyone to send files!").italics().color(Color32::GRAY));
-                        } else {
-                            ui.add_space(5.0);
-                            ui.label("Initializing node...");
-                        }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(
+                        Button::new(RichText::new("Stop Sharing").color(tc.error).size(13.0))
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::new(1.0, tc.error))
+                            .rounding(CornerRadius::same(6))
+                    ).clicked() {
+                        should_stop = true;
                     }
                 });
             });
 
-            // Handle stop after UI is done
-            if should_stop {
-                self.stop_accepting();
+            ui.add_space(12.0);
+
+            // URL box
+            if let Ok(url_opt) = self.shareable_url.lock() {
+                if let Some(share_url) = url_opt.as_ref() {
+                    ui.label(RichText::new("SHAREABLE LINK").color(tc.outline).size(11.0));
+                    ui.add_space(4.0);
+
+                    let url_box = egui::Frame::new()
+                        .fill(tc.surface_lowest)
+                        .rounding(CornerRadius::same(6))
+                        .stroke(Stroke::new(1.0, tc.outline_var))
+                        .inner_margin(egui::Margin { left: 12, right: 12, top: 8, bottom: 8 });
+                    url_box.show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(share_url).color(tc.primary).monospace().size(13.0));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.add(
+                                    Button::new(RichText::new("Copy Link").color(tc.on_primary).size(13.0).strong())
+                                        .fill(tc.primary)
+                                        .rounding(CornerRadius::same(6))
+                                ).clicked() {
+                                    ui.ctx().copy_text(share_url.clone());
+                                }
+                            });
+                        });
+                    });
+
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Send this link to the receiver — they paste it to connect.")
+                        .color(tc.outline).size(13.0).italics());
+                } else {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(RichText::new("Initializing node…").color(tc.outline).size(13.0));
+                    });
+                }
             }
+        });
+
+        if should_stop {
+            self.stop_accepting();
         }
     }
 
     fn show_file_info(&mut self, ui: &mut Ui) {
+        let tc = Tc::for_ui(ui);
         let (name, path, size) = {
             let file_name_binding = self.picked_file_name.lock().ok();
             let file_path_binding = self.picked_file_path.lock().ok();
@@ -2031,106 +2166,330 @@ impl P2PTransfer {
                 file_size_binding.as_ref().map(|f| f.as_ref().cloned()),
             ) {
                 (Some(Some(name)), Some(Some(path)), Some(Some(size))) => (name, path, size),
-                _ => {
-                    // No file selected, display message and return
-                    ui.add_space(15.0);
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        ui.label(RichText::new("📄").color(Color32::GRAY));
-                        ui.label(RichText::new("No file selected").color(Color32::GRAY));
-                    });
-                    return;
-                }
+                _ => return,
             }
         };
 
-        ui.add_space(15.0);
-        ui.group(|ui| {
+        let size_str = self.format_size(size);
+
+        ui.add_space(16.0);
+        let card = egui::Frame::new()
+            .fill(tc.surface_low)
+            .rounding(CornerRadius::same(10))
+            .stroke(Stroke::new(1.0, tc.outline_var))
+            .inner_margin(16.0);
+        card.show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.vertical(|ui| {
-                // Header with icon
-                ui.horizontal(|ui| {
-                    ui.add(Label::new(RichText::new("📁").heading()));
-                    ui.heading(RichText::new("Selected File").color(Color32::from_rgb(50, 150, 200)));
+            ui.horizontal(|ui| {
+                // File icon box
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(44.0, 44.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, CornerRadius::same(8), tc.surface_high);
+                ui.painter().text(
+                    rect.center(), egui::Align2::CENTER_CENTER,
+                    "📄", egui::FontId::proportional(22.0), tc.primary,
+                );
+                ui.add_space(12.0);
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(&name).color(tc.on_surface).strong().size(15.0));
+                    ui.label(RichText::new(format!("{size_str}  ·  {path}")).color(tc.outline).size(12.0));
                 });
+            });
 
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
+            ui.add_space(12.0);
+            ui.add(egui::Separator::default().spacing(0.0));
+            ui.add_space(12.0);
 
-                // File info in a more compact layout
-                Grid::new("file_info_grid")
-                    .num_columns(2)
-                    .spacing([10.0, 4.0])
-                    .show(ui, |ui| {
-                        // File name
-                        ui.strong("Name:");
-                        ui.label(&name);
-                        ui.end_row();
+            ui.horizontal(|ui| {
+                if ui.add(
+                    Button::new(RichText::new("+ Add to Share").color(tc.on_primary).strong().size(14.0))
+                        .fill(tc.primary)
+                        .rounding(CornerRadius::same(6))
+                        .min_size(Vec2::new(140.0, 34.0))
+                ).on_hover_text("Add this file to the share queue").clicked() {
+                    self.add_file_to_share(ui.ctx());
+                }
 
-                        // File path
-                        ui.strong("Path:");
-                        ui.label(&path);
-                        ui.end_row();
-
-                        // File size
-                        ui.strong("Size:");
-                        #[cfg(target_arch = "wasm32")]
-                        web_sys::console::log_1(&format!("============{:?}", size).into());
-                        ui.label(self.format_size(size));
-                        ui.end_row();
-                    });
-
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
-
-                // Action buttons
-                ui.horizontal(|ui| {
-                    // Add to share button
-                    let add_btn = ui.add(
-                        Button::new(RichText::new("➕ Add to Share").text_style(TextStyle::Button).color(Color32::WHITE))
-                            .fill(Color32::from_rgb(70, 130, 180))
-                    );
-                    add_btn.clone().on_hover_text("Add this file to the shared files list");
-
-                    if add_btn.clicked() {
-                        self.add_file_to_share(ui.ctx());
+                if self.is_accepting {
+                    ui.add_space(8.0);
+                    if ui.add(
+                        Button::new(RichText::new("Stop").color(tc.error).size(14.0))
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::new(1.0, tc.error))
+                            .rounding(CornerRadius::same(6))
+                    ).on_hover_text("Stop accepting connections").clicked() {
+                        self.stop_accepting();
                     }
+                }
+            });
 
-                    if self.is_accepting {
-                        ui.add_space(5.0);
 
-                        let stop_btn = ui.add(
-                            Button::new(RichText::new("⏹ Stop").text_style(TextStyle::Button).color(Color32::WHITE))
-                                .fill(Color32::from_rgb(200, 100, 100))
-                        );
-                        stop_btn.clone().on_hover_text("Stop accepting connections");
+        });
+    }
+}
 
-                        if stop_btn.clicked() {
-                            self.stop_accepting();
+impl P2PTransfer {
+    fn apply_theme(ctx: &egui::Context) {
+        let dark = ctx.style().visuals.dark_mode;
+        let tc = if dark { Tc::dark() } else { Tc::light() };
+        let mut v = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
+        v.panel_fill                              = tc.bg;
+        v.window_fill                             = tc.surface;
+        v.faint_bg_color                          = tc.surface_low;
+        v.extreme_bg_color                        = tc.surface_lowest;
+        v.code_bg_color                           = tc.surface_lowest;
+        v.widgets.noninteractive.bg_fill          = tc.surface_low;
+        v.widgets.noninteractive.weak_bg_fill     = tc.surface_low;
+        v.widgets.noninteractive.bg_stroke        = Stroke::new(1.0, tc.outline_var);
+        v.widgets.noninteractive.fg_stroke        = Stroke::new(1.0, tc.outline);
+        v.widgets.inactive.bg_fill                = tc.surface;
+        v.widgets.inactive.weak_bg_fill           = tc.surface;
+        v.widgets.inactive.bg_stroke              = Stroke::new(1.0, tc.outline_var);
+        v.widgets.hovered.bg_fill                 = tc.surface_high;
+        v.widgets.hovered.bg_stroke               = Stroke::new(1.0, tc.outline);
+        v.widgets.active.bg_fill                  = tc.surface_high;
+        v.widgets.active.bg_stroke                = Stroke::new(1.0, tc.primary);
+        v.selection.bg_fill                       = Color32::from_rgba_unmultiplied(
+            tc.primary.r(), tc.primary.g(), tc.primary.b(), 60,
+        );
+        v.override_text_color                     = Some(tc.on_surface);
+        ctx.set_visuals(v);
+    }
+
+    fn show_home_cards(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        let tc = Tc::for_ui(ui);
+        ui.add_space(24.0);
+
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new("P2P File Transfer").color(tc.on_surface).size(28.0).strong());
+            ui.add_space(4.0);
+            ui.label(RichText::new("Secure, direct peer-to-peer sharing — no cloud storage").color(tc.outline).size(15.0));
+        });
+
+        ui.add_space(32.0);
+
+        // Two cards side by side using columns
+        let mut pick_file = false;
+        let mut open_receive = false;
+
+        ui.columns(2, |cols| {
+            // ── Send card ───────────────────────────────────────────
+            let send_frame = egui::Frame::new()
+                .fill(tc.surface_low)
+                .rounding(CornerRadius::same(12))
+                .stroke(Stroke::new(1.0, tc.outline_var))
+                .inner_margin(egui::Margin::same(28));
+            send_frame.show(&mut cols[0], |ui| {
+                ui.set_min_height(200.0);
+                ui.vertical_centered(|ui| {
+                    let (ico_rect, _) = ui.allocate_exact_size(Vec2::splat(56.0), egui::Sense::hover());
+                    ui.painter().circle_filled(ico_rect.center(), 28.0, Color32::from_rgba_unmultiplied(tc.primary.r(), tc.primary.g(), tc.primary.b(), 30));
+                    ui.painter().text(ico_rect.center(), egui::Align2::CENTER_CENTER, "⬆", egui::FontId::proportional(28.0), tc.primary);
+                    ui.add_space(14.0);
+                    ui.label(RichText::new("Send a File").color(tc.on_surface).size(22.0).strong());
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Choose a file and generate a share link").color(tc.on_surface_var).size(14.0));
+                    ui.add_space(20.0);
+                    if ui.add(
+                        Button::new(RichText::new("Choose File").color(tc.on_primary).strong().size(15.0))
+                            .fill(tc.primary)
+                            .rounding(CornerRadius::same(8))
+                            .min_size(Vec2::new(150.0, 38.0))
+                    ).clicked() {
+                        pick_file = true;
+                    }
+                });
+            });
+
+            // ── Receive card ─────────────────────────────────────────
+            let recv_frame = egui::Frame::new()
+                .fill(tc.surface_low)
+                .rounding(CornerRadius::same(12))
+                .stroke(Stroke::new(1.0, tc.outline_var))
+                .inner_margin(egui::Margin::same(28));
+            recv_frame.show(&mut cols[1], |ui| {
+                ui.set_min_height(200.0);
+                ui.vertical_centered(|ui| {
+                    let (ico_rect, _) = ui.allocate_exact_size(Vec2::splat(56.0), egui::Sense::hover());
+                    ui.painter().circle_filled(ico_rect.center(), 28.0, Color32::from_rgba_unmultiplied(tc.secondary.r(), tc.secondary.g(), tc.secondary.b(), 30));
+                    ui.painter().text(ico_rect.center(), egui::Align2::CENTER_CENTER, "⬇", egui::FontId::proportional(28.0), tc.secondary);
+                    ui.add_space(14.0);
+                    ui.label(RichText::new("Receive a File").color(tc.on_surface).size(22.0).strong());
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Paste a share link to download directly").color(tc.on_surface_var).size(14.0));
+                    ui.add_space(20.0);
+                    if ui.add(
+                        Button::new(RichText::new("Receive").color(tc.on_secondary).strong().size(15.0))
+                            .fill(tc.secondary)
+                            .rounding(CornerRadius::same(8))
+                            .min_size(Vec2::new(150.0, 38.0))
+                    ).clicked() {
+                        open_receive = true;
+                    }
+                });
+            });
+        });
+
+        // Apply actions after columns closure ends
+        if pick_file {
+            #[cfg(target_arch = "wasm32")]
+            self.pick_file(ctx);
+            #[cfg(not(target_arch = "wasm32"))]
+            self.pick_file();
+        }
+        if open_receive {
+            self.show_receive_dialog = true;
+        }
+    }
+
+    fn show_receive_panel(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        let tc = Tc::for_ui(ui);
+        ui.add_space(16.0);
+
+        let card = egui::Frame::new()
+            .fill(tc.surface_low)
+            .rounding(CornerRadius::same(10))
+            .stroke(Stroke::new(1.0, tc.outline_var))
+            .inner_margin(24.0);
+        card.show(ui, |ui| {
+            ui.set_width(ui.available_width());
+
+            // Header
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Receive Files").color(tc.on_surface).strong().size(20.0));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(
+                        Button::new(RichText::new("✕ Cancel").color(tc.outline).size(13.0))
+                            .fill(Color32::TRANSPARENT)
+                    ).clicked() {
+                        self.show_receive_dialog = false;
+                        self.receive_hash_input.clear();
+                        if let Ok(mut s) = self.receive_status.lock() { s.clear(); }
+                    }
+                });
+            });
+            ui.add_space(6.0);
+            ui.label(RichText::new("Paste a peer ID or share link to establish a connection.")
+                .color(tc.on_surface_var).size(14.0));
+
+            ui.add_space(16.0);
+
+            // Save folder (desktop only)
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ui.label(RichText::new("SAVE FOLDER").color(tc.outline).size(11.0));
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let dir_text = if let Ok(d) = self.save_directory.lock() {
+                        d.clone().unwrap_or_else(|| "No folder selected".to_string())
+                    } else {
+                        "No folder selected".to_string()
+                    };
+                    let dir_color = if dir_text == "No folder selected" { tc.error } else { tc.secondary };
+                    ui.label(RichText::new(&dir_text).color(dir_color).size(13.0));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add(
+                            Button::new(RichText::new("Select Folder").color(tc.on_primary).size(13.0))
+                                .fill(tc.primary).rounding(CornerRadius::same(6))
+                        ).clicked() {
+                            use rfd::FileDialog;
+                            if let Some(folder) = FileDialog::new().pick_folder() {
+                                if let Ok(mut save_dir) = self.save_directory.lock() {
+                                    *save_dir = Some(folder.to_string_lossy().to_string());
+                                }
+                            }
+                        }
+                    });
+                });
+                ui.add_space(14.0);
+            }
+
+            // Link input
+            ui.label(RichText::new("PEER IDENTIFIER").color(tc.outline).size(11.0));
+            ui.add_space(4.0);
+            let input_frame = egui::Frame::new()
+                .fill(tc.surface)
+                .rounding(CornerRadius::same(6))
+                .stroke(Stroke::new(1.0, tc.outline_var))
+                .inner_margin(egui::Margin { left: 12, right: 12, top: 8, bottom: 8 });
+            input_frame.show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.add(egui::TextEdit::singleline(&mut self.receive_hash_input)
+                    .hint_text("Paste share link or node ID")
+                    .frame(false)
+                    .font(egui::FontId::monospace(13.0))
+                    .text_color(tc.on_surface)
+                    .desired_width(f32::INFINITY));
+            });
+
+            ui.add_space(10.0);
+
+            // Status
+            if let Ok(status) = self.receive_status.lock() {
+                if !status.is_empty() {
+                    let status_color = if status.starts_with("Error")
+                        || status.starts_with("Connection failed")
+                        || status.starts_with("Invalid")
+                    { tc.error } else { tc.secondary };
+                    ui.label(RichText::new(status.as_str()).color(status_color).size(13.0));
+                    ui.add_space(8.0);
+                }
+            }
+
+            let is_receiving = self.is_receiving.lock().map(|r| *r).unwrap_or(false);
+            #[cfg(not(target_arch = "wasm32"))]
+            let has_save_dir = self.save_directory.lock().ok()
+                .and_then(|d| d.as_ref().map(|_| true)).unwrap_or(false);
+            #[cfg(target_arch = "wasm32")]
+            let has_save_dir = true;
+
+            ui.horizontal(|ui| {
+                if !is_receiving {
+                    let enabled = has_save_dir && !self.receive_hash_input.trim().is_empty();
+                    if ui.add_enabled(enabled,
+                        Button::new(RichText::new("Connect").color(tc.on_primary).strong().size(14.0))
+                            .fill(tc.primary)
+                            .rounding(CornerRadius::same(6))
+                            .min_size(Vec2::new(120.0, 34.0))
+                    ).on_disabled_hover_text(if !has_save_dir {
+                        "Select a save folder first"
+                    } else {
+                        "Enter a share link or node ID"
+                    }).clicked() {
+                        match self.extract_node_id(&self.receive_hash_input) {
+                            Ok(node_id) => self.start_receiving(ctx, node_id),
+                            Err(err) => {
+                                if let Ok(mut s) = self.receive_status.lock() { *s = err; }
+                            }
                         }
                     }
-                });
-
-                // Display generated magnet URI if available
-                if !self.magnet_input.is_empty() {
-                    ui.add_space(10.0);
-                    ui.group(|ui| {
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new("Magnet URI:").strong());
-                            ui.add_space(5.0);
-                            ui.label(&self.magnet_input);
-                            ui.add_space(5.0);
-
-                            if ui.button("📋 Copy").clicked() {
-                                ui.ctx().copy_text(self.magnet_input.clone());
-                            }
-                        });
-                    });
+                } else {
+                    ui.spinner();
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Receiving…").color(tc.secondary).size(14.0));
+                    ui.add_space(16.0);
+                    if ui.add(
+                        Button::new(RichText::new("Refresh").color(tc.on_primary).size(13.0))
+                            .fill(tc.primary).rounding(CornerRadius::same(6))
+                    ).on_hover_text("Check for new files from sender").clicked() {
+                        if let Ok(node_id) = self.extract_node_id(&self.receive_hash_input) {
+                            self.reconnect_for_files(ctx, node_id);
+                        }
+                    }
+                    ui.add_space(8.0);
+                    if ui.add(
+                        Button::new(RichText::new("Stop").color(tc.error).size(13.0))
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::new(1.0, tc.error))
+                            .rounding(CornerRadius::same(6))
+                    ).clicked() {
+                        self.stop_receiving();
+                    }
                 }
             });
         });
+
+        // Received files below
+        self.show_received_files(ui);
     }
 }
 
@@ -2140,6 +2499,7 @@ impl eframe::App for P2PTransfer {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Auto-open receive panel when URL hash contains a node ID
         #[cfg(target_arch = "wasm32")]
         if !self.show_receive_dialog && !self.is_accepting {
             if let Some(node_id) = self.parse_node_id_from_url() {
@@ -2148,276 +2508,194 @@ impl eframe::App for P2PTransfer {
             }
         }
 
-        let frame = egui::containers::Frame::new()
-            .fill(ctx.style().visuals.window_fill)
-            .inner_margin(20.0)
-            .stroke(ctx.style().visuals.widgets.noninteractive.bg_stroke);
+        let dark_mode = ctx.style().visuals.dark_mode;
+        if self.last_dark_mode != Some(dark_mode) {
+            Self::apply_theme(ctx);
+            self.last_dark_mode = Some(dark_mode);
+        }
+        let tc = if ctx.style().visuals.dark_mode { Tc::dark() } else { Tc::light() };
 
-        egui::TopBottomPanel::top("top_panel")
-            .frame(frame.clone())
+        // ── Header ────────────────────────────────────────────────────
+        let header_frame = egui::Frame::new()
+            .fill(tc.surface)
+            .stroke(Stroke::new(1.0, tc.outline_var))
+            .inner_margin(egui::Margin { left: 24, right: 24, top: 0, bottom: 0 });
+        egui::TopBottomPanel::top("header")
+            .exact_height(54.0)
+            .frame(header_frame)
             .show(ctx, |ui| {
-                ui.add_space(4.0);
-                egui::menu::bar(ui, |ui| {
-                    ui.heading(RichText::new("Syncoxiders").strong());
-                    ui.add_space(16.0);
+                ui.set_height(54.0);
+                ui.horizontal_centered(|ui| {
+                    ui.label(RichText::new("Syncoxiders").color(tc.primary).strong().size(20.0));
 
-                    let is_web = cfg!(target_arch = "wasm32");
-                    if !is_web {
-                        ui.menu_button("File", |ui| {
-                            if ui.button("Quit").clicked() {
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
-                        });
-                        ui.add_space(16.0);
+                    let not_at_home = self.show_receive_dialog
+                        || self.is_accepting
+                        || self.picked_file_name.lock().ok().and_then(|g| g.clone()).is_some()
+                        || self.shared_files.lock().ok().map(|g| !g.is_empty()).unwrap_or(false);
+
+                    if not_at_home {
+                        ui.add_space(12.0);
+                        if ui.add(
+                            Button::new(RichText::new("🏠 Home").color(tc.outline).size(13.0))
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::new(1.0, tc.outline_var))
+                                .rounding(CornerRadius::same(6))
+                        ).clicked() {
+                            self.show_receive_dialog = false;
+                            self.stop_accepting();
+                        }
                     }
+
+                    // Mode label
+                    let mode_label = if self.show_receive_dialog {
+                        "RECEIVE"
+                    } else if self.is_accepting {
+                        "SHARING"
+                    } else {
+                        "SEND"
+                    };
+                    ui.add_space(12.0);
+                    ui.label(RichText::new(mode_label).color(tc.outline).size(11.0));
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         egui::widgets::global_theme_preference_buttons(ui);
-                    });
-                });
-                ui.add_space(4.0);
-            });
 
-        // Controls Panel at the top
-        egui::TopBottomPanel::top("controls_panel")
-            .frame(frame.clone())
-            .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.heading(RichText::new("P2P File Sharing").size(24.0));
-                    ui.label("Easily share files with a secure peer-to-peer connection");
-                    ui.add_space(5.0);
-                });
+                        // Quick-access buttons (desktop only has File>Quit — skip)
+                        ui.add_space(12.0);
 
-                ui.horizontal_centered(|ui| {
-                    let btn = ui.add_sized(
-                        Vec2::new(200.0, 40.0),
-                        egui::Button::new(RichText::new("Choose File").size(16.0).color(Color32::WHITE))
-                            .fill(Color32::from_rgb(50, 150, 200))
-                    );
-
-                    if btn.clicked() {
-                        #[cfg(target_arch = "wasm32")]
-                        self.pick_file(ctx);
-                        #[cfg(not(target_arch = "wasm32"))]
-                        self.pick_file();
-                    }
-
-                    ui.add_space(10.0);
-
-                    let receive_btn = ui.add_sized(
-                        Vec2::new(200.0, 40.0),
-                        egui::Button::new(RichText::new("Receive").size(16.0).color(Color32::WHITE))
-                            .fill(Color32::from_rgb(100, 200, 100))
-                    );
-
-                    if receive_btn.clicked() {
-                        self.show_receive_dialog = !self.show_receive_dialog;
-                    }
-                });
-                ui.add_space(5.0);
-            });
-
-        // Terminal Panel at the bottom (1/3 of screen height)
-        let terminal_height = ctx.screen_rect().height() / 3.0;
-        let terminal_frame = egui::containers::Frame::new()
-            .fill(ctx.style().visuals.window_fill)
-            .inner_margin(20.0)
-            .stroke(ctx.style().visuals.widgets.noninteractive.bg_stroke);
-
-        egui::TopBottomPanel::bottom("terminal_panel")
-            .frame(terminal_frame)
-            .resizable(false)
-            .exact_height(terminal_height)
-            .show(ctx, |ui| {
-                ui.set_width(ui.available_width());
-                ui.heading(RichText::new("📟 Terminal Logs").size(18.0));
-                ui.add_space(5.0);
-                ui.separator();
-                ui.add_space(5.0);
-
-                // Fixed height scrollable area for logs
-                let scroll_height = terminal_height - 100.0; // Reserve space for header and buttons
-                egui::ScrollArea::vertical()
-                    .stick_to_bottom(true)
-                    .max_height(scroll_height)
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        if let Ok(logs) = self.terminal_logs.lock() {
-                            if logs.is_empty() {
-                                ui.label(RichText::new("No logs yet...").italics().color(Color32::GRAY));
-                            } else {
-                                for log in logs.iter() {
-                                    ui.horizontal(|ui| {
-                                        ui.set_width(ui.available_width());
-                                        ui.label(RichText::new(log).code());
-                                    });
-                                }
+                        // Receive toggle
+                        if !self.is_accepting {
+                            let recv_active = self.show_receive_dialog;
+                            let recv_color = if recv_active { tc.secondary } else { tc.outline };
+                            if ui.add(
+                                Button::new(RichText::new("Receive").color(recv_color).size(13.0))
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(Stroke::new(1.0, recv_color))
+                                    .rounding(CornerRadius::same(6))
+                            ).clicked() {
+                                self.show_receive_dialog = !self.show_receive_dialog;
                             }
-                        } else {
-                            ui.label(RichText::new("Error accessing logs").color(Color32::RED));
-                        }
-                    });
-
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("Clear").clicked() {
-                        if let Ok(mut logs) = self.terminal_logs.lock() {
-                            logs.clear();
-                        }
-                    }
-                });
-            });
-
-        egui::CentralPanel::default()
-            .frame(frame)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .show(ui, |ui| {
-
-                // Show receive section if active
-                if self.show_receive_dialog {
-                    ui.add_space(20.0);
-                    ui.group(|ui| {
-                        ui.set_width(ui.available_width());
-                        ui.vertical(|ui| {
-                            // Header
-                            ui.horizontal(|ui| {
-                                ui.add(Label::new(RichText::new("📥").heading()));
-                                ui.heading(RichText::new("Receive File").color(Color32::from_rgb(100, 200, 100)));
-                            });
-
                             ui.add_space(8.0);
-                            ui.separator();
-                            ui.add_space(8.0);
+                        }
 
-                            // Save directory selection
-                            ui.label(RichText::new("Select folder to save files:").strong());
-                            ui.add_space(5.0);
-
-                            ui.horizontal(|ui| {
-                                if let Ok(save_dir) = self.save_directory.lock() {
-                                    if let Some(dir) = save_dir.as_ref() {
-                                        ui.label(RichText::new(format!("📁 {}", dir)).color(Color32::from_rgb(100, 200, 100)));
-                                    } else {
-                                        ui.label(RichText::new("No folder selected").color(Color32::from_rgb(200, 100, 100)));
-                                    }
-                                }
-
+                        // Send / Choose File button
+                        if !self.show_receive_dialog {
+                            if ui.add(
+                                Button::new(RichText::new("Choose File").color(tc.on_primary).strong().size(13.0))
+                                    .fill(tc.primary)
+                                    .rounding(CornerRadius::same(6))
+                            ).clicked() {
+                                #[cfg(target_arch = "wasm32")]
+                                self.pick_file(ctx);
                                 #[cfg(not(target_arch = "wasm32"))]
-                                {
-                                    let select_folder_btn = ui.add(
-                                        Button::new(RichText::new("📂 Select Folder").color(Color32::WHITE))
-                                            .fill(Color32::from_rgb(70, 130, 180))
-                                    );
+                                self.pick_file();
+                            }
+                        }
 
-                                    if select_folder_btn.clicked() {
-                                        use rfd::FileDialog;
-                                        if let Some(folder) = FileDialog::new().pick_folder() {
-                                            if let Ok(mut save_dir) = self.save_directory.lock() {
-                                                *save_dir = Some(folder.to_string_lossy().to_string());
-                                            }
-                                        }
-                                    }
+                        // Desktop File > Quit
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            ui.add_space(12.0);
+                            ui.menu_button("File", |ui| {
+                                if ui.button("Quit").clicked() {
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 }
                             });
+                        }
+                    });
+                });
+            });
 
-                            ui.add_space(10.0);
+        // ── Terminal bar (bottom) ─────────────────────────────────────
+        let terminal_frame = egui::Frame::new()
+            .fill(tc.surface_lowest)
+            .stroke(Stroke::new(1.0, tc.outline_var))
+            .inner_margin(egui::Margin { left: 20, right: 20, top: 0, bottom: 0 });
+        let terminal_height = if self.show_terminal_view { 200.0 } else { 44.0 };
+        egui::TopBottomPanel::bottom("terminal_bar")
+            .exact_height(terminal_height)
+            .frame(terminal_frame)
+            .show(ctx, |ui| {
+                // ── Header row ────────────────────────────────────────
+                ui.horizontal(|ui| {
+                    ui.set_height(44.0);
+                    let chevron = if self.show_terminal_view { "▼" } else { "▲" };
+                    let toggle_label = format!("{} Terminal Output >_", chevron);
+                    if ui.add(
+                        Button::new(RichText::new(toggle_label).color(tc.secondary).monospace().size(12.0))
+                            .fill(Color32::TRANSPARENT)
+                    ).clicked() {
+                        self.show_terminal_view = !self.show_terminal_view;
+                    }
+                    ui.add_space(12.0);
 
-                            ui.label(RichText::new("Enter the shareable link or node hash:").strong());
-                            ui.add_space(10.0);
+                    // Latest log entry (preview when collapsed)
+                    if !self.show_terminal_view {
+                        if let Ok(logs) = self.terminal_logs.lock() {
+                            let msg = logs.last().map(|s| s.as_str()).unwrap_or("No logs yet…");
+                            ui.label(RichText::new(msg).color(tc.outline).monospace().size(12.0));
+                        }
+                    }
 
-                            ui.horizontal(|ui| {
-                                ui.label("Link/Hash:");
-                                ui.text_edit_singleline(&mut self.receive_hash_input);
-                            });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add(
+                            Button::new(RichText::new("Clear").color(tc.outline).monospace().size(12.0))
+                                .fill(Color32::TRANSPARENT)
+                        ).clicked() {
+                            if let Ok(mut logs) = self.terminal_logs.lock() { logs.clear(); }
+                        }
+                    });
+                });
 
-                            ui.add_space(10.0);
-
-                            if let Ok(status) = self.receive_status.lock() {
-                                if !status.is_empty() {
-                                    ui.label(RichText::new(status.as_str()).color(Color32::from_rgb(100, 150, 200)));
-                                    ui.add_space(5.0);
+                // ── Expanded log view ─────────────────────────────────
+                if self.show_terminal_view {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            if let Ok(logs) = self.terminal_logs.lock() {
+                                if logs.is_empty() {
+                                    ui.label(RichText::new("No logs yet…").color(tc.outline_var).monospace().size(12.0));
+                                } else {
+                                    for line in logs.iter() {
+                                        ui.label(RichText::new(line).color(tc.on_surface_var).monospace().size(12.0));
+                                    }
                                 }
                             }
-
-                            ui.horizontal(|ui| {
-                                let is_receiving = self.is_receiving.lock().map(|r| *r).unwrap_or(false);
-                                let has_save_dir = self.save_directory.lock().ok()
-                                    .and_then(|d| d.as_ref().map(|_| true))
-                                    .unwrap_or(false);
-
-                                if !is_receiving {
-                                    let mut connect_btn = ui.add_enabled(
-                                        has_save_dir,
-                                        Button::new(RichText::new("Connect").color(Color32::WHITE))
-                                            .fill(Color32::from_rgb(50, 150, 100))
-                                    );
-
-                                    if !has_save_dir {
-                                        connect_btn = connect_btn.on_hover_text("Please select a folder first");
-                                    }
-
-                                    if connect_btn.clicked() {
-                                        match self.extract_node_id(&self.receive_hash_input) {
-                                            Ok(node_id) => {
-                                                self.start_receiving(ctx, node_id);
-                                            }
-                                            Err(err) => {
-                                                if let Ok(mut status) = self.receive_status.lock() {
-                                                    *status = err;
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if ui.button("Cancel").clicked() {
-                                        self.show_receive_dialog = false;
-                                        self.receive_hash_input.clear();
-                                        if let Ok(mut status) = self.receive_status.lock() {
-                                            status.clear();
-                                        }
-                                    }
-                                } else {
-                                    let refresh_btn = ui.add(
-                                        Button::new(RichText::new("🔄 Refresh Files").text_style(TextStyle::Button).color(Color32::WHITE))
-                                            .fill(Color32::from_rgb(50, 150, 200))
-                                    );
-                                    refresh_btn.clone().on_hover_text("Check for new files from sender");
-
-                                    if refresh_btn.clicked() {
-                                        if let Ok(node_id) = self.extract_node_id(&self.receive_hash_input) {
-                                            self.reconnect_for_files(ctx, node_id);
-                                        }
-                                    }
-
-                                    ui.add_space(5.0);
-
-                                    let stop_btn = ui.add(
-                                        Button::new(RichText::new("⏹ Stop").text_style(TextStyle::Button).color(Color32::WHITE))
-                                            .fill(Color32::from_rgb(200, 100, 100))
-                                    );
-                                    stop_btn.clone().on_hover_text("Stop receiving");
-
-                                    if stop_btn.clicked() {
-                                        self.stop_receiving();
-                                    }
-                                }
-                            });
                         });
-                    });
                 }
+            });
 
-                self.show_file_info(ui);
+        // ── Central content ───────────────────────────────────────────
+        let content_frame = egui::Frame::new()
+            .fill(tc.bg)
+            .inner_margin(egui::Margin { left: 24, right: 24, top: 16, bottom: 16 });
+        egui::CentralPanel::default()
+            .frame(content_frame)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
 
-                // Show shared files section
-                self.show_shared_files(ui, ctx);
+                    if self.show_receive_dialog {
+                        self.show_receive_panel(ui, ctx);
+                        return;
+                    }
 
-                // Show connection status and hash
-                self.show_connection_status(ui);
+                    let has_file = self.picked_file_name.lock().ok()
+                        .and_then(|g| g.clone()).is_some();
+                    let has_shared = self.shared_files.lock().ok()
+                        .map(|g| !g.is_empty()).unwrap_or(false);
 
-                // Show received files section
-                self.show_received_files(ui);
-                    });
+                    if !has_file && !has_shared && !self.is_accepting {
+                        self.show_home_cards(ui, ctx);
+                    } else {
+                        self.show_file_info(ui);
+                        self.show_shared_files(ui, ctx);
+                        self.show_connection_status(ui);
+                    }
+                    self.show_received_files(ui);
+                });
             });
     }
 }
