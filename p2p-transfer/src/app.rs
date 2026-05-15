@@ -1587,8 +1587,6 @@ impl P2PTransfer {
         web_sys::console::log_1(&format!("Download triggered for: {}", file_name).into());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-
     fn show_received_files(&mut self, ui: &mut Ui) {
         let tc = Tc::for_ui(ui);
         if let Ok(files) = self.received_files.lock() {
@@ -2529,6 +2527,24 @@ impl eframe::App for P2PTransfer {
                 ui.set_height(54.0);
                 ui.horizontal_centered(|ui| {
                     ui.label(RichText::new("Syncoxiders").color(tc.primary).strong().size(20.0));
+
+                    let not_at_home = self.show_receive_dialog
+                        || self.is_accepting
+                        || self.picked_file_name.lock().ok().and_then(|g| g.clone()).is_some()
+                        || self.shared_files.lock().ok().map(|g| !g.is_empty()).unwrap_or(false);
+
+                    if not_at_home {
+                        ui.add_space(12.0);
+                        if ui.add(
+                            Button::new(RichText::new("🏠 Home").color(tc.outline).size(13.0))
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::new(1.0, tc.outline_var))
+                                .rounding(CornerRadius::same(6))
+                        ).clicked() {
+                            self.show_receive_dialog = false;
+                            self.stop_accepting();
+                        }
+                    }
 
                     // Mode label
                     let mode_label = if self.show_receive_dialog {
