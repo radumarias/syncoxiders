@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A BLAKE3 hash representing content-addressed data
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct BlobHash(pub [u8; 32]);
 
 impl BlobHash {
@@ -459,7 +459,9 @@ impl BlobCollection {
 }
 
 // Re-export hex for convenience
-mod hex {
+/// Hand-rolled hex codec. `pub(crate)` so `protocol::cap_{to,from}_hex` can reuse it
+/// instead of pulling in the `hex` crate (see CLAUDE.md).
+pub(crate) mod hex {
     const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
 
     pub fn encode(data: &[u8]) -> String {

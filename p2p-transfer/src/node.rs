@@ -498,3 +498,426 @@ async fn connect(
     send_task.await??;
     Ok(())
 }
+
+// ==========================================================================================
+// `Node` — the shipping protocol (design §4.7).
+//
+// It lands beside `EchoNode` on purpose: `app.rs` keeps calling the old type until the app
+// step switches over, so this commit compiles with both present. The integrator deletes
+// `EchoNode`, `Echo` and its ALPN when the app no longer references them.
+// ==========================================================================================
+
+use crate::file_io::SharedFiles;
+use crate::protocol::{cap_from_hex, cap_to_hex, ALPN, CAP_LEN, MAX_WINDOW_MIB};
+use crate::transfer::{
+    default_dc_factory, run_sender, DcFactoryImpl, SenderOptions, TransferProgress,
+};
+use iroh::{RelayMap, RelayMode, RelayUrl, SecretKey};
+use iroh_tickets::endpoint::EndpointTicket;
+use n0_future::time::{timeout, Duration, Instant};
+use tokio::sync::{oneshot, watch};
+use tokio_util::sync::CancellationToken;
+
+/// Context string of the capability derivation. Changing it invalidates every live link.
+const CAP_CONTEXT: &str = "syncoxiders/p2p-transfer cap v1";
+/// How long a finished peer entry stays visible before it is pruned.
+const PEER_LINGER: Duration = Duration::from_secs(30);
+/// Budget for `Endpoint::online()` before a share reports itself offline.
+const ONLINE_TIMEOUT: Duration = Duration::from_secs(15);
+/// Budget for one dial, for callers that bring no options of their own. A receive session
+/// passes its own `ReceiveOptions::connect_timeout`, which is defined from this same value.
+const DIAL_TIMEOUT: Duration = crate::transfer::CONNECT_TIMEOUT;
+/// How long a relay-less node waits for a local address to appear.
+const LOCAL_ADDR_TIMEOUT: Duration = Duration::from_secs(3);
+/// Poll interval while waiting for that address.
+const LOCAL_ADDR_POLL: Duration = Duration::from_millis(100);
+
+/// Which relay infrastructure a node uses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RelayChoice {
+    /// n0's public relays, with their address lookup.
+    N0,
+    /// A self-hosted relay, and no publishing to n0's infrastructure.
+    Custom(RelayUrl),
+    /// No relay at all: LAN and tests.
+    None,
+}
+
+impl RelayChoice {
+    /// `P2P_RELAY_URL` at compile time selects a self-hosted relay; otherwise n0's.
+    pub fn from_env() -> Self {
+        match option_env!("P2P_RELAY_URL") {
+            Some(url) => match url.parse::<RelayUrl>() {
+                Ok(url) => Self::Custom(url),
+                Err(e) => {
+                    log::warn!("P2P_RELAY_URL is not a valid relay URL ({e}); using the default");
+                    Self::N0
+                }
+            },
+            None => Self::N0,
+        }
+    }
+}
+
+/// Why a node could not be bound, addressed or dialled.
+#[derive(Debug)]
+pub enum NodeError {
+    Bind(String),
+    Connect(String),
+    /// The endpoint never came online within its budget.
+    Offline,
+    Ticket(iroh_tickets::ParseError),
+    Relay(String),
+}
+
+impl std::fmt::Display for NodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bind(m) => write!(f, "could not start the node: {m}"),
+            Self::Connect(m) => write!(f, "could not connect: {m}"),
+            Self::Offline => write!(f, "could not reach the network"),
+            Self::Ticket(e) => write!(f, "invalid link: {e}"),
+            Self::Relay(m) => write!(f, "relay error: {m}"),
+        }
+    }
+}
+
+impl std::error::Error for NodeError {}
+
+/// Which receiver sink a QA run wants. `Auto` is the product behaviour.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SinkPref {
+    #[default]
+    Auto,
+    Fsa,
+    Sw,
+    Mem,
+}
+
+/// Everything the URL fragment can carry. Values are client-only and never travel in a query
+/// string: a page's query string reaches the server's own access logs through `Referer`,
+/// while a fragment is never sent to any server.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FragmentParams {
+    pub dev: bool,
+    pub force_relay: bool,
+    pub sink_pref: SinkPref,
+    pub kill_dc_after: Option<u64>,
+    /// `win=<MiB>` in bytes.
+    pub window: Option<u64>,
+    /// The link's access code — a bearer credential, scrubbed from the URL with the ticket.
+    pub cap: Option<[u8; CAP_LEN]>,
+    pub ticket: Option<EndpointTicket>,
+    pub error: Option<String>,
+}
+
+/// One connected peer, as the sender's UI sees it.
+struct PeerEntry {
+    id: EndpointId,
+    progress: watch::Receiver<TransferProgress>,
+    since: Instant,
+    terminal_at: Option<Instant>,
+}
+
+/// The peers currently talking to this node.
+#[derive(Clone, Default)]
+pub struct Peers(Arc<Mutex<Vec<PeerEntry>>>);
+
+impl Peers {
+    /// Record a newly accepted connection.
+    pub fn register(&self, id: EndpointId, progress: watch::Receiver<TransferProgress>) {
+        if let Ok(mut peers) = self.0.lock() {
+            peers.push(PeerEntry {
+                id,
+                progress,
+                since: Instant::now(),
+                terminal_at: None,
+            });
+        }
+    }
+
+    /// Current peers, pruning as it goes: an entry whose session task is gone disappears at
+    /// once, a finished one lingers briefly so the UI can show how it ended.
+    pub fn snapshot(&self) -> Vec<(EndpointId, TransferProgress)> {
+        let Ok(mut peers) = self.0.lock() else {
+            return Vec::new();
+        };
+        let now = Instant::now();
+        let mut out = Vec::with_capacity(peers.len());
+        peers.retain_mut(|entry| {
+            if entry.progress.has_changed().is_err() {
+                log::debug!(
+                    "peer {} pruned after {:?}",
+                    entry.id.fmt_short(),
+                    now.duration_since(entry.since)
+                );
+                return false;
+            }
+            // Decide on the borrow, clone only what survives: this runs every UI frame and a
+            // finished entry carries a `SavedFile` per received file.
+            if entry.progress.borrow().phase.is_terminal() {
+                let terminal_at = *entry.terminal_at.get_or_insert(now);
+                if now.duration_since(terminal_at) > PEER_LINGER {
+                    return false;
+                }
+            }
+            out.push((entry.id, entry.progress.borrow().clone()));
+            true
+        });
+        out
+    }
+}
+
+/// A bound endpoint offering `files` under one fresh key and one fresh capability.
+pub struct Node {
+    endpoint: Endpoint,
+    router: Router,
+    files: SharedFiles,
+    peers: Peers,
+    relay: RelayChoice,
+    cap: [u8; CAP_LEN],
+}
+
+impl Node {
+    /// Bind a node with a **fresh** key, so shares from one person are unlinkable.
+    ///
+    /// The share's capability is derived from that same key with
+    /// `blake3::derive_key(CAP_CONTEXT, secret)`: 128 bits of unpredictable material from a
+    /// CSPRNG draw the node already makes, one-way (a leaked capability never exposes the
+    /// key), deterministic (the link is stable for the life of the share) and needing no
+    /// second RNG dependency on either target. It is never sent to a server and never logged.
+    pub async fn bind(files: SharedFiles, relay: RelayChoice) -> Result<Self, NodeError> {
+        let secret = SecretKey::generate();
+        let cap = derive_cap(&secret);
+        let builder = match &relay {
+            RelayChoice::N0 => Endpoint::builder(presets::N0),
+            RelayChoice::Custom(url) => Endpoint::builder(presets::Minimal)
+                .relay_mode(RelayMode::Custom(RelayMap::from(url.clone()))),
+            RelayChoice::None => {
+                Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
+            }
+        };
+        let endpoint = builder
+            .secret_key(secret)
+            .alpns(vec![ALPN.to_vec()])
+            .bind()
+            .await
+            .map_err(|e| NodeError::Bind(e.to_string()))?;
+
+        let peers = Peers::default();
+        let serve = Serve {
+            files: files.clone(),
+            peers: peers.clone(),
+            opts: SenderOptions::new(cap),
+            dc: default_dc_factory(),
+        };
+        let router = Router::builder(endpoint.clone())
+            .accept(ALPN, serve)
+            .spawn();
+
+        Ok(Self {
+            endpoint,
+            router,
+            files,
+            peers,
+            relay,
+            cap,
+        })
+    }
+
+    pub fn id(&self) -> EndpointId {
+        self.endpoint.id()
+    }
+
+    /// This share's capability. Never log it, never put it in a query string.
+    pub fn cap(&self) -> [u8; CAP_LEN] {
+        self.cap
+    }
+
+    pub fn files(&self) -> SharedFiles {
+        self.files.clone()
+    }
+
+    pub fn peers(&self) -> Vec<(EndpointId, TransferProgress)> {
+        self.peers.snapshot()
+    }
+
+    /// The addressing half of a share link.
+    ///
+    /// With a relay we wait for the endpoint to come online, so the ticket carries a reachable
+    /// relay address. Without one there is nothing to wait for but a local address.
+    pub async fn ticket(&self) -> Result<EndpointTicket, NodeError> {
+        match self.relay {
+            RelayChoice::None => self.local_ticket().await,
+            _ => {
+                timeout(ONLINE_TIMEOUT, self.endpoint.online())
+                    .await
+                    .map_err(|_| NodeError::Offline)?;
+                Ok(EndpointTicket::new(self.endpoint.addr()))
+            }
+        }
+    }
+
+    /// A relay-less share can only be dialled over an IP address, so wait for one to appear.
+    /// In a browser none ever does — there is no dialable local address there — and this
+    /// reports `Offline` on the same deadline as anywhere else, which is why it needs no
+    /// separate wasm body.
+    async fn local_ticket(&self) -> Result<EndpointTicket, NodeError> {
+        let deadline = Instant::now() + LOCAL_ADDR_TIMEOUT;
+        loop {
+            let addr = self.endpoint.addr();
+            if addr.ip_addrs().next().is_some() {
+                return Ok(EndpointTicket::new(addr));
+            }
+            if Instant::now() >= deadline {
+                return Err(NodeError::Offline);
+            }
+            n0_future::time::sleep(LOCAL_ADDR_POLL).await;
+        }
+    }
+
+    /// Dial the endpoint a ticket points at.
+    pub async fn connect(&self, ticket: &EndpointTicket) -> Result<Connection, NodeError> {
+        let addr = ticket.endpoint_addr().clone();
+        timeout(DIAL_TIMEOUT, self.endpoint.connect(addr, ALPN))
+            .await
+            .map_err(|_| NodeError::Connect("timed out".to_string()))?
+            .map_err(|e| NodeError::Connect(e.to_string()))
+    }
+
+    /// Build a share link: `{base}#{[dev&]}{ticket}&cap={32 hex}`.
+    ///
+    /// The ticket's string form never contains `#` or `&`, so the grammar stays unambiguous,
+    /// and the capability token is always last.
+    pub fn link(base_url: &str, ticket: &EndpointTicket, cap: &[u8; CAP_LEN], dev: bool) -> String {
+        let base = base_url.split('#').next().unwrap_or(base_url);
+        let mut link = String::with_capacity(base.len() + 128);
+        link.push_str(base);
+        link.push('#');
+        if dev {
+            link.push_str("dev&");
+        }
+        link.push_str(&ticket.to_string());
+        link.push_str("&cap=");
+        link.push_str(&cap_to_hex(cap));
+        link
+    }
+
+    /// Parse a URL fragment (with or without its leading `#`).
+    ///
+    /// Tokens are separated by `&`, order-insensitive; unknown tokens are ignored. A malformed
+    /// capability or ticket is reported in `error` rather than dropped silently — a truncated
+    /// link must not look like a connectivity failure.
+    pub fn parse_fragment(fragment: &str) -> FragmentParams {
+        let mut params = FragmentParams::default();
+        let fragment = fragment.strip_prefix('#').unwrap_or(fragment);
+        for token in fragment.split('&').filter(|t| !t.is_empty()) {
+            if token == "dev" {
+                params.dev = true;
+            } else if token == "relay" {
+                params.force_relay = true;
+            } else if let Some(value) = token.strip_prefix("sink=") {
+                match value {
+                    "fsa" => params.sink_pref = SinkPref::Fsa,
+                    "sw" => params.sink_pref = SinkPref::Sw,
+                    "mem" => params.sink_pref = SinkPref::Mem,
+                    _ => {}
+                }
+            } else if let Some(value) = token.strip_prefix("killdc=") {
+                params.kill_dc_after = value.parse::<u64>().ok();
+            } else if let Some(value) = token.strip_prefix("win=") {
+                params.window = value
+                    .parse::<u64>()
+                    .ok()
+                    .map(|mib| mib.clamp(1, MAX_WINDOW_MIB) * 1024 * 1024);
+            } else if let Some(value) = token.strip_prefix("cap=") {
+                params.cap = cap_from_hex(value);
+                if params.cap.is_none() {
+                    params
+                        .error
+                        .get_or_insert_with(|| "bad access code".to_string());
+                }
+            } else if token.starts_with("endpoint") {
+                match token.parse::<EndpointTicket>() {
+                    Ok(ticket) => params.ticket = Some(ticket),
+                    Err(_) => {
+                        params.error.get_or_insert_with(|| {
+                            "this link is not a valid share link".to_string()
+                        });
+                    }
+                }
+            }
+        }
+        params
+    }
+
+    /// Stop serving. Idempotent, and takes `&self` because both the app and the sessions hold
+    /// the same `Arc<Node>`.
+    pub async fn shutdown(&self) {
+        if let Err(e) = self.router.shutdown().await {
+            log::debug!("router shutdown: {e}");
+        }
+        self.endpoint.close().await;
+    }
+}
+
+/// Derive a share's capability from its secret key (design §4.7).
+fn derive_cap(secret: &SecretKey) -> [u8; CAP_LEN] {
+    let derived = blake3::derive_key(CAP_CONTEXT, &secret.to_bytes());
+    let mut cap = [0u8; CAP_LEN];
+    cap.copy_from_slice(&derived[..CAP_LEN]);
+    cap
+}
+
+/// The protocol handler behind this node's ALPN: one sender session per accepted connection.
+#[derive(Clone)]
+struct Serve {
+    files: SharedFiles,
+    peers: Peers,
+    opts: SenderOptions,
+    dc: DcFactoryImpl,
+}
+
+// Hand-written so the capability inside `SenderOptions` can never reach a log line through a
+// `Debug`-printed handler.
+impl std::fmt::Debug for Serve {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Serve")
+            .field("opts", &self.opts)
+            .field("dc", &self.dc)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ProtocolHandler for Serve {
+    async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
+        let id = connection.remote_id();
+        // One snapshot per connection: a file added later shows up in the next connection's
+        // manifest, and this session's view can never change under it.
+        let snapshot = Arc::new(
+            self.files
+                .lock()
+                .map_err(|_| {
+                    AcceptError::from(std::io::Error::other("the shared file list is unavailable"))
+                })?
+                .clone(),
+        );
+        let (progress_tx, progress_rx) = watch::channel(TransferProgress::connecting());
+        self.peers.register(id, progress_rx);
+
+        let (done_tx, done_rx) = oneshot::channel();
+        let cancel = CancellationToken::new();
+        let (opts, dc) = (self.opts.clone(), self.dc.clone());
+        // `accept` must return a `Send` future even on wasm, where the session holds JS
+        // handles: spawning the session and awaiting its result over a channel is what keeps
+        // this signature satisfiable on both targets.
+        let _task = task::spawn(async move {
+            let result = run_sender(connection, snapshot, progress_tx, cancel, opts, dc).await;
+            done_tx.send(result).ok();
+        });
+        done_rx
+            .await
+            .map_err(AcceptError::from_err)?
+            .map_err(AcceptError::from_err)
+    }
+}
