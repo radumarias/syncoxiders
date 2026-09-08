@@ -1,3 +1,6 @@
 # It's recommended to set the flag on a per-target basis:
 [target.wasm32-unknown-unknown]
-rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+# +simd128: blake3's `wasm32_simd` feature needs it.
+# web_sys_unstable_apis: `Window::show_save_file_picker*` / `SaveFilePickerOptions`
+# are still behind that cfg in web-sys 0.3.104.
+rustflags = ["-C", "target-feature=+simd128", "--cfg=web_sys_unstable_apis"]

@@ -11,9 +11,4 @@ pub use app::P2PTransfer;
 pub use blob_store::{Blob, BlobCollection, BlobHash, BlobInfo, BlobStore};
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use blob_store::{
-    BaoBlob,
-    BaoStore,
-    BaoReceiver,
-    BLOCK_SIZE,
-};
+pub use blob_store::{BaoBlob, BaoReceiver, BaoStore, BLOCK_SIZE};

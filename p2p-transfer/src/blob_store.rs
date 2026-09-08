@@ -1,8 +1,8 @@
 //! Content-addressed blob storage using BLAKE3 Bao tree hashing.
 
 use anyhow::Result;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// A BLAKE3 hash representing content-addressed data
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -24,7 +24,10 @@ impl BlobHash {
     pub fn from_hex(s: &str) -> Result<Self> {
         let bytes = hex::decode(s)?;
         if bytes.len() != 32 {
-            anyhow::bail!("Invalid hash length: expected 32 bytes, got {}", bytes.len());
+            anyhow::bail!(
+                "Invalid hash length: expected 32 bytes, got {}",
+                bytes.len()
+            );
         }
         let mut arr = [0u8; 32];
         arr.copy_from_slice(&bytes);
@@ -106,7 +109,11 @@ impl BlobStore {
 
     /// Check if a blob exists
     pub fn contains(&self, hash: &BlobHash) -> bool {
-        self.blobs.lock().ok().map(|s| s.contains_key(hash)).unwrap_or(false)
+        self.blobs
+            .lock()
+            .ok()
+            .map(|s| s.contains_key(hash))
+            .unwrap_or(false)
     }
 
     /// List all blobs in the store
@@ -144,7 +151,11 @@ impl BlobStore {
         self.blobs
             .lock()
             .ok()
-            .map(|s| s.values().map(|b| (b.info.name.clone(), b.data.clone())).collect())
+            .map(|s| {
+                s.values()
+                    .map(|b| (b.info.name.clone(), b.data.clone()))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 }
@@ -153,11 +164,7 @@ impl BlobStore {
 #[cfg(not(target_arch = "wasm32"))]
 pub mod bao {
     use super::*;
-    use bao_tree::{
-        BaoTree,
-        BlockSize,
-        io::outboard::PreOrderMemOutboard,
-    };
+    use bao_tree::{io::outboard::PreOrderMemOutboard, BaoTree, BlockSize};
 
     /// Block size for Bao tree (16KB chunks like iroh-blobs)
     pub const BLOCK_SIZE: BlockSize = BlockSize::from_chunk_log(4); // 2^4 * 1024 = 16KB
@@ -220,7 +227,7 @@ pub mod bao {
         pub fn verify_chunk(&self, index: u64, chunk_data: &[u8]) -> bool {
             let chunk_size = BLOCK_SIZE.bytes() as u64;
             let start = index * chunk_size;
-            let end = std::cmp::min(start + chunk_size as u64, self.data.len() as u64);
+            let end = std::cmp::min(start + chunk_size, self.data.len() as u64);
 
             if start >= self.data.len() as u64 {
                 return false;
@@ -267,7 +274,11 @@ pub mod bao {
 
         /// Check if blob exists
         pub fn contains(&self, hash: &BlobHash) -> bool {
-            self.blobs.lock().ok().map(|s| s.contains_key(hash)).unwrap_or(false)
+            self.blobs
+                .lock()
+                .ok()
+                .map(|s| s.contains_key(hash))
+                .unwrap_or(false)
         }
 
         /// List all blobs
@@ -275,11 +286,15 @@ pub mod bao {
             self.blobs
                 .lock()
                 .ok()
-                .map(|s| s.values().map(|b| BlobInfo {
-                    hash: b.hash,
-                    size: b.data.len() as u64,
-                    name: b.name.clone(),
-                }).collect())
+                .map(|s| {
+                    s.values()
+                        .map(|b| BlobInfo {
+                            hash: b.hash,
+                            size: b.data.len() as u64,
+                            name: b.name.clone(),
+                        })
+                        .collect()
+                })
                 .unwrap_or_default()
         }
 
@@ -310,7 +325,7 @@ pub mod bao {
         /// Create a new receiver for a blob
         pub fn new(expected_hash: BlobHash, expected_size: u64) -> Self {
             let chunk_size = BLOCK_SIZE.bytes() as u64;
-            let total_chunks = (expected_size + chunk_size - 1) / chunk_size;
+            let total_chunks = expected_size.div_ceil(chunk_size);
             BaoReceiver {
                 expected_hash,
                 expected_size,
@@ -384,7 +399,7 @@ pub mod bao {
 
 /// Re-export Bao types on native
 #[cfg(not(target_arch = "wasm32"))]
-pub use bao::{BaoBlob, BaoStore, BaoReceiver, BLOCK_SIZE};
+pub use bao::{BaoBlob, BaoReceiver, BaoStore, BLOCK_SIZE};
 
 /// Collection of blob hashes for a transfer session
 #[derive(Debug, Clone, Default)]
@@ -457,7 +472,7 @@ mod hex {
     }
 
     pub fn decode(s: &str) -> Result<Vec<u8>, anyhow::Error> {
-        if s.len() % 2 != 0 {
+        if !s.len().is_multiple_of(2) {
             anyhow::bail!("Invalid hex string length");
         }
         let mut result = Vec::with_capacity(s.len() / 2);
