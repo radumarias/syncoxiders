@@ -12,6 +12,7 @@ use bytes::Bytes;
 use js_sys::Uint8Array;
 use send_wrapper::SendWrapper;
 use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::JsFuture;
 use web_sys::{Blob, BlobPropertyBag, HtmlAnchorElement, Url};
 
 use crate::file_io::{sanitize_name, AnySink, MemSink, SavedFile, Sink, SinkError, Source};
@@ -49,8 +50,33 @@ impl Source for WebFileSource {
     }
 
     fn read(&mut self, offset: u64, len: usize) -> impl Future<Output = io::Result<Bytes>> {
-        let _ = (&*self.file, offset, len);
-        async move { Err(io::Error::other(NOT_YET)) }
+        // Clamped against the size recorded when the file was picked, so a read at or past EOF
+        // comes back empty instead of erroring -- `hash_source` and the send loop both treat an
+        // empty read as the end of the file.
+        let start = offset.min(self.size);
+        let end = start.saturating_add(len as u64).min(self.size);
+
+        // `slice` is synchronous and cheap (it only records a range), so it happens here rather
+        // than in the future: the future then owns the `Blob` and borrows nothing from `self`.
+        // f64 offsets, not i32, because these files run past 2 GiB.
+        let slice = self
+            .file
+            .slice_with_f64_and_f64(start as f64, end as f64)
+            .map_err(|e| io::Error::other(format!("could not slice the file: {e:?}")));
+
+        async move {
+            let blob = slice?;
+            // The only whole-file buffer is this one slice: at most `len` bytes, which the
+            // callers cap at 1 MiB (hashing) or the negotiated chunk budget (sending).
+            let buffer = JsFuture::from(blob.array_buffer()).await.map_err(|e| {
+                // A `File` whose underlying bytes changed after the user picked it rejects here
+                // rather than returning short. The snapshot check in `open_source` catches that
+                // between transfers; this is the mid-read case, and it stays a plain read error
+                // until the sender's error classification is confirmed for it.
+                io::Error::other(format!("could not read the file: {e:?}"))
+            })?;
+            Ok(Bytes::from(Uint8Array::new(&buffer).to_vec()))
+        }
     }
 }
 
