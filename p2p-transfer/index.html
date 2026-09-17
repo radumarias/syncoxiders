@@ -148,7 +148,14 @@
                     }
                 });
             } else {
-                window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
+                // Start before Save can be clicked. The streaming sink waits for
+                // this exact registration to control the page, including first visit.
+                window.p2pServiceWorkerRegistration = navigator.serviceWorker.register(
+                    new URL('sw.js', document.baseURI), { scope: new URL('.', document.baseURI).href }
+                );
+                // Keep the rejected promise for actionable sink errors, without
+                // an unhandled rejection when the user never starts a download.
+                window.p2pServiceWorkerRegistration.catch(error => console.warn('Service worker unavailable:', error));
             }
         }
     </script>
