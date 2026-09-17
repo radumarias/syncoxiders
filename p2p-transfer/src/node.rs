@@ -518,6 +518,11 @@ use n0_future::time::{timeout, Duration, Instant};
 use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
+/// What the user is told when a fragment carried something unusable instead of a ticket.
+const DAMAGED_LINK: &str = "this link is damaged; ask the sender to copy it again";
+/// ...and when it carried an access code but no ticket at all.
+const INCOMPLETE_LINK: &str = "this link is incomplete; ask the sender for the full link";
+
 /// Context string of the capability derivation. Changing it invalidates every live link.
 const CAP_CONTEXT: &str = "syncoxiders/p2p-transfer cap v1";
 /// How long a finished peer entry stays visible before it is pruned.
@@ -805,11 +810,21 @@ impl Node {
 
     /// Parse a URL fragment (with or without its leading `#`).
     ///
-    /// Tokens are separated by `&`, order-insensitive; unknown tokens are ignored. A malformed
-    /// capability or ticket is reported in `error` rather than dropped silently — a truncated
-    /// link must not look like a connectivity failure.
+    /// Tokens are separated by `&` and are order-insensitive. What an unrecognised token means
+    /// depends on whether a ticket was found:
+    ///
+    /// * a ticket parsed → unknown tokens are ignored, so a link written by a later version
+    ///   still opens here;
+    /// * no ticket, and something was there that is not a known flag → the link is damaged (a
+    ///   truncated or re-wrapped paste), and says so instead of looking like a network fault
+    ///   several seconds later;
+    /// * no ticket but an access code → the link is incomplete: only half of it was copied.
+    ///
+    /// Only known flags (a bare `#dev`) is not an error — it is simply not a receive link.
+    /// No message ever echoes the offending token: a mangled capability is still a secret.
     pub fn parse_fragment(fragment: &str) -> FragmentParams {
         let mut params = FragmentParams::default();
+        let mut unrecognised = false;
         let fragment = fragment.strip_prefix('#').unwrap_or(fragment);
         for token in fragment.split('&').filter(|t| !t.is_empty()) {
             if token == "dev" {
@@ -837,15 +852,19 @@ impl Node {
                         .error
                         .get_or_insert_with(|| "bad access code".to_string());
                 }
-            } else if token.starts_with("endpoint") {
-                match token.parse::<EndpointTicket>() {
-                    Ok(ticket) => params.ticket = Some(ticket),
-                    Err(_) => {
-                        params.error.get_or_insert_with(|| {
-                            "this link is not a valid share link".to_string()
-                        });
-                    }
-                }
+            } else if let Ok(ticket) = token.parse::<EndpointTicket>() {
+                params.ticket = Some(ticket);
+            } else {
+                unrecognised = true;
+            }
+        }
+        if params.ticket.is_none() {
+            if unrecognised {
+                params.error.get_or_insert_with(|| DAMAGED_LINK.to_string());
+            } else if params.cap.is_some() {
+                params
+                    .error
+                    .get_or_insert_with(|| INCOMPLETE_LINK.to_string());
             }
         }
         params
