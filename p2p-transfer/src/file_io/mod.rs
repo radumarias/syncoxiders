@@ -5,8 +5,8 @@
 //! `async fn` so that a publicly reachable trait does not trip `async_fn_in_trait`, and so no
 //! `Send` bound leaks in — JS futures on wasm are not `Send`.
 //!
-//! Native file bodies (`FsSource`, `FsSink`) and the wasm bodies in [`web`] are filled in a
-//! later step; their signatures are frozen here.
+//! Native files use per-session handles and same-directory staging. Bulk filesystem I/O
+//! runs on Tokio's blocking pool, not on the async executor.
 
 use std::future::Future;
 use std::io;
@@ -27,6 +27,20 @@ const MAX_NAME_BYTES: usize = 255;
 const FALLBACK_NAME: &str = "file.bin";
 /// Read granularity of [`hash_source`].
 const HASH_READ: usize = 1024 * 1024;
+/// Upper bound of a single source read, independent of the transport's chunk size.
+pub(crate) const MAX_SOURCE_READ: usize = 4 * 1024 * 1024;
+
+/// Clamp before converting to `usize`: a remaining length of 4 GiB must not become zero
+/// on wasm32. Zero-length reads and offsets at or beyond the captured EOF are empty.
+pub(crate) fn read_length(size: u64, offset: u64, len: usize) -> io::Result<usize> {
+    if len > MAX_SOURCE_READ {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "source reads are limited to 4 MiB",
+        ));
+    }
+    Ok(size.saturating_sub(offset).min(len as u64) as usize)
+}
 
 /// One file this node offers, as metadata plus a handle — never bytes.
 #[derive(Clone, Debug)]
@@ -80,6 +94,7 @@ pub enum FileOrigin {
 pub trait Source {
     fn size(&self) -> u64;
     /// Exactly `len` bytes at `offset` unless EOF truncates. Never more than 4 MiB per call.
+    /// Requests larger than 4 MiB are rejected; truncation of a captured file is an error.
     fn read(&mut self, offset: u64, len: usize) -> impl Future<Output = io::Result<Bytes>>;
 }
 
@@ -251,32 +266,35 @@ impl Sink for AnySink {
 /// Re-validates `snapshot` before returning; a file that changed since it was hashed is
 /// [`io::ErrorKind::InvalidData`], never a stale read.
 pub async fn open_source(origin: &FileOrigin, snapshot: &FileSnapshot) -> io::Result<AnySource> {
-    // One policy for every origin: take the current snapshot, compare it the same way, then
-    // open. The platforms differ only in how a snapshot is taken, which is `snapshot_of`.
-    if !snapshot.matches(&snapshot_of(origin)?) {
+    let (source, current) = match origin {
+        #[cfg(not(target_arch = "wasm32"))]
+        FileOrigin::Path(path) => {
+            let path = path.clone();
+            let source = tokio::task::spawn_blocking(move || FsSource::open(&path))
+                .await
+                .map_err(io::Error::other)??;
+            // Inspect the opened handle, not the path before opening it: a rename between
+            // metadata(path) and open(path) must not defeat the snapshot check.
+            let current = source.snapshot;
+            (AnySource::Fs(source), current)
+        }
+        #[cfg(target_arch = "wasm32")]
+        FileOrigin::Web(file) => (
+            AnySource::Web(web::WebFileSource::new((**file).clone())),
+            snapshot_web(file),
+        ),
+        FileOrigin::Memory(bytes) => (
+            AnySource::Mem(MemSource::new(bytes.clone())),
+            FileSnapshot {
+                size: bytes.len() as u64,
+                modified_ms: None,
+            },
+        ),
+    };
+    if !snapshot.matches(&current) {
         return Err(changed_file());
     }
-    match origin {
-        #[cfg(not(target_arch = "wasm32"))]
-        FileOrigin::Path(path) => FsSource::open(path).map(AnySource::Fs),
-        #[cfg(target_arch = "wasm32")]
-        FileOrigin::Web(file) => Ok(AnySource::Web(web::WebFileSource::new((**file).clone()))),
-        FileOrigin::Memory(bytes) => Ok(AnySource::Mem(MemSource::new(bytes.clone()))),
-    }
-}
-
-/// What this origin looks like right now — the platform-specific half of the change check.
-fn snapshot_of(origin: &FileOrigin) -> io::Result<FileSnapshot> {
-    match origin {
-        #[cfg(not(target_arch = "wasm32"))]
-        FileOrigin::Path(path) => snapshot_path(path),
-        #[cfg(target_arch = "wasm32")]
-        FileOrigin::Web(file) => Ok(snapshot_web(file)),
-        FileOrigin::Memory(bytes) => Ok(FileSnapshot {
-            size: bytes.len() as u64,
-            modified_ms: None,
-        }),
-    }
+    Ok(source)
 }
 
 /// The one error text the sender turns into a file-scoped `Error` frame.
@@ -299,10 +317,19 @@ pub async fn hash_source<S: Source>(
     let mut hasher = blake3::Hasher::new();
     let mut offset = 0u64;
     while offset < size {
-        let want = HASH_READ.min((size - offset) as usize);
+        let want = read_length(size, offset, HASH_READ)?;
         let chunk = src.read(offset, want).await?;
         if chunk.is_empty() {
-            break;
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "source ended before its declared size",
+            ));
+        }
+        if chunk.len() > want {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "source returned more bytes than requested",
+            ));
         }
         hasher.update(&chunk);
         offset += chunk.len() as u64;
@@ -340,15 +367,20 @@ pub fn sanitize_name(name: &str) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn snapshot_path(path: &std::path::Path) -> io::Result<FileSnapshot> {
     let meta = std::fs::metadata(path)?;
+    Ok(snapshot_metadata(&meta))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn snapshot_metadata(meta: &std::fs::Metadata) -> FileSnapshot {
     let modified_ms = meta
         .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64);
-    Ok(FileSnapshot {
+    FileSnapshot {
         size: meta.len(),
         modified_ms,
-    })
+    }
 }
 
 /// Snapshot a picked browser file. `File` freezes both values at pick time.
@@ -360,44 +392,149 @@ pub fn snapshot_web(file: &web_sys::File) -> FileSnapshot {
     }
 }
 
-/// Native file source. Body arrives with the streaming step; the signature is frozen here.
+/// A per-session native handle, with the size captured when it was opened.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct FsSource {
-    size: u64,
+    file: Arc<Mutex<std::fs::File>>,
+    snapshot: FileSnapshot,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl FsSource {
     pub fn open(path: &std::path::Path) -> io::Result<Self> {
-        let _ = path;
-        Err(io::Error::other("native file source not yet implemented"))
+        let file = std::fs::File::open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "source is not a regular file",
+            ));
+        }
+        Ok(Self {
+            file: Arc::new(Mutex::new(file)),
+            snapshot: snapshot_metadata(&metadata),
+        })
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Source for FsSource {
     fn size(&self) -> u64 {
-        self.size
+        self.snapshot.size
     }
 
-    fn read(&mut self, offset: u64, len: usize) -> impl Future<Output = io::Result<Bytes>> {
-        let _ = (self.size, offset, len);
-        async move { Err(io::Error::other("native file source not yet implemented")) }
+    async fn read(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
+        let len = read_length(self.size(), offset, len)?;
+        if len == 0 {
+            return Ok(Bytes::new());
+        }
+        let file = self.file.clone();
+        tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Seek, SeekFrom};
+            // Seeking and reading under one lock works on Unix and Windows. If a read
+            // future is cancelled, its blocking job completes before the next seek.
+            let mut file = file.lock().map_err(|_| io::Error::other("source lock poisoned"))?;
+            file.seek(SeekFrom::Start(offset))?;
+            let mut bytes = vec![0; len];
+            file.read_exact(&mut bytes)?;
+            Ok(Bytes::from(bytes))
+        })
+        .await
+        .map_err(io::Error::other)?
     }
 }
 
-/// Native file sink. Writes to `name.part` and renames on finish; body arrives with the
-/// streaming step.
+/// Native staging sink. Only `finish`, called after the engine verifies length and hash,
+/// publishes the file. Publication uses a hard link, never a rename that can overwrite.
+///
+/// The destination directory must support hard links (e.g. NTFS, ext4, APFS; not FAT).
+/// Staging is in that same directory, so publication cannot cross filesystems. Names are
+/// private until finish, but this is not a crash-recovery journal: process death may leave
+/// a `.p2p-*.part` file, and directory entries are not fsynced for power-loss durability.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct FsSink {
+    stage: Arc<Mutex<StagingFile>>,
+    dir: std::path::PathBuf,
+    name: String,
     written: u64,
+    ready: bool,
+}
+
+/// The last owner closes the handle before unlinking, including when a cancelled blocking
+/// job outlives its sink. Closing first matters on Windows.
+#[cfg(not(target_arch = "wasm32"))]
+struct StagingFile {
+    file: Option<std::fs::File>,
+    path: std::path::PathBuf,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for StagingFile {
+    fn drop(&mut self) {
+        drop(self.file.take());
+        if let Err(error) = std::fs::remove_file(&self.path) {
+            if error.kind() != io::ErrorKind::NotFound {
+                log::warn!("could not remove staging file {}: {error}", self.path.display());
+            }
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl FsSink {
+    const COLLISION_ATTEMPTS: u32 = 1024;
+
     pub fn create(dir: &std::path::Path, name: &str) -> io::Result<Self> {
-        let _ = (dir, name);
-        Err(io::Error::other("native file sink not yet implemented"))
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_STAGE: AtomicU64 = AtomicU64::new(0);
+
+        let dir = dir.canonicalize()?;
+        let name = sanitize_name(name);
+        for _ in 0..Self::COLLISION_ATTEMPTS {
+            // Independent of the peer's name: even a 255-byte name leaves room for staging.
+            let id = NEXT_STAGE.fetch_add(1, Ordering::Relaxed);
+            let path = dir.join(format!(".p2p-{}-{id}.part", std::process::id()));
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&path) {
+                Ok(file) => {
+                    return Ok(Self {
+                        stage: Arc::new(Mutex::new(StagingFile { file: Some(file), path })),
+                        dir,
+                        name,
+                        written: 0,
+                        ready: true,
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(io::Error::new(io::ErrorKind::AlreadyExists, "too many staging name collisions"))
+    }
+
+    fn final_name(&self, attempt: u32) -> String {
+        if attempt == 0 {
+            return self.name.clone();
+        }
+        let suffix = format!(" ({attempt})");
+        let mut end = self.name.len().min(MAX_NAME_BYTES - suffix.len());
+        while !self.name.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}{suffix}", &self.name[..end])
+    }
+
+    fn check_ready(&self) -> io::Result<()> {
+        if !self.ready {
+            return Err(io::Error::other("sink write failed or was cancelled; abort this sink"));
+        }
+        Ok(())
     }
 }
 
@@ -407,16 +544,68 @@ impl Sink for FsSink {
         self.written
     }
 
-    fn write(&mut self, data: &[u8]) -> impl Future<Output = io::Result<()>> {
-        let _ = (self.written, data);
-        async move { Err(io::Error::other("native file sink not yet implemented")) }
+    async fn write(&mut self, data: &[u8]) -> io::Result<()> {
+        self.check_ready()?;
+        let written = self.written.checked_add(data.len() as u64)
+            .ok_or_else(|| io::Error::other("sink byte count overflow"))?;
+        self.ready = false;
+        let stage = self.stage.clone();
+        let data = data.to_vec();
+        tokio::task::spawn_blocking(move || {
+            use std::io::Write;
+            let mut stage = stage.lock().map_err(|_| io::Error::other("sink lock poisoned"))?;
+            stage.file.as_mut().ok_or_else(|| io::Error::other("sink is closed"))?
+                .write_all(&data)
+        })
+        .await
+        .map_err(io::Error::other)??;
+        self.written = written;
+        self.ready = true;
+        Ok(())
     }
 
     async fn finish(self) -> io::Result<SavedFile> {
-        Err(io::Error::other("native file sink not yet implemented"))
+        self.check_ready()?;
+        let stage = self.stage.clone();
+        tokio::task::spawn_blocking(move || {
+            let stage = stage.lock().map_err(|_| io::Error::other("sink lock poisoned"))?;
+            stage.file.as_ref().ok_or_else(|| io::Error::other("sink is closed"))?.sync_all()
+        })
+        .await
+        .map_err(io::Error::other)??;
+
+        // No await after this point: a cancelled flush future can only clean up, never
+        // publish later from a detached blocking job. Only short namespace operations run
+        // here; bulk writes and flushing have already completed on the blocking pool.
+        let mut stage = self.stage.lock().map_err(|_| io::Error::other("sink lock poisoned"))?;
+        drop(stage.file.take());
+        for attempt in 0..Self::COLLISION_ATTEMPTS {
+            let name = self.final_name(attempt);
+            let path = self.dir.join(&name);
+            match std::fs::hard_link(&stage.path, &path) {
+                Ok(()) => {
+                    return Ok(SavedFile {
+                        name,
+                        size: self.written,
+                        location: path.to_string_lossy().into_owned(),
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(io::Error::new(io::ErrorKind::AlreadyExists, "too many destination name collisions"))
     }
 
-    async fn abort(self) {}
+    async fn abort(self) {
+        // Await outstanding writes before unlinking. Dropping this future is also safe:
+        // the blocking job holds the last owner until it can close and remove the file.
+        let stage = self.stage;
+        let _ = tokio::task::spawn_blocking(move || {
+            drop(stage.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+            drop(stage);
+        }).await;
+    }
 }
 
 /// In-memory source: tests, and tiny files.
@@ -433,11 +622,10 @@ impl Source for MemSource {
         self.0.len() as u64
     }
 
-    fn read(&mut self, offset: u64, len: usize) -> impl Future<Output = io::Result<Bytes>> {
-        let start = offset.min(self.0.len() as u64) as usize;
-        let end = (start + len).min(self.0.len());
-        let slice = self.0.slice(start..end);
-        async move { Ok(slice) }
+    async fn read(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
+        let len = read_length(self.size(), offset, len)?;
+        let start = offset.min(self.size()) as usize;
+        Ok(self.0.slice(start..start + len))
     }
 }
 
