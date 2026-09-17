@@ -1017,7 +1017,11 @@ async fn serve_file<C: FrameTx, D: FrameTx>(job: ServeJob<C, D>) -> ServeOutcome
     // Constant for the life of this serve: the transport's frame size does not move under it.
     let budget = max_payload(frame_size, tx.is_length_prefixed());
     if budget == 0 && offset < size {
-        return file_error(index, epoch, "this transport cannot carry a chunk".to_string());
+        return file_error(
+            index,
+            epoch,
+            "this transport cannot carry a chunk".to_string(),
+        );
     }
 
     // The name, index and totals never change while one file is being served, so they are
@@ -2285,12 +2289,9 @@ async fn handle_frame<T: FrameTx>(
             // The flow-control point: this returns only once the sink has taken the bytes.
             // Only cancellation and the write deadline stay live during it; the other arms
             // resume afterwards, delayed by at most one bounded write.
-            tokio::select! {
-                biased;
-                _ = cancel.cancelled() => return Err(TransferError::Cancelled),
-                _ = sleep(opts.write_deadline) => return Err(TransferError::Timeout),
-                written = sink.write(payload) => written.map_err(|e| TransferError::Io(e.to_string()))?,
-            }
+            bounded(cancel, opts.write_deadline, sink.write(payload))
+                .await?
+                .map_err(|e| TransferError::Io(e.to_string()))?;
 
             file.hasher.update(payload);
             let len = payload.len() as u64;
@@ -2372,12 +2373,9 @@ async fn handle_frame<T: FrameTx>(
                 .as_mut()
                 .and_then(|sinks| sinks[index as usize].take());
             if let Some(sink) = sink {
-                let saved = tokio::select! {
-                    biased;
-                    _ = cancel.cancelled() => return Err(TransferError::Cancelled),
-                    _ = sleep(opts.write_deadline) => return Err(TransferError::Timeout),
-                    finished = sink.finish() => finished.map_err(|e| TransferError::Io(e.to_string()))?,
-                };
+                let saved = bounded(cancel, opts.write_deadline, sink.finish())
+                    .await?
+                    .map_err(|e| TransferError::Io(e.to_string()))?;
                 log::debug!("file {index} verified and saved to {}", saved.location);
                 state.saved.push(saved);
             }
