@@ -1,55 +1,96 @@
-# CLAUDE.md
+# p2p-transfer contributor guide
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Project
 
-## Project context
+`p2p-transfer` is an `eframe`/`egui` application for native and browser file
+transfer. Upstream iroh 1.1 supplies authenticated endpoints, share tickets,
+signalling, and the relay transport. Browser-to-browser WebRTC data transfer is
+the next transport step; `src/webrtc.rs` currently advertises it as unavailable,
+so browser transfers use iroh's encrypted relay path.
 
-`p2p-transfer` is a Rust browser-and-native peer-to-peer file transfer app built on `eframe`/`egui` (UI) and a forked `iroh` (P2P transport with WebRTC relay so it works in the browser). It is one crate in the parent `syncoxiders` Cargo workspace (`../Cargo.toml`), and is the workspace's `default-members`, so workspace-level `cargo` commands target this crate by default.
+The parent Cargo workspace has `p2p-transfer` as its default member.
+`README.md` is inherited `eframe_template` material, not project documentation.
 
-The `README.md` is the unmodified upstream `eframe_template` README — treat it as boilerplate, not as documentation for this project.
+## Toolchain and commands
 
-## Toolchain and build targets
+`rust-toolchain` is in this directory and pins nightly with `rustfmt`, `clippy`,
+and `wasm32-unknown-unknown`. Run commands from `p2p-transfer/`; running Cargo
+from the workspace root may select the user's stable toolchain instead.
 
-- `rust-toolchain` pins **nightly** with `rustfmt`, `clippy`, and the `wasm32-unknown-unknown` target preinstalled. Do not switch to stable.
-- Two build targets matter and behave differently:
-  - **Native** (`x86_64-unknown-linux-gnu` etc.): full feature set, including `bao-tree` merkle verification and a tokio runtime with net features.
-  - **WASM** (`wasm32-unknown-unknown`): tokio is reduced to `default-features = false, features = ["io-util", "macros", "sync", "rt"]` (no `net`) on purpose — iroh's net features do not compile to WASM. `bao-tree` is **native-only** and gated with `#[cfg(not(target_arch = "wasm32"))]`. `.cargo/config.toml` adds `--cfg getrandom_backend="wasm_js"` for wasm32 — required by `getrandom 0.3` to compile to wasm.
-- `[patch.crates-io]` in both this `Cargo.toml` and the workspace root pins forks of `iroh`, `n0-watcher`, `netwatch`, and `portmapper` (`anchalshivank/*` branches) that add WebRTC/WASM support. Don't naively bump those dependencies — the upstream crates do not yet compile to WASM in this configuration.
+- `cargo run --release` — native desktop app.
+- `trunk serve` — browser build at `http://127.0.0.1:8080`.
+- `trunk build` — static `dist/`.
+- `./check.sh` — required gate: native and wasm checks, fmt, clippy with
+  `-D warnings` on both targets, tests, doctests, and `trunk build`.
+- `cargo test <substring>` — run a focused unit test.
 
-## Common commands
+There must be one workspace `../Cargo.lock`. A gitignored
+`p2p-transfer/Cargo.lock` is stale local state and can make Trunk run a
+wasm-bindgen CLI version different from the workspace dependency.
 
-Run from this crate's directory unless noted.
+## Browser development
 
-- `cargo run --release` — run the native desktop app (egui window, 400x300).
-- `trunk serve` — build WASM and serve at `http://127.0.0.1:8080`. Use `http://127.0.0.1:8080/index.html#dev` to bypass the service-worker cache during development (`assets/sw.js` aggressively caches the build).
-- `trunk build --release` — produce static `dist/` for deployment.
-- `./check.sh` — runs the full CI gate locally: `cargo check` (native + wasm lib), `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, doctests, and `trunk build`. **Match this before claiming a change is done** — clippy is `-D warnings` so any warning fails CI.
-- `cargo test --workspace --all-targets --all-features` — full test run (native).
-- `cargo test --test <name>` is **not** how individual tests are run here — there are no `tests/` integration files; tests live in `src/tests.rs` and `src/blob_store.rs#tests`. Use `cargo test <substring>` to filter, e.g. `cargo test local_test_blob_store` or `cargo test online_test_small_file_transfer -- --nocapture`.
-- `cargo check --target wasm32-unknown-unknown --lib` — fast check that wasm-specific cfg gates still compile.
+`index.html` registers `assets/sw.js`. App-shell requests are network-first
+because `Trunk.toml` disables filename hashing.
 
-### Test naming convention
+- `#dev` unregisters service workers and clears caches. Use it to bypass stale
+  builds, but it deliberately disables the service-worker streaming download
+  sink.
+- Test Chromium's File System Access sink with or without `#dev`.
+- Test the service-worker sink without `#dev`, after the page is controlled by
+  the current worker. Use the `sink=fsa`, `sink=sw`, and `sink=mem` fragment
+  flags to force a route.
 
-Tests in `src/tests.rs` use a prefix that signals their requirements:
-
-- `local_test_*` — pure in-process tests, safe in any environment.
-- `online_test_*` — exercise real `iroh` endpoints, network discovery, and the WebRTC relay. They use short `tokio::time::timeout`s (3–5s) and several deliberately swallow `Err`/timeout outcomes so the suite is non-flaky offline. **Treat a passing online test as "did not regress" rather than "verified working"** — to actually exercise the transfer path, run with `--nocapture` and check the assertion paths were reached.
+The memory fallback is capped at 256 MiB. File System Access and service-worker
+routes stream bounded chunks and are required for larger downloads.
 
 ## Architecture
 
-Three modules carry essentially all the logic:
+- `src/app.rs` — UI state machine. It owns handles and metadata, never file
+  bytes. Picking a sender file starts a bounded hashing preparation phase.
+  Receiver Save creates sinks before sending `ReceiveCommand::Save`.
+- `src/node.rs` — iroh `Node`, endpoint ticket links, capability authorization,
+  relay selection, and the sender-side protocol handler.
+- `src/protocol.rs` — bounded tagged postcard frames: handshake, manifest,
+  request/credit, signalling, chunks, completion, and errors. Never allocate
+  before checking `MAX_FRAME`.
+- `src/transfer.rs` — transport-independent sender and receiver state machines.
+  The receiver grants credit only after a sink accepts bytes. Data-channel
+  failure changes epoch and resumes over iroh.
+- `src/file_io/mod.rs` — shared source/sink contracts, snapshots, filename
+  policy, native per-session reads, transactional native staging, memory
+  fallback, and test sinks.
+- `src/file_io/web.rs` and `assets/download-sinks.js` — browser `File.slice`
+  source, File System Access sink, service-worker streaming sink, and memory
+  fallback.
+- `assets/sw.js` — app cache plus capability-addressed, single-use streaming
+  download responses with bounded demand/ack flow.
+- `src/webrtc.rs` — browser data-channel interface and constants; still a stub
+  returning `available() = false`.
 
-- **`src/app.rs`** — `P2PTransfer` (the eframe `App` impl) holds the UI state. Almost every shareable piece of state is `Arc<Mutex<...>>` because async tasks (file pickers, the iroh node, transfer streams) write back into the UI from outside the egui frame callback. File picking diverges by target: native uses `rfd::FileDialog` synchronously, WASM uses `web-sys` + a `wasm_bindgen::closure::Closure` stored on the struct (`file_input_closure`). The `received_files` / `shared_files` / `terminal_logs` fields are the integration points — node code pushes into them.
-- **`src/node.rs`** — `EchoNode` wraps an `iroh::Endpoint` + `Router` running a custom protocol (`Echo`, ALPN `b"iroh/example-browser-echo/0"`). Transport is `TransportMode::WebrtcRelay` so the same code path works in the browser. The wire format on each bidirectional stream is hand-rolled little-endian framing: filename length (u32), filename bytes, data length (u64), then per-file: `name_len(u32) | name | data_len(u64) | total_chunks(u32) | blake3_hash(32 bytes) | (chunk_idx(u32) | chunk_size(u32) | chunk_data){total_chunks}`. **Chunk size is hardcoded `256 * 1024` (256KB)** in `Echo::handle_connection_0` — there's a unit test asserting that constant, so changing it requires updating the test. `connect()` returns a `Stream<Item = ConnectEvent>` driven by `task::spawn` (n0-future), which is what the UI consumes to render progress. The two file stores (`BlobStore`, `BaoStore`) are kept on the node; `bao_store` is `Option<BaoStore>` and `#[cfg]`-gated to native only.
-- **`src/blob_store.rs`** — two layered abstractions:
-  - `BlobStore`/`Blob`/`BlobHash` — simple BLAKE3 content-addressed in-memory map, available on both targets. `BlobCollection::to_share_string` / `from_share_string` is the wire format for shareable hash bundles (`hex_hash:name,hex_hash:name,...`). Note the embedded `mod hex` — it's a hand-rolled hex codec; do not pull in the `hex` crate without a reason.
-  - `mod bao` (native only) — `BaoStore`/`BaoBlob`/`BaoReceiver` build a `bao_tree::PreOrderMemOutboard` with `BlockSize::from_chunk_log(4)` (16KB chunks, matching `iroh-blobs`), enabling per-chunk merkle verification on the receiver side. This is intended for BitTorrent-like streaming integrity; it is independent from the 256KB framing in `node.rs` (different layers, different chunk sizes — don't conflate them).
+Native and wasm share protocol and transfer logic but differ at file I/O and
+endpoint transport boundaries. Any native filesystem or tokio-net-only code
+must remain under `#[cfg(not(target_arch = "wasm32"))]`. Browser JS objects and
+their futures are `!Send`; do not add a `Send` bound to `Source` or `Sink`.
 
-The native and WASM variants of `main` (in `src/main.rs`) bootstrap differently: native creates a `tokio::runtime::Runtime` and enters it before `eframe::run_native`; WASM uses `wasm_bindgen_futures::spawn_local` and `eframe::WebRunner`, hides the `loading_text` div on success, and replaces it with a crash message on failure.
+## Invariants
 
-## Conventions worth honoring
+- Share links contain a bearer capability in the fragment. Never log or put it
+  in a query string.
+- Peer frame lengths and manifest counts are bounded before allocation.
+- Peer filenames go through the shared `sanitize_name` policy and are never
+  joined as paths directly.
+- Native output is staged in the destination directory and published without
+  overwriting an existing file only after size and BLAKE3 verification.
+- A sink write is sequential. Browser service-worker progress counts only
+  acknowledged chunks; never grant credit for merely queued messages.
+- Dropped/cancelled sink operations are not replayed because their commit state
+  is uncertain.
+- Fix warnings instead of suppressing them; the gate treats warnings as errors.
 
-- `src/lib.rs` and `src/main.rs` start with `#![warn(clippy::all, rust_2018_idioms)]`. Clippy is gated `-D warnings` in `check.sh` — fix lints, don't `#[allow]` them away.
-- Anything new that pulls in tokio's `net`, real filesystem, or other non-wasm-friendly APIs **must** be `#[cfg(not(target_arch = "wasm32"))]` or it will break the wasm build (and `check.sh`).
-- The `assets/sw.js` service worker caches the wasm bundle aggressively. If you change asset filenames, also update `assets/sw.js`'s `filesToCache`, or testers will load stale code unless they hit `#dev`.
-- `Trunk.toml` sets `filehash = false`; don't enable hashed filenames without updating the service worker too.
+## Tests
+
+`local_test_*` must be deterministic and offline. `online_test_*` may require
+the public relay and must never convert a timeout into a silent pass. Native
+loopback endpoint tests use `RelayChoice::None` and should remain part of the
+normal suite.

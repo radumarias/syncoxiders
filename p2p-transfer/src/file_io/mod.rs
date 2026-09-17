@@ -341,26 +341,56 @@ pub async fn hash_source<S: Source>(
 
 /// Make a peer-supplied name safe to hand to a filesystem or a download.
 ///
-/// Strips directory components (both separators, so `../../etc/passwd` becomes `passwd`) and
-/// control characters, rejects `""`, `"."` and `".."`, and caps the result at 255 bytes on a
-/// character boundary. Never returns an empty string.
+/// Strips directory components (both separators, so `../../etc/passwd` becomes `passwd`),
+/// replaces control and Windows-invalid characters, rejects empty and reserved device names,
+/// trims trailing dots/spaces, and caps the result at 255 bytes on a character boundary.
+/// The same policy is used on every platform so a shared name does not change by receiver.
 pub fn sanitize_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
-    let cleaned: String = base.chars().filter(|c| !c.is_control()).collect();
-    let cleaned = cleaned.trim();
+    let cleaned: String = base
+        .chars()
+        .filter_map(|character| {
+            if character.is_control() {
+                None
+            } else if matches!(character, '<' | '>' | ':' | '"' | '|' | '?' | '*') {
+                Some('_')
+            } else {
+                Some(character)
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim().trim_end_matches(['.', ' ']);
     if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
         return FALLBACK_NAME.to_string();
     }
-    if cleaned.len() <= MAX_NAME_BYTES {
-        return cleaned.to_string();
+    let device_stem = cleaned.split('.').next().unwrap_or_default();
+    let device_stem = device_stem.trim_end_matches(['.', ' ']);
+    if is_windows_device_name(device_stem) {
+        return FALLBACK_NAME.to_string();
     }
-    // A character is at most 4 bytes, so the walk stops at 252 at the very worst and the
-    // result can never come back empty.
-    let mut end = MAX_NAME_BYTES;
-    while !cleaned.is_char_boundary(end) {
+    truncate_utf8(cleaned, MAX_NAME_BYTES).to_string()
+}
+
+fn is_windows_device_name(stem: &str) -> bool {
+    let upper = stem.to_ascii_uppercase();
+    matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || upper
+            .strip_prefix("COM")
+            .or_else(|| upper.strip_prefix("LPT"))
+            .is_some_and(|number| {
+                matches!(number, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+            })
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
         end -= 1;
     }
-    cleaned[..end].to_string()
+    &value[..end]
 }
 
 /// Snapshot a path for the change check of [`open_source`].
@@ -433,7 +463,9 @@ impl Source for FsSource {
             use std::io::{Read, Seek, SeekFrom};
             // Seeking and reading under one lock works on Unix and Windows. If a read
             // future is cancelled, its blocking job completes before the next seek.
-            let mut file = file.lock().map_err(|_| io::Error::other("source lock poisoned"))?;
+            let mut file = file
+                .lock()
+                .map_err(|_| io::Error::other("source lock poisoned"))?;
             file.seek(SeekFrom::Start(offset))?;
             let mut bytes = vec![0; len];
             file.read_exact(&mut bytes)?;
@@ -474,7 +506,10 @@ impl Drop for StagingFile {
         drop(self.file.take());
         if let Err(error) = std::fs::remove_file(&self.path) {
             if error.kind() != io::ErrorKind::NotFound {
-                log::warn!("could not remove staging file {}: {error}", self.path.display());
+                log::warn!(
+                    "could not remove staging file {}: {error}",
+                    self.path.display()
+                );
             }
         }
     }
@@ -504,7 +539,10 @@ impl FsSink {
             match options.open(&path) {
                 Ok(file) => {
                     return Ok(Self {
-                        stage: Arc::new(Mutex::new(StagingFile { file: Some(file), path })),
+                        stage: Arc::new(Mutex::new(StagingFile {
+                            file: Some(file),
+                            path,
+                        })),
                         dir,
                         name,
                         written: 0,
@@ -515,7 +553,10 @@ impl FsSink {
                 Err(error) => return Err(error),
             }
         }
-        Err(io::Error::new(io::ErrorKind::AlreadyExists, "too many staging name collisions"))
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "too many staging name collisions",
+        ))
     }
 
     fn final_name(&self, attempt: u32) -> String {
@@ -532,7 +573,9 @@ impl FsSink {
 
     fn check_ready(&self) -> io::Result<()> {
         if !self.ready {
-            return Err(io::Error::other("sink write failed or was cancelled; abort this sink"));
+            return Err(io::Error::other(
+                "sink write failed or was cancelled; abort this sink",
+            ));
         }
         Ok(())
     }
@@ -546,15 +589,22 @@ impl Sink for FsSink {
 
     async fn write(&mut self, data: &[u8]) -> io::Result<()> {
         self.check_ready()?;
-        let written = self.written.checked_add(data.len() as u64)
+        let written = self
+            .written
+            .checked_add(data.len() as u64)
             .ok_or_else(|| io::Error::other("sink byte count overflow"))?;
         self.ready = false;
         let stage = self.stage.clone();
         let data = data.to_vec();
         tokio::task::spawn_blocking(move || {
             use std::io::Write;
-            let mut stage = stage.lock().map_err(|_| io::Error::other("sink lock poisoned"))?;
-            stage.file.as_mut().ok_or_else(|| io::Error::other("sink is closed"))?
+            let mut stage = stage
+                .lock()
+                .map_err(|_| io::Error::other("sink lock poisoned"))?;
+            stage
+                .file
+                .as_mut()
+                .ok_or_else(|| io::Error::other("sink is closed"))?
                 .write_all(&data)
         })
         .await
@@ -568,8 +618,14 @@ impl Sink for FsSink {
         self.check_ready()?;
         let stage = self.stage.clone();
         tokio::task::spawn_blocking(move || {
-            let stage = stage.lock().map_err(|_| io::Error::other("sink lock poisoned"))?;
-            stage.file.as_ref().ok_or_else(|| io::Error::other("sink is closed"))?.sync_all()
+            let stage = stage
+                .lock()
+                .map_err(|_| io::Error::other("sink lock poisoned"))?;
+            stage
+                .file
+                .as_ref()
+                .ok_or_else(|| io::Error::other("sink is closed"))?
+                .sync_all()
         })
         .await
         .map_err(io::Error::other)??;
@@ -577,7 +633,10 @@ impl Sink for FsSink {
         // No await after this point: a cancelled flush future can only clean up, never
         // publish later from a detached blocking job. Only short namespace operations run
         // here; bulk writes and flushing have already completed on the blocking pool.
-        let mut stage = self.stage.lock().map_err(|_| io::Error::other("sink lock poisoned"))?;
+        let mut stage = self
+            .stage
+            .lock()
+            .map_err(|_| io::Error::other("sink lock poisoned"))?;
         drop(stage.file.take());
         for attempt in 0..Self::COLLISION_ATTEMPTS {
             let name = self.final_name(attempt);
@@ -594,7 +653,10 @@ impl Sink for FsSink {
                 Err(error) => return Err(error),
             }
         }
-        Err(io::Error::new(io::ErrorKind::AlreadyExists, "too many destination name collisions"))
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "too many destination name collisions",
+        ))
     }
 
     async fn abort(self) {
@@ -602,9 +664,14 @@ impl Sink for FsSink {
         // the blocking job holds the last owner until it can close and remove the file.
         let stage = self.stage;
         let _ = tokio::task::spawn_blocking(move || {
-            drop(stage.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+            drop(
+                stage
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
             drop(stage);
-        }).await;
+        })
+        .await;
     }
 }
 

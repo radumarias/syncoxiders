@@ -17,9 +17,11 @@ use tokio_util::sync::CancellationToken;
 use crate::app::P2PTransfer;
 use crate::blob_store::BlobHash;
 use crate::file_io::{
-    hash_source, sanitize_name, AnySink, FileOrigin, FileSnapshot, MemSink, MemSource, SharedFile,
-    Sink, SlowSink, StuckSink,
+    hash_source, read_length, sanitize_name, AnySink, FileOrigin, FileSnapshot, MemSink, MemSource,
+    SharedFile, Sink, SlowSink, Source, StuckSink, MAX_SOURCE_READ,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::file_io::{FsSink, FsSource};
 use crate::node::{Node, RelayChoice, SinkPref};
 use crate::protocol::{
     cap_eq, cap_from_hex, cap_to_hex, decode, encode_chunk, encode_control, max_payload,
@@ -29,7 +31,8 @@ use crate::protocol::{
 use crate::transfer::{
     run_receiver_on, run_sender_on, AuthFailure, ByteBudget, CloseSeam, DataChannel, DcFactory,
     DcRole, FrameRx, FrameTx, MaybeDc, MemDcFactory, MemRx, MemTx, NoWebRtc, Path, PcState, Phase,
-    ReceiveCommand, ReceiveOptions, SenderOptions, SessionIo, TransferError, TransferProgress,
+    ReceiveCommand, ReceiveOptions, SenderOptions, SessionIo, TransferError, TransferHandle,
+    TransferProgress,
 };
 
 // ---------------------------------------------------------------------------------------
@@ -47,6 +50,31 @@ fn test_cap(seed: u8) -> [u8; CAP_LEN] {
         *b = seed.wrapping_add(i as u8);
     }
     cap
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct TestDir(std::path::PathBuf);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl TestDir {
+    fn new(label: &str) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "syncoxiders-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&path).expect("creates test directory");
+        Self(path)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// A ticket built offline, with both an IP and a relay address.
@@ -541,6 +569,11 @@ fn local_test_sanitize_name() {
     assert_eq!(sanitize_name(".."), "file.bin");
     assert_eq!(sanitize_name("   "), "file.bin");
     assert_eq!(sanitize_name("a\u{0}b\nc"), "abc");
+    assert_eq!(sanitize_name("report:final?.txt"), "report_final_.txt");
+    assert_eq!(sanitize_name("CON"), "file.bin");
+    assert_eq!(sanitize_name("com1.txt"), "file.bin");
+    assert_eq!(sanitize_name("LPT9.backup"), "file.bin");
+    assert_eq!(sanitize_name("normal name. "), "normal name");
     assert_eq!(sanitize_name("δοκιμή.txt"), "δοκιμή.txt");
 
     let long = sanitize_name(&"x".repeat(300));
@@ -579,6 +612,170 @@ async fn local_test_mem_sink_writes_and_caps() {
     assert_eq!(saved.name, "out.bin");
     assert_eq!(saved.size, 8);
     assert!(!saved.location.is_empty());
+}
+
+#[test]
+fn local_test_source_read_length_clamps_in_u64() {
+    assert_eq!(read_length(1_u64 << 34, 1_u64 << 33, 1024).unwrap(), 1024);
+    assert_eq!(read_length(100, 90, 50).unwrap(), 10);
+    assert_eq!(read_length(100, 100, 50).unwrap(), 0);
+    assert_eq!(read_length(100, 101, 50).unwrap(), 0);
+    assert!(read_length(u64::MAX, 0, MAX_SOURCE_READ + 1).is_err());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn local_test_fs_source_range_and_truncation() {
+    let dir = TestDir::new("source");
+    let path = dir.0.join("source.bin");
+    let data = filler(2 * 1024 * 1024 + 37);
+    std::fs::write(&path, &data).unwrap();
+
+    let mut source = FsSource::open(&path).unwrap();
+    let range = source.read((1024 * 1024 - 17) as u64, 91).await.unwrap();
+    assert_eq!(&range[..], &data[1024 * 1024 - 17..1024 * 1024 + 74]);
+    assert_eq!(
+        source.read(data.len() as u64, 128).await.unwrap(),
+        Bytes::new()
+    );
+    assert!(source.read(0, MAX_SOURCE_READ + 1).await.is_err());
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(1024)
+        .unwrap();
+    let error = source
+        .read(0, 2048)
+        .await
+        .expect_err("captured file was truncated");
+    assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn local_test_hash_source_rejects_premature_eof() {
+    let dir = TestDir::new("hash-eof");
+    let path = dir.0.join("source.bin");
+    std::fs::write(&path, filler(2 * 1024 * 1024)).unwrap();
+    let mut source = FsSource::open(&path).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(1024)
+        .unwrap();
+    let (progress, _) = watch::channel(0.0);
+    let error = hash_source(&mut source, &progress)
+        .await
+        .expect_err("must reject short source");
+    assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn local_test_fs_sink_never_overwrites_and_cleans_staging() {
+    let dir = TestDir::new("sink");
+    let destination = dir.0.join("report.txt");
+    std::fs::write(&destination, b"keep me").unwrap();
+
+    let mut sink = FsSink::create(&dir.0, "../report.txt").unwrap();
+    sink.write(b"replacement").await.unwrap();
+    let saved = sink.finish().await.unwrap();
+    assert_eq!(std::fs::read(&destination).unwrap(), b"keep me");
+    assert_eq!(std::fs::read(&saved.location).unwrap(), b"replacement");
+    assert_ne!(std::path::Path::new(&saved.location), destination);
+
+    let mut aborted = FsSink::create(&dir.0, "aborted.bin").unwrap();
+    aborted.write(b"partial").await.unwrap();
+    aborted.abort().await;
+
+    let mut dropped = FsSink::create(&dir.0, "dropped.bin").unwrap();
+    dropped.write(b"partial").await.unwrap();
+    drop(dropped);
+
+    let staging = std::fs::read_dir(&dir.0)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with(".p2p-"))
+        .collect::<Vec<_>>();
+    assert!(staging.is_empty(), "staging files leaked: {staging:?}");
+    assert!(!dir.0.join("aborted.bin").exists());
+    assert!(!dir.0.join("dropped.bin").exists());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_test_native_nodes_transfer_file_over_loopback() {
+    let source_dir = TestDir::new("node-source");
+    let receive_dir = TestDir::new("node-receive");
+    let source_path = source_dir.0.join("source.bin");
+    let data = filler(2 * 1024 * 1024 + 113);
+    std::fs::write(&source_path, &data).unwrap();
+    let snapshot = crate::file_io::snapshot_path(&source_path).unwrap();
+    let meta = FileMeta {
+        name: "source.bin".to_string(),
+        size: data.len() as u64,
+        hash: BlobHash::from_bytes(&data),
+    };
+    let files = Arc::new(Mutex::new(vec![SharedFile {
+        meta: meta.clone(),
+        origin: FileOrigin::Path(source_path),
+        snapshot,
+    }]));
+
+    timeout(Duration::from_secs(30), async {
+        let sender = Node::bind(files, RelayChoice::None).await.unwrap();
+        let ticket = sender.ticket().await.unwrap();
+        let receiver = Arc::new(
+            Node::bind(Arc::new(Mutex::new(Vec::new())), RelayChoice::None)
+                .await
+                .unwrap(),
+        );
+        let options = ReceiveOptions {
+            cap: Some(sender.cap()),
+            ..ReceiveOptions::default()
+        };
+        let mut handle = TransferHandle::start_receive(receiver, ticket, options);
+
+        loop {
+            match handle.latest().phase {
+                Phase::AwaitingSave { manifest } => {
+                    assert_eq!(manifest, vec![meta.clone()]);
+                    let sink = FsSink::create(&receive_dir.0, &manifest[0].name).unwrap();
+                    handle
+                        .commands
+                        .send(ReceiveCommand::Save(vec![AnySink::Fs(sink)]))
+                        .await
+                        .unwrap();
+                    break;
+                }
+                Phase::Failed => panic!("receive failed before Save: {:?}", handle.latest().error),
+                phase => {
+                    assert!(!phase.is_terminal(), "unexpected terminal phase: {phase:?}");
+                    handle.progress.changed().await.unwrap();
+                }
+            }
+        }
+
+        let saved = loop {
+            match handle.latest().phase {
+                Phase::Complete { saved } => break saved,
+                Phase::Failed => panic!("receive failed: {:?}", handle.latest().error),
+                phase => {
+                    assert!(!phase.is_terminal(), "unexpected terminal phase: {phase:?}");
+                    handle.progress.changed().await.unwrap();
+                }
+            }
+        };
+        assert_eq!(saved.len(), 1);
+        assert_eq!(std::fs::read(&saved[0].location).unwrap(), data);
+        assert_eq!(saved[0].size, meta.size);
+        sender.shutdown().await;
+    })
+    .await
+    .expect("loopback transfer timed out");
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2060,19 +2257,21 @@ async fn local_test_engine_use_relay_does_not_abort_control_serve() {
 // ---------------------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the public n0 relay; run with --ignored --nocapture"]
 async fn online_test_node_ticket() {
     let files = Arc::new(Mutex::new(Vec::new()));
-    let Ok(bound) = timeout(Duration::from_secs(5), Node::bind(files, RelayChoice::N0)).await
-    else {
-        return; // offline: nothing to assert
-    };
-    let node = bound.expect("binding a node must not fail");
+    let node = timeout(Duration::from_secs(10), Node::bind(files, RelayChoice::N0))
+        .await
+        .expect("binding timed out")
+        .expect("binding a node must not fail");
 
-    if let Ok(Ok(ticket)) = timeout(Duration::from_secs(10), node.ticket()).await {
-        let text = ticket.to_string();
-        assert!(text.starts_with("endpoint"), "{text}");
-        assert!(!text.contains('#') && !text.contains('&'), "{text}");
-        assert_eq!(ticket.endpoint_addr().id, node.id());
-    }
+    let ticket = timeout(Duration::from_secs(30), node.ticket())
+        .await
+        .expect("relay did not bring the endpoint online")
+        .expect("ticket creation failed");
+    let text = ticket.to_string();
+    assert!(text.starts_with("endpoint"), "{text}");
+    assert!(!text.contains('#') && !text.contains('&'), "{text}");
+    assert_eq!(ticket.endpoint_addr().id, node.id());
     node.shutdown().await;
 }
