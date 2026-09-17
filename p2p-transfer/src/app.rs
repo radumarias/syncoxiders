@@ -4,6 +4,7 @@
 //! `TransferHandle`), turns user gestures into engine commands, and renders whatever the
 //! engine publishes on its progress watch.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
@@ -146,6 +147,38 @@ struct ReceiveState {
     params: FragmentParams,
     handle: Option<TransferHandle>,
     error: Option<String>,
+    save_pending: Arc<AtomicBool>,
+}
+
+/// One destination selection per receive session. Errors and dismissal allow a retry;
+/// a submitted Save remains pending until the engine leaves AwaitingSave.
+struct SaveAttempt {
+    pending: Arc<AtomicBool>,
+    submitted: bool,
+}
+
+impl SaveAttempt {
+    fn begin(pending: &Arc<AtomicBool>) -> Option<Self> {
+        if pending.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+        Some(Self {
+            pending: pending.clone(),
+            submitted: false,
+        })
+    }
+
+    fn submitted(mut self) {
+        self.submitted = true;
+    }
+}
+
+impl Drop for SaveAttempt {
+    fn drop(&mut self) {
+        if !self.submitted {
+            self.pending.store(false, Ordering::Release);
+        }
+    }
 }
 
 /// What the app is doing. One value replaces the six booleans the pre-migration app used.
@@ -514,18 +547,25 @@ impl P2PTransfer {
             params,
             handle,
             error,
+            save_pending: Arc::new(AtomicBool::new(false)),
         }));
     }
 
     /// Build one sink per manifest entry and hand them to the session.
     ///
-    /// On wasm `pick_sinks` must be the click task's **first** await: the pickers need the
-    /// transient user activation, which survives exactly one await point.
+    /// Invoke the browser picker promptly after the Save gesture, without preceding
+    /// asynchronous work. Transient activation is browser-controlled, not an await count.
     fn save_click(&mut self, manifest: Vec<FileMeta>) {
         let Mode::Receive(r) = &self.mode else {
             return;
         };
         let Some(handle) = &r.handle else { return };
+        if !matches!(handle.latest().phase, Phase::AwaitingSave { .. }) {
+            return;
+        }
+        let Some(attempt) = SaveAttempt::begin(&r.save_pending) else {
+            return;
+        };
         let commands = handle.commands.clone();
         let errors = self.node_error.clone();
 
@@ -552,22 +592,44 @@ impl P2PTransfer {
             }
             if commands.try_send(ReceiveCommand::Save(sinks)).is_err() {
                 Self::report(&errors, "the transfer is no longer running".to_string());
+            } else {
+                attempt.submitted();
             }
         }
 
         #[cfg(target_arch = "wasm32")]
         {
             let pref = r.params.sink_pref;
+            let cancel = handle.cancel.clone();
             wasm_bindgen_futures::spawn_local(async move {
+                if cancel.is_cancelled() {
+                    return;
+                }
+                // Keep awaiting the picker even if the receive is cancelled: a native dialog
+                // cannot be closed by dropping its Promise, and returned sinks need cleanup.
                 match file_io::web::pick_sinks(&manifest, pref).await {
                     Ok(sinks) => {
-                        if commands.send(ReceiveCommand::Save(sinks)).await.is_err() {
+                        let permit = tokio::select! {
+                            biased;
+                            _ = cancel.cancelled() => None,
+                            result = commands.reserve() => result.ok(),
+                        };
+                        if let Some(permit) = permit.filter(|_| !cancel.is_cancelled()) {
+                            permit.send(ReceiveCommand::Save(sinks));
+                            attempt.submitted();
+                            return;
+                        }
+                        for sink in sinks {
+                            file_io::Sink::abort(sink).await;
+                        }
+                        if !cancel.is_cancelled() {
                             Self::report(&errors, "the transfer is no longer running".to_string());
                         }
                     }
                     // Dismissing a picker is not an error: stay in AwaitingSave so Save can be
                     // clicked again.
                     Err(file_io::SinkError::Cancelled) => {}
+                    Err(_) if cancel.is_cancelled() => {}
                     Err(e) => Self::report(&errors, e.to_string()),
                 }
             });
@@ -954,12 +1016,7 @@ impl P2PTransfer {
             self.pick_file();
         }
         if receive {
-            self.mode = Mode::Receive(Box::new(ReceiveState {
-                input: String::new(),
-                params: FragmentParams::default(),
-                handle: None,
-                error: None,
-            }));
+            self.set_receive(FragmentParams::default(), None, None);
         }
     }
 
@@ -1146,6 +1203,10 @@ impl P2PTransfer {
             Mode::Receive(r) => Self::flag_summary(&r.params),
             _ => String::new(),
         };
+        let save_pending = match &self.mode {
+            Mode::Receive(r) => r.save_pending.load(Ordering::Acquire),
+            _ => false,
+        };
 
         let mut submit = false;
         let mut save_manifest: Option<Vec<FileMeta>> = None;
@@ -1231,8 +1292,18 @@ impl P2PTransfer {
                         });
                     }
                     ui.add_space(12.0);
-                    if ui.add(primary_button(&tc, "Save")).clicked() {
+                    if ui
+                        .add_enabled(!save_pending, primary_button(&tc, "Save"))
+                        .clicked()
+                    {
                         save_manifest = Some(manifest.clone());
+                    }
+                    if save_pending {
+                        ui.label(
+                            RichText::new("Selecting destinations…")
+                                .color(tc.outline)
+                                .size(12.0),
+                        );
                     }
                 } else if p.bytes_total > 0 {
                     ui.add_space(10.0);
@@ -1530,5 +1601,44 @@ impl eframe::App for P2PTransfer {
                     self.show_received_files(ui);
                 });
             });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_test_save_attempt_blocks_duplicates_and_allows_retry() {
+        let pending = Arc::new(AtomicBool::new(false));
+        let attempt = SaveAttempt::begin(&pending).unwrap();
+        assert!(pending.load(Ordering::Acquire));
+        assert!(SaveAttempt::begin(&pending).is_none());
+
+        // A picker error or dismissal drops the attempt without submitting a command.
+        drop(attempt);
+        assert!(!pending.load(Ordering::Acquire));
+        assert!(SaveAttempt::begin(&pending).is_some());
+    }
+
+    #[test]
+    fn local_test_submitted_save_stays_blocked_until_phase_changes() {
+        let pending = Arc::new(AtomicBool::new(false));
+        SaveAttempt::begin(&pending).unwrap().submitted();
+        // There can still be a frame showing AwaitingSave before the engine consumes Save.
+        assert!(SaveAttempt::begin(&pending).is_none());
+    }
+
+    #[test]
+    fn local_test_old_save_attempt_cannot_change_new_receive_state() {
+        let old_pending = Arc::new(AtomicBool::new(false));
+        let old_attempt = SaveAttempt::begin(&old_pending).unwrap();
+        let new_pending = Arc::new(AtomicBool::new(false));
+        let new_attempt = SaveAttempt::begin(&new_pending).unwrap();
+
+        drop(old_attempt);
+        assert!(new_pending.load(Ordering::Acquire));
+        drop(new_attempt);
+        assert!(!new_pending.load(Ordering::Acquire));
     }
 }
