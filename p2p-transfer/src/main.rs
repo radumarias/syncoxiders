@@ -3,7 +3,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
-    env_logger::init();
+    p2p_transfer::init_logging();
 
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
     let _guard = runtime.enter();
@@ -30,8 +30,7 @@ fn main() {
     use eframe::wasm_bindgen::JsCast as _;
     console_error_panic_hook::set_once();
     tracing_wasm::set_as_global_default();
-
-    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
+    p2p_transfer::init_logging();
 
     let web_options = eframe::WebOptions::default();
 
