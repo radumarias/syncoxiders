@@ -418,11 +418,11 @@ impl P2PTransfer {
             web_sys::window()
                 .and_then(|w| w.location().href().ok())
                 .map(|href| href.split('#').next().unwrap_or(&href).to_string())
-                .unwrap_or_else(|| "https://oxfer.pages.dev/".to_string())
+                .unwrap_or_else(|| "https://oxfer.app/".to_string())
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            "https://oxfer.pages.dev/".to_string()
+            "https://oxfer.app/".to_string()
         }
     }
 
