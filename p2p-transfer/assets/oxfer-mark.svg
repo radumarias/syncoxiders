@@ -1,45 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
   <title id="title">Oxfer</title>
-  <desc id="desc">A document moving directly between peers over an encrypted path</desc>
-  <defs>
-    <linearGradient id="bg" x1="128" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#1684ed"/>
-      <stop offset="1" stop-color="#084caa"/>
-    </linearGradient>
-    <linearGradient id="page" x1="330" y1="238" x2="762" y2="762" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#eaf4ff"/>
-    </linearGradient>
-  </defs>
+  <desc id="desc">A file moving directly to another device</desc>
+  <rect width="1024" height="1024" rx="224" fill="#1684ed"/>
 
-  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
-  <circle cx="512" cy="512" r="374" fill="none" stroke="#ffffff" stroke-opacity=".10" stroke-width="18"/>
-
-  <g fill="none" stroke-linecap="round">
-    <path d="M142 405h154" stroke="#f57a3d" stroke-width="38"/>
-    <path d="M106 512h174" stroke="#58e0c0" stroke-width="38"/>
-    <path d="M158 619h154" stroke="#f57a3d" stroke-width="38"/>
-  </g>
-
-  <g transform="rotate(-5 548 510)">
+  <g transform="rotate(-4 530 512)">
     <path
-      d="M322 228h304l184 184v342c0 34-28 62-62 62H322c-34 0-62-28-62-62V290c0-34 28-62 62-62Z"
-      fill="#061f45"
-      opacity=".24"
-      transform="translate(18 22)"
+      d="M300 208h310l174 174v364c0 39-31 70-70 70H300c-39 0-70-31-70-70V278c0-39 31-70 70-70Z"
+      fill="#ffffff"
     />
-    <path
-      d="M322 228h304l184 184v342c0 34-28 62-62 62H322c-34 0-62-28-62-62V290c0-34 28-62 62-62Z"
-      fill="url(#page)"
-    />
-    <path d="M626 228v132c0 29 23 52 52 52h132L626 228Z" fill="#b9dcff"/>
-    <path d="M626 228v132c0 29 23 52 52 52h132" fill="none" stroke="#8ec7fa" stroke-width="18"/>
-
-    <path d="M378 520h250" fill="none" stroke="#f36f32" stroke-linecap="round" stroke-width="66"/>
-    <path d="m600 434 126 86-126 86Z" fill="#f36f32"/>
-    <circle cx="370" cy="520" r="42" fill="#24cdaa"/>
-    <circle cx="370" cy="520" r="17" fill="#ffffff"/>
-
-    <path d="M370 674h286" fill="none" stroke="#87a6c5" stroke-linecap="round" stroke-width="30"/>
+    <path d="M610 208v116c0 32 26 58 58 58h116L610 208Z" fill="#b9dcff"/>
+    <path d="M350 530h258" fill="none" stroke="#f36f32" stroke-linecap="round" stroke-width="72"/>
+    <path d="m584 428 142 102-142 102Z" fill="#f36f32"/>
   </g>
 </svg>
