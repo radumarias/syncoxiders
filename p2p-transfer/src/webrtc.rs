@@ -132,6 +132,7 @@ impl DcFactory for WebRtcFactory {
     }
 
     fn create(&self, role: DcRole) -> Result<Self::Dc, TransportError> {
+        log::debug!("creating browser WebRTC peer as {role:?}");
         PeerChannel::new(role, &self.ice_servers)
     }
 }
@@ -173,14 +174,27 @@ impl PeerChannel {
             }
         });
         let ice_callback = Closure::new(move |value: JsValue| {
+            log::debug!(
+                "WebRTC local ICE {}",
+                if value.is_null() {
+                    "gathering complete"
+                } else {
+                    "candidate ready"
+                }
+            );
             let _ = ice_tx.send(ice(value));
         });
         let open_tx = open.clone();
         let open_callback = Closure::new(move |value: bool| {
+            log::info!(
+                "WebRTC data channel {}",
+                if value { "opened" } else { "closed" }
+            );
             open_tx.send_replace(value);
         });
         let callback_state = state_tx.clone();
         let state_callback = Closure::new(move |value: String| {
+            log::debug!("WebRTC peer state: {value}");
             callback_state.send_replace(state(&value));
         });
 
@@ -202,6 +216,7 @@ impl PeerChannel {
         )
         .map_err(js_error)?;
         if let Ok(pc) = peer_connection(&peer).dyn_into::<web_sys::RtcPeerConnection>() {
+            let _ = Reflect::set(&js_sys::global(), &JsValue::from_str("__p2p"), pc.as_ref());
             DEBUG_PC.with(|debug| *debug.borrow_mut() = Some(pc));
         }
         Ok(Self {

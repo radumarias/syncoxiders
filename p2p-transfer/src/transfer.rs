@@ -1891,6 +1891,7 @@ async fn receive_loop<T: FrameTx, R: FrameRx, F: DcFactory>(
                 if dc_was_open {
                     dc_gone = true;
                 } else {
+                    log::info!("WebRTC data channel opened; direct transfer selected");
                     dc_was_open = true;
                 }
             }
@@ -1930,7 +1931,7 @@ async fn receive_loop<T: FrameTx, R: FrameRx, F: DcFactory>(
             if webrtc_deadline.map(|at| now >= at).unwrap_or(false) {
                 webrtc_deadline = None;
                 if !dc_was_open {
-                    log::debug!("the data channel did not open in time; using the relay");
+                    log::warn!("WebRTC data channel did not open in time; using the iroh relay");
                     use_relay = true;
                     dc_rx = None;
                     dc_open = None;
