@@ -19,7 +19,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "Syncoxider App",
+        "Oxfer",
         native_options,
         Box::new(|cc| Ok(Box::new(p2p_transfer::P2PTransfer::new(cc)))),
     )
