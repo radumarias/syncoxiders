@@ -381,6 +381,7 @@ pub trait DataChannel {
         &mut self,
         cancel: CancellationToken,
         relay_switch: Arc<Notify>,
+        receive_window: usize,
     ) -> Option<(Self::Tx, Self::Rx)>;
     fn close(&self);
 }
@@ -498,8 +499,9 @@ impl DataChannel for NeverDc {
         &mut self,
         cancel: CancellationToken,
         relay_switch: Arc<Notify>,
+        receive_window: usize,
     ) -> Option<(Self::Tx, Self::Rx)> {
-        let _ = (cancel, relay_switch);
+        let _ = (cancel, relay_switch, receive_window);
         match *self {}
     }
 
@@ -546,20 +548,25 @@ pub type CloseSeam = Box<dyn FnOnce(u32, &[u8]) + Send>;
 /// would make a conforming sender look hostile at small frame sizes.
 #[derive(Debug)]
 pub struct ByteBudget {
-    budget: usize,
+    budget: AtomicUsize,
     in_queue: AtomicUsize,
 }
 
 impl ByteBudget {
     pub fn new(budget: usize) -> Self {
         Self {
-            budget,
+            budget: AtomicUsize::new(budget),
             in_queue: AtomicUsize::new(0),
         }
     }
 
     pub fn budget(&self) -> usize {
-        self.budget
+        self.budget.load(Ordering::Acquire)
+    }
+
+    /// Set before a callback-fed transport begins delivering frames.
+    pub fn set_budget(&self, budget: usize) {
+        self.budget.store(budget, Ordering::Release);
     }
 
     pub fn in_queue(&self) -> usize {
@@ -572,7 +579,7 @@ impl ByteBudget {
             .try_update(Ordering::AcqRel, Ordering::Acquire, |in_queue| {
                 in_queue
                     .checked_add(len)
-                    .filter(|next| *next <= self.budget)
+                    .filter(|next| *next <= self.budget())
             })
             .is_ok()
     }
@@ -1502,7 +1509,11 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
             } else if open_now {
                 if dc_tx.is_none() {
                     if let Some(pc) = pc.as_mut() {
-                        if let Some((tx, _rx)) = pc.split(cancel.clone(), relay_switch.clone()) {
+                        if let Some((tx, _rx)) = pc.split(
+                            cancel.clone(),
+                            relay_switch.clone(),
+                            INITIAL_WINDOW as usize,
+                        ) {
                             dc_tx = Some(Arc::new(tx));
                         }
                     }
@@ -1837,7 +1848,11 @@ async fn receive_loop<T: FrameTx, R: FrameRx, F: DcFactory>(
         // The data channel opened: take its halves.
         if dc_was_open && dc_rx.is_none() && !use_relay {
             if let Some(pc) = pc.as_mut() {
-                if let Some((_tx, rx)) = pc.split(cancel.clone(), relay_switch.clone()) {
+                let receive_window =
+                    usize::try_from(opts.initial_window).unwrap_or(usize::MAX - MAX_FRAME);
+                if let Some((_tx, rx)) =
+                    pc.split(cancel.clone(), relay_switch.clone(), receive_window)
+                {
                     dc_rx = Some(rx);
                 }
             }
@@ -2892,8 +2907,9 @@ impl DataChannel for MemDc {
         &mut self,
         cancel: CancellationToken,
         relay_switch: Arc<Notify>,
+        receive_window: usize,
     ) -> Option<(Self::Tx, Self::Rx)> {
-        let _ = (cancel, relay_switch);
+        let _ = (cancel, relay_switch, receive_window);
         self.shared.halves.lock().expect("halves poisoned").take()
     }
 

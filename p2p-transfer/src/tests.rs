@@ -857,8 +857,10 @@ async fn local_test_mem_transports_roundtrip() {
     // The halves are handed out exactly once.
     let cancel = tokio_util::sync::CancellationToken::new();
     let notify = Arc::new(tokio::sync::Notify::new());
-    assert!(dc.split(cancel.clone(), notify.clone()).is_some());
-    assert!(dc.split(cancel, notify).is_none());
+    assert!(dc
+        .split(cancel.clone(), notify.clone(), INITIAL_WINDOW as usize)
+        .is_some());
+    assert!(dc.split(cancel, notify, INITIAL_WINDOW as usize).is_none());
 
     dc.close();
     assert_eq!(*dc.state_watch().borrow(), PcState::Closed);
