@@ -5,8 +5,8 @@
 `p2p-transfer` is an `eframe`/`egui` application for native and browser file
 transfer. Upstream iroh 1.1 supplies authenticated endpoints, share tickets,
 signalling, and the relay transport. Browser-to-browser WebRTC data transfer is
-the next transport step; `src/webrtc.rs` currently advertises it as unavailable,
-so browser transfers use iroh's encrypted relay path.
+implemented as a direct `RTCDataChannel`, with offer/answer/ICE travelling over
+iroh's encrypted control stream and the iroh stream retained as fallback.
 
 The parent Cargo workspace has `p2p-transfer` as its default member.
 `README.md` is inherited `eframe_template` material, not project documentation.
@@ -65,8 +65,9 @@ routes stream bounded chunks and are required for larger downloads.
   fallback.
 - `assets/sw.js` — app cache plus capability-addressed, single-use streaming
   download responses with bounded demand/ack flow.
-- `src/webrtc.rs` — browser data-channel interface and constants; still a stub
-  returning `available() = false`.
+- `src/webrtc.rs` and `assets/webrtc-channel.js` — browser data-channel
+  implementation: SDP/ICE, bounded inbound queue, `bufferedAmount`
+  backpressure, path stats, close/failure signalling, and relay fallback.
 
 Native and wasm share protocol and transfer logic but differ at file I/O and
 endpoint transport boundaries. Any native filesystem or tokio-net-only code
@@ -93,4 +94,8 @@ their futures are `!Send`; do not add a `Send` bound to `Source` or `Sink`.
 `local_test_*` must be deterministic and offline. `online_test_*` may require
 the public relay and must never convert a timeout into a silent pass. Native
 loopback endpoint tests use `RelayChoice::None` and should remain part of the
-normal suite.
+normal suite. The real browser data-channel integration test runs with:
+
+```sh
+wasm-pack test --headless --firefox -- --test webrtc_wasm
+```

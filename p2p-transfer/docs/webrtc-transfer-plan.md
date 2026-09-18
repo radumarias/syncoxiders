@@ -1,7 +1,9 @@
 # Plan: browser-to-browser transfer over WebRTC with iroh signaling
 
 Branch: `webrtc-transfer` (based on `improve-ui-38` @ e9cc2e9).
-Status: approved direction; amended 2026-09-08 after an adversarial review (see §9). Nothing implemented yet.
+Status: implemented through browser WebRTC and streaming file sinks on the
+`webrtc-transfer` branch; cross-session resume and production relay operations
+remain. The original design and amendments are retained below.
 
 ## 1. Summary
 

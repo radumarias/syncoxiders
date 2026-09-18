@@ -135,3 +135,6 @@ web-sys = { version = "0.3.104", features = [
     "MessageChannel",
     "MessagePort",
 ] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3.77"
