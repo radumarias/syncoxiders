@@ -1,10 +1,10 @@
-// Service worker for p2p-transfer.
+// Service worker for Oxfer.
 //
 // Network-first for the app shell: Trunk.toml sets `filehash = false`, so
 // `p2p-transfer_bg.wasm` never changes filename between builds — a
 // cache-first shell would shadow every later `trunk serve`/`trunk build`
 // forever. See CLAUDE.md and design §4.10.1.
-const cacheName = 'p2p-transfer-v2';
+const cacheName = 'oxfer-v3';
 const shellSuffixes = ['/', '/index.html', '/p2p-transfer.js', '/p2p-transfer_bg.wasm'];
 
 /* Take over immediately; activate() clears stale caches before this worker

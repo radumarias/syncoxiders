@@ -418,11 +418,11 @@ impl P2PTransfer {
             web_sys::window()
                 .and_then(|w| w.location().href().ok())
                 .map(|href| href.split('#').next().unwrap_or(&href).to_string())
-                .unwrap_or_else(|| "https://syncoxiders.app/".to_string())
+                .unwrap_or_else(|| "https://oxfer.pages.dev/".to_string())
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            "https://syncoxiders.app/".to_string()
+            "https://oxfer.pages.dev/".to_string()
         }
     }
 
@@ -956,7 +956,7 @@ impl P2PTransfer {
         ui.add_space(24.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                RichText::new("P2P File Transfer")
+                RichText::new("Send files peer-to-peer")
                     .color(tc.on_surface)
                     .size(28.0)
                     .strong(),
@@ -1397,12 +1397,7 @@ impl P2PTransfer {
     fn show_header(&mut self, ui: &mut Ui, ctx: &egui::Context, tc: &Tc) {
         ui.set_height(54.0);
         ui.horizontal_centered(|ui| {
-            ui.label(
-                RichText::new("Syncoxiders")
-                    .color(tc.primary)
-                    .strong()
-                    .size(20.0),
-            );
+            ui.label(RichText::new("Oxfer").color(tc.primary).strong().size(20.0));
 
             let at_home = matches!(self.mode, Mode::Home);
             if !at_home {
