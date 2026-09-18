@@ -1833,13 +1833,11 @@ async fn receive_loop<T: FrameTx, R: FrameRx, F: DcFactory>(
                 ctrl_tx,
                 dc,
                 opts,
-                progress,
                 cancel,
                 pc: &mut pc,
                 dc_open: &mut dc_open,
                 pc_state: &mut pc_state,
                 gathering: &mut gathering,
-                announce_signaling: state.sinks.is_none(),
             },
             &mut signals,
         )
@@ -2067,13 +2065,11 @@ struct SignalCtx<'a, T: FrameTx, F: DcFactory> {
     ctrl_tx: &'a Arc<T>,
     dc: &'a F,
     opts: &'a ReceiveOptions,
-    progress: &'a watch::Sender<TransferProgress>,
     cancel: &'a CancellationToken,
     pc: &'a mut Option<F::Dc>,
     dc_open: &'a mut Option<watch::Receiver<bool>>,
     pc_state: &'a mut Option<watch::Receiver<PcState>>,
     gathering: &'a mut bool,
-    announce_signaling: bool,
 }
 
 /// Apply the peer-connection work a frame handler queued.
@@ -2088,39 +2084,32 @@ async fn drain_signals<T: FrameTx, F: DcFactory>(
         ctrl_tx,
         dc,
         opts,
-        progress,
         cancel,
         pc,
         dc_open,
         pc_state,
         gathering,
-        announce_signaling,
     } = ctx;
     for signal in signals.drain(..) {
         match signal {
-            Signal::Offer(sdp) => {
-                if announce_signaling {
-                    progress.send_modify(|p| p.phase = Phase::Signaling);
-                }
-                match dc.create(DcRole::Answerer) {
-                    Ok(mut channel) => {
-                        match timeout(opts.aux_deadline, channel.accept_offer(&sdp)).await {
-                            Ok(Ok(answer)) => {
-                                *dc_open = Some(channel.open_watch());
-                                *pc_state = Some(channel.state_watch());
-                                *gathering = true;
-                                *pc = Some(channel);
-                                send_control(&**ctrl_tx, &Control::Answer { sdp: answer }).await?;
-                            }
-                            _ => {
-                                channel.close();
-                                log::debug!("could not answer the offer; using the relay");
-                            }
+            Signal::Offer(sdp) => match dc.create(DcRole::Answerer) {
+                Ok(mut channel) => {
+                    match timeout(opts.aux_deadline, channel.accept_offer(&sdp)).await {
+                        Ok(Ok(answer)) => {
+                            *dc_open = Some(channel.open_watch());
+                            *pc_state = Some(channel.state_watch());
+                            *gathering = true;
+                            *pc = Some(channel);
+                            send_control(&**ctrl_tx, &Control::Answer { sdp: answer }).await?;
+                        }
+                        _ => {
+                            channel.close();
+                            log::debug!("could not answer the offer; using the relay");
                         }
                     }
-                    Err(e) => log::debug!("no data channel available ({e}); using the relay"),
                 }
-            }
+                Err(e) => log::debug!("no data channel available ({e}); using the relay"),
+            },
             Signal::Ice(candidate) => {
                 if let Some(pc) = pc.as_mut() {
                     // Late candidates are applied, never rejected.
