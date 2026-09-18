@@ -1319,16 +1319,20 @@ async fn local_test_transport_selection_one_sided_webrtc() {
 #[tokio::test]
 async fn local_test_transport_selection_both_webrtc() {
     crate::logging::init_logging();
-    // Both sides can do WebRTC and the channel is open from the start: the sender must offer,
-    // and every chunk must leave the control stream for the data channel.
+    // Both sides can do WebRTC and the channel opens after signalling, as a browser channel
+    // does: the sender must offer, and every chunk must leave the control stream for the data
+    // channel.
     let cap = test_cap(0x44);
     let data = filler(256 * 1024);
     let (sender_dc, sender_handle, receiver_dc, receiver_handle) =
         MemDcFactory::pair(Some(64 * 1024));
-    sender_handle.set_open(true);
-    sender_handle.set_state(PcState::Connected);
-    receiver_handle.set_open(true);
-    receiver_handle.set_state(PcState::Connected);
+    let open_channels = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        sender_handle.set_state(PcState::Connected);
+        sender_handle.set_open(true);
+        receiver_handle.set_state(PcState::Connected);
+        receiver_handle.set_open(true);
+    });
 
     let files = Arc::new(vec![shared_file("direct.bin", &data)]);
     let manifest: Vec<FileMeta> = files.iter().map(|f| f.meta.clone()).collect();
@@ -1350,12 +1354,23 @@ async fn local_test_transport_selection_both_webrtc() {
     });
 
     let (commands, command_rx) = mpsc::channel(1);
-    commands
-        .send(ReceiveCommand::Save(sinks_for(&manifest)))
-        .await
-        .expect("save accepted");
     let (sender_progress, _sw) = watch::channel(TransferProgress::connecting());
     let (receiver_progress, receiver_watch) = watch::channel(TransferProgress::connecting());
+    let awaiting_save = receiver_watch.clone();
+    let save_after_signalling = tokio::spawn(async move {
+        // Negotiation is allowed to complete in the background, but must not replace the
+        // destination prompt: without sinks, no request can be sent and the UI would deadlock.
+        tokio::time::sleep(Duration::from_millis(75)).await;
+        let prompt_visible = matches!(awaiting_save.borrow().phase, Phase::AwaitingSave { .. });
+        commands
+            .send(ReceiveCommand::Save(sinks_for(&manifest)))
+            .await
+            .expect("save accepted");
+        assert!(
+            prompt_visible,
+            "WebRTC negotiation replaced the destination prompt"
+        );
+    });
     let cancel = CancellationToken::new();
 
     let (sent, received) = tokio::join!(
@@ -1384,6 +1399,8 @@ async fn local_test_transport_selection_both_webrtc() {
             receive_opts(cap)
         ),
     );
+    open_channels.await.expect("channel opener");
+    save_after_signalling.await.expect("delayed save");
     sent.expect("sender");
     let saved = received.expect("receiver");
     assert_eq!(saved[0].size, data.len() as u64);
