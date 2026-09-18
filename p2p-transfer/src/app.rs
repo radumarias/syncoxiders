@@ -1042,6 +1042,131 @@ fn home_action(
     clicked
 }
 
+fn process_step(ui: &mut Ui, tc: &Tc, number: &str, title: &str, body: &str) {
+    egui::Frame::new()
+        .fill(tc.surface_low)
+        .stroke(Stroke::new(1.0, tc.outline_var))
+        .corner_radius(CornerRadius::same(14))
+        .inner_margin(egui::Margin::same(18))
+        .show(ui, |ui| {
+            ui.set_min_height(142.0);
+            ui.horizontal(|ui| {
+                pill(ui, tc, number, number == "03");
+                ui.label(
+                    RichText::new(title)
+                        .color(tc.on_surface)
+                        .size(17.0)
+                        .strong(),
+                );
+            });
+            ui.add_space(6.0);
+            ui.add(
+                egui::Label::new(RichText::new(body).color(tc.on_surface_var).size(13.0)).wrap(),
+            );
+        });
+}
+
+fn show_how_it_works(ui: &mut Ui, tc: &Tc) {
+    const STEPS: [(&str, &str, &str); 4] = [
+        (
+            "01",
+            "Hash on your device",
+            "Oxfer reads the selected file in bounded slices and computes its BLAKE3 digest locally. \
+             The file is not uploaded to Cloudflare, an Oxfer server, or cloud storage.",
+        ),
+        (
+            "02",
+            "Authorize with one private link",
+            "The URL fragment contains the endpoint ticket and a fresh bearer capability. Fragments \
+             are not sent to the web host, but anyone holding the complete link can receive while \
+             the sender keeps sharing.",
+        ),
+        (
+            "03",
+            "Open an encrypted peer path",
+            "An authenticated iroh connection carries signaling, then browsers prefer a direct \
+             WebRTC DataChannel protected by DTLS. If direct ICE fails, encrypted QUIC traffic \
+             falls back through the iroh relay without exposing plaintext.",
+        ),
+        (
+            "04",
+            "Stream, save, and verify",
+            "Credit-based backpressure keeps memory bounded while chunks stream to the chosen \
+             destination. Oxfer reports success only after the received bytes match the sender's \
+             BLAKE3 digest.",
+        ),
+    ];
+
+    let compact = compact(ui);
+    ui.add_space(if compact { 28.0 } else { 42.0 });
+    ui.vertical_centered(|ui| {
+        ui.label(
+            RichText::new("How Oxfer works")
+                .color(tc.on_surface)
+                .size(if compact { 24.0 } else { 28.0 })
+                .strong(),
+        );
+        ui.add(
+            egui::Label::new(
+                RichText::new("No accounts, no server-side file storage, and no plaintext relay.")
+                    .color(tc.on_surface_var)
+                    .size(14.0),
+            )
+            .wrap(),
+        );
+    });
+    ui.add_space(18.0);
+
+    if compact {
+        for (number, title, body) in STEPS {
+            process_step(ui, tc, number, title, body);
+            ui.add_space(10.0);
+        }
+    } else {
+        for pair in STEPS.chunks(2) {
+            ui.columns(2, |cols| {
+                for (column, (number, title, body)) in pair.iter().enumerate() {
+                    process_step(&mut cols[column], tc, number, title, body);
+                }
+            });
+            ui.add_space(10.0);
+        }
+    }
+
+    ui.add_space(8.0);
+    egui::Frame::new()
+        .fill(tc.surface_lowest)
+        .stroke(Stroke::new(1.0, tc.secondary))
+        .corner_radius(CornerRadius::same(14))
+        .inner_margin(egui::Margin::same(18))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                pill(ui, tc, "PRIVACY BOUNDARY", true);
+                ui.label(
+                    RichText::new("Encrypted content, visible connection metadata")
+                        .color(tc.on_surface)
+                        .size(15.0)
+                        .strong(),
+                );
+            });
+            ui.add_space(6.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "Cloudflare serves only the app shell. STUN and relay infrastructure can \
+                         observe network addresses, timing, and approximate traffic volume, but not \
+                         file contents or the capability fragment. Direct peers may learn each \
+                         other's network address through ICE.",
+                    )
+                    .color(tc.on_surface_var)
+                    .size(13.0),
+                )
+                .wrap(),
+            );
+        });
+    ui.add_space(18.0);
+}
+
 impl P2PTransfer {
     fn show_home(&mut self, ui: &mut Ui) {
         let tc = Tc::for_ui(ui);
@@ -1133,6 +1258,8 @@ impl P2PTransfer {
                 );
             });
         }
+
+        show_how_it_works(ui, &tc);
 
         if pick {
             self.pick_file();
