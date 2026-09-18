@@ -861,7 +861,10 @@ impl P2PTransfer {
         flags.join(" · ")
     }
 
-    fn path_badge(path: TransferPath) -> &'static str {
+    fn path_badge(phase: &Phase, path: TransferPath) -> &'static str {
+        if matches!(phase, Phase::Signaling) {
+            return "Signaling via relay";
+        }
         match path {
             TransferPath::Direct => "Direct",
             TransferPath::Relayed => "Relayed",
@@ -1164,7 +1167,7 @@ impl P2PTransfer {
                             .size(12.0),
                     );
                     ui.label(
-                        RichText::new(Self::path_badge(p.path))
+                        RichText::new(Self::path_badge(&p.phase, p.path))
                             .color(tc.secondary)
                             .size(12.0),
                     );
@@ -1256,7 +1259,7 @@ impl P2PTransfer {
                             .size(14.0),
                     );
                     ui.label(
-                        RichText::new(Self::path_badge(p.path))
+                        RichText::new(Self::path_badge(&p.phase, p.path))
                             .color(tc.secondary)
                             .size(12.0),
                     );
