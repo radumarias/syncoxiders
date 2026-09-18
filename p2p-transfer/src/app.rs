@@ -53,37 +53,37 @@ struct Tc {
 impl Tc {
     const fn dark() -> Self {
         Self {
-            bg: Color32::from_rgb(19, 19, 27),                // #13131b
-            surface_lowest: Color32::from_rgb(13, 13, 21),    // #0d0d15
-            surface_low: Color32::from_rgb(27, 27, 35),       // #1b1b23
-            surface: Color32::from_rgb(31, 31, 39),           // #1f1f27
-            surface_high: Color32::from_rgb(41, 41, 50),      // #292932
-            primary: Color32::from_rgb(192, 193, 255),        // #c0c1ff
-            on_primary: Color32::from_rgb(16, 0, 169),        // #1000a9
-            secondary: Color32::from_rgb(78, 222, 163),       // #4edea3
-            on_surface: Color32::from_rgb(228, 225, 237),     // #e4e1ed
-            on_surface_var: Color32::from_rgb(199, 196, 215), // #c7c4d7
-            outline: Color32::from_rgb(144, 143, 160),        // #908fa0
-            outline_var: Color32::from_rgb(70, 69, 84),       // #464554
-            error: Color32::from_rgb(255, 180, 171),          // #ffb4ab
+            bg: Color32::from_rgb(16, 13, 12),                // #100d0c
+            surface_lowest: Color32::from_rgb(10, 8, 7),      // #0a0807
+            surface_low: Color32::from_rgb(28, 22, 19),       // #1c1613
+            surface: Color32::from_rgb(35, 27, 23),           // #231b17
+            surface_high: Color32::from_rgb(54, 39, 31),      // #36271f
+            primary: Color32::from_rgb(239, 112, 56),         // #ef7038
+            on_primary: Color32::from_rgb(34, 15, 7),         // #220f07
+            secondary: Color32::from_rgb(68, 218, 181),       // #44dab5
+            on_surface: Color32::from_rgb(247, 235, 226),     // #f7ebe2
+            on_surface_var: Color32::from_rgb(213, 190, 176), // #d5beb0
+            outline: Color32::from_rgb(168, 137, 120),        // #a88978
+            outline_var: Color32::from_rgb(81, 57, 46),       // #51392e
+            error: Color32::from_rgb(255, 181, 164),          // #ffb5a4
         }
     }
 
     const fn light() -> Self {
         Self {
-            bg: Color32::from_rgb(244, 243, 255),             // #f4f3ff
-            surface_lowest: Color32::from_rgb(255, 255, 255), // #ffffff
-            surface_low: Color32::from_rgb(238, 237, 255),    // #eeedff
-            surface: Color32::from_rgb(230, 229, 249),        // #e6e5f9
-            surface_high: Color32::from_rgb(216, 215, 235),   // #d8d7eb
-            primary: Color32::from_rgb(65, 67, 199),          // #4143c7
-            on_primary: Color32::from_rgb(255, 255, 255),     // #ffffff
-            secondary: Color32::from_rgb(0, 108, 74),         // #006c4a
-            on_surface: Color32::from_rgb(27, 26, 39),        // #1b1a27
-            on_surface_var: Color32::from_rgb(71, 69, 85),    // #474555
-            outline: Color32::from_rgb(120, 118, 127),        // #78767f
-            outline_var: Color32::from_rgb(199, 197, 208),    // #c7c5d0
-            error: Color32::from_rgb(186, 26, 26),            // #ba1a1a
+            bg: Color32::from_rgb(250, 246, 242),             // #faf6f2
+            surface_lowest: Color32::from_rgb(255, 253, 251), // #fffdfb
+            surface_low: Color32::from_rgb(244, 235, 228),    // #f4ebe4
+            surface: Color32::from_rgb(237, 222, 212),        // #edded4
+            surface_high: Color32::from_rgb(226, 202, 187),   // #e2cabb
+            primary: Color32::from_rgb(176, 66, 22),          // #b04216
+            on_primary: Color32::from_rgb(255, 249, 245),     // #fff9f5
+            secondary: Color32::from_rgb(0, 113, 88),         // #007158
+            on_surface: Color32::from_rgb(48, 28, 20),        // #301c14
+            on_surface_var: Color32::from_rgb(94, 67, 55),    // #5e4337
+            outline: Color32::from_rgb(132, 99, 82),          // #846352
+            outline_var: Color32::from_rgb(211, 187, 173),    // #d3bbad
+            error: Color32::from_rgb(177, 46, 30),            // #b12e1e
         }
     }
 
@@ -913,11 +913,17 @@ impl P2PTransfer {
         v.selection.bg_fill =
             Color32::from_rgba_unmultiplied(tc.primary.r(), tc.primary.g(), tc.primary.b(), 60);
         v.override_text_color = Some(tc.on_surface);
+        v.widgets.inactive.corner_radius = CornerRadius::same(10);
+        v.widgets.hovered.corner_radius = CornerRadius::same(10);
+        v.widgets.active.corner_radius = CornerRadius::same(10);
         // Both, and in this order: the context so later frames start correct, and the live
         // `Ui` so *this* frame is already themed. Setting only the context would leave the
         // root `Ui` — built before `logic()` ran — one frame behind on every toggle.
         ctx.set_visuals(v.clone());
         *ui.visuals_mut() = v;
+        ui.spacing_mut().button_padding = egui::vec2(18.0, 11.0);
+        ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
+        ui.spacing_mut().interact_size.y = 44.0;
     }
 }
 
@@ -927,9 +933,9 @@ impl P2PTransfer {
 fn card(tc: &Tc) -> egui::Frame {
     egui::Frame::new()
         .fill(tc.surface_low)
-        .corner_radius(CornerRadius::same(12))
+        .corner_radius(CornerRadius::same(16))
         .stroke(Stroke::new(1.0_f32, tc.outline_var))
-        .inner_margin(egui::Margin::same(20))
+        .inner_margin(egui::Margin::same(22))
 }
 
 fn primary_button(tc: &Tc, label: &str) -> Button<'static> {
@@ -937,83 +943,196 @@ fn primary_button(tc: &Tc, label: &str) -> Button<'static> {
         RichText::new(label.to_string())
             .color(tc.on_primary)
             .strong()
-            .size(14.0),
+            .size(15.0),
     )
     .fill(tc.primary)
-    .corner_radius(CornerRadius::same(8))
+    .stroke(Stroke::new(1.0, tc.primary))
+    .corner_radius(CornerRadius::same(10))
+    .min_size(egui::vec2(0.0, 46.0))
 }
 
 fn outline_button(label: &str, color: Color32) -> Button<'static> {
-    Button::new(RichText::new(label.to_string()).color(color).size(13.0))
-        .fill(Color32::TRANSPARENT)
-        .stroke(Stroke::new(1.0_f32, color))
-        .corner_radius(CornerRadius::same(8))
+    Button::new(
+        RichText::new(label.to_string())
+            .color(color)
+            .strong()
+            .size(14.0),
+    )
+    .fill(Color32::TRANSPARENT)
+    .stroke(Stroke::new(1.0_f32, color))
+    .corner_radius(CornerRadius::same(10))
+    .min_size(egui::vec2(0.0, 46.0))
+}
+
+fn compact(ui: &Ui) -> bool {
+    ui.available_width() < 620.0
+}
+
+fn pill(ui: &mut Ui, tc: &Tc, text: &str, accent: bool) {
+    let (fill, stroke, color) = if accent {
+        (
+            Color32::from_rgba_unmultiplied(
+                tc.secondary.r(),
+                tc.secondary.g(),
+                tc.secondary.b(),
+                18,
+            ),
+            tc.secondary,
+            tc.secondary,
+        )
+    } else {
+        (tc.surface_high, tc.outline_var, tc.on_surface_var)
+    };
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(Stroke::new(1.0, stroke))
+        .corner_radius(CornerRadius::same(20))
+        .inner_margin(egui::Margin::symmetric(10, 5))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(text)
+                    .monospace()
+                    .strong()
+                    .size(11.0)
+                    .color(color),
+            );
+        });
+}
+
+fn home_action(
+    ui: &mut Ui,
+    tc: &Tc,
+    code: &str,
+    title: &str,
+    description: &str,
+    button: &str,
+    primary: bool,
+) -> bool {
+    let mut clicked = false;
+    card(tc).show(ui, |ui| {
+        ui.set_min_height(164.0);
+        ui.horizontal(|ui| {
+            pill(ui, tc, code, primary);
+            ui.label(
+                RichText::new(title)
+                    .color(tc.on_surface)
+                    .size(21.0)
+                    .strong(),
+            );
+        });
+        ui.add_space(6.0);
+        ui.add(
+            egui::Label::new(
+                RichText::new(description)
+                    .color(tc.on_surface_var)
+                    .size(14.0),
+            )
+            .wrap(),
+        );
+        ui.add_space(14.0);
+        let width = ui.available_width();
+        clicked = if primary {
+            ui.add_sized([width, 48.0], primary_button(tc, button))
+                .clicked()
+        } else {
+            ui.add_sized([width, 48.0], outline_button(button, tc.secondary))
+                .clicked()
+        };
+    });
+    clicked
 }
 
 impl P2PTransfer {
     fn show_home(&mut self, ui: &mut Ui) {
         let tc = Tc::for_ui(ui);
-        ui.add_space(24.0);
+        let compact = compact(ui);
+        ui.add_space(if compact { 8.0 } else { 22.0 });
         ui.vertical_centered(|ui| {
-            ui.label(
-                RichText::new("Send files peer-to-peer")
-                    .color(tc.on_surface)
-                    .size(28.0)
-                    .strong(),
+            ui.horizontal_wrapped(|ui| {
+                ui.with_layout(
+                    egui::Layout::left_to_right(egui::Align::Center)
+                        .with_main_align(egui::Align::Center),
+                    |ui| {
+                        pill(ui, &tc, "RUST-POWERED", false);
+                        pill(ui, &tc, "PRIVATE BY DESIGN", true);
+                    },
+                );
+            });
+            ui.add_space(12.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new("Your files. Their device. No cloud in between.")
+                        .color(tc.on_surface)
+                        .size(if compact { 27.0 } else { 36.0 })
+                        .strong(),
+                )
+                .wrap(),
             );
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new("Secure, direct peer-to-peer sharing — no cloud storage")
-                    .color(tc.outline)
-                    .size(15.0),
+            ui.add_space(8.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "Oxfer opens an encrypted peer-to-peer path and streams every byte \
+                         directly to the receiver.",
+                    )
+                    .color(tc.on_surface_var)
+                    .size(if compact { 15.0 } else { 17.0 }),
+                )
+                .wrap(),
             );
         });
-        ui.add_space(32.0);
+        ui.add_space(if compact { 20.0 } else { 30.0 });
 
-        let mut pick = false;
-        let mut receive = false;
-        ui.columns(2, |cols| {
-            card(&tc).show(&mut cols[0], |ui| {
-                ui.set_min_height(150.0);
-                ui.vertical(|ui| {
-                    ui.label(
-                        RichText::new("Send")
-                            .color(tc.on_surface)
-                            .size(19.0)
-                            .strong(),
-                    );
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Pick a file and share the link it produces.")
-                            .color(tc.on_surface_var)
-                            .size(13.0),
-                    );
-                    ui.add_space(16.0);
-                    pick = ui.add(primary_button(&tc, "Choose File")).clicked();
-                });
-            });
-            card(&tc).show(&mut cols[1], |ui| {
-                ui.set_min_height(150.0);
-                ui.vertical(|ui| {
-                    ui.label(
-                        RichText::new("Receive")
-                            .color(tc.on_surface)
-                            .size(19.0)
-                            .strong(),
-                    );
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Paste a share link to download directly from the sender.")
-                            .color(tc.on_surface_var)
-                            .size(13.0),
-                    );
-                    ui.add_space(16.0);
-                    receive = ui
-                        .add(outline_button("Open a link", tc.secondary))
-                        .clicked();
-                });
-            });
+        ui.horizontal_wrapped(|ui| {
+            pill(ui, &tc, "DTLS / QUIC ENCRYPTED", true);
+            pill(ui, &tc, "BLAKE3 VERIFIED", false);
+            pill(ui, &tc, "NO ACCOUNT", false);
         });
+        ui.add_space(if compact { 16.0 } else { 22.0 });
+
+        let (mut pick, mut receive) = (false, false);
+        if compact {
+            pick = home_action(
+                ui,
+                &tc,
+                "TX",
+                "Send a file",
+                "Choose a file, hash it locally, then share one private capability link.",
+                "Choose file",
+                true,
+            );
+            ui.add_space(12.0);
+            receive = home_action(
+                ui,
+                &tc,
+                "RX",
+                "Receive a file",
+                "Open a link and save bytes streamed directly from the sender.",
+                "Open a transfer link",
+                false,
+            );
+        } else {
+            ui.columns(2, |cols| {
+                pick = home_action(
+                    &mut cols[0],
+                    &tc,
+                    "TX",
+                    "Send a file",
+                    "Choose a file, hash it locally, then share one private capability link.",
+                    "Choose file",
+                    true,
+                );
+                receive = home_action(
+                    &mut cols[1],
+                    &tc,
+                    "RX",
+                    "Receive a file",
+                    "Open a link and save bytes streamed directly from the sender.",
+                    "Open a transfer link",
+                    false,
+                );
+            });
+        }
 
         if pick {
             self.pick_file();
@@ -1025,6 +1144,7 @@ impl P2PTransfer {
 
     fn show_send(&mut self, ui: &mut Ui) {
         let tc = Tc::for_ui(ui);
+        let compact = compact(ui);
         let preparing_names: Vec<(String, f32)> = match &self.mode {
             Mode::Send { preparing } => preparing
                 .iter()
@@ -1036,24 +1156,41 @@ impl P2PTransfer {
         let link = self.link.lock().ok().and_then(|l| l.clone());
 
         card(&tc).show(ui, |ui| {
-            ui.label(
-                RichText::new("Sharing")
-                    .color(tc.on_surface)
-                    .size(19.0)
-                    .strong(),
-            );
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new("Share from this device")
+                        .color(tc.on_surface)
+                        .size(21.0)
+                        .strong(),
+                );
+                pill(ui, &tc, "E2E ENCRYPTED", true);
+            });
             ui.add_space(10.0);
 
             if let Ok(files) = self.shared_files.lock() {
                 for f in files.iter() {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(&f.meta.name).color(tc.on_surface).size(14.0));
+                    let file_row = |ui: &mut Ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&f.meta.name)
+                                    .color(tc.on_surface)
+                                    .size(15.0)
+                                    .strong(),
+                            )
+                            .wrap(),
+                        );
                         ui.label(
                             RichText::new(Self::format_size(f.meta.size))
                                 .color(tc.outline)
+                                .monospace()
                                 .size(12.0),
                         );
-                    });
+                    };
+                    if compact {
+                        ui.vertical(file_row);
+                    } else {
+                        ui.horizontal_wrapped(file_row);
+                    }
                 }
             }
 
@@ -1063,9 +1200,9 @@ impl P2PTransfer {
                 ui.label(
                     RichText::new(format!("Preparing {name}… {:.0} %", pct * 100.0))
                         .color(tc.on_surface_var)
-                        .size(13.0),
+                        .size(14.0),
                 );
-                ui.add(egui::ProgressBar::new(*pct).desired_height(6.0));
+                ui.add(egui::ProgressBar::new(*pct).desired_height(10.0));
             }
 
             ui.add_space(14.0);
@@ -1076,31 +1213,69 @@ impl P2PTransfer {
                     egui::Frame::new()
                         .fill(tc.surface_lowest)
                         .corner_radius(CornerRadius::same(8))
-                        .inner_margin(egui::Margin::same(10))
+                        .stroke(Stroke::new(1.0, tc.outline_var))
+                        .inner_margin(egui::Margin::same(12))
                         .show(ui, |ui| {
-                            ui.label(
-                                RichText::new(link)
-                                    .color(tc.on_surface)
-                                    .monospace()
-                                    .size(12.0),
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(link)
+                                        .color(tc.on_surface)
+                                        .monospace()
+                                        .size(12.0),
+                                )
+                                .wrap()
+                                .selectable(true),
                             );
                         });
                     ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui.add(primary_button(&tc, "Copy link")).clicked() {
+                    if compact {
+                        let width = ui.available_width();
+                        if ui
+                            .add_sized([width, 48.0], primary_button(&tc, "Copy private link"))
+                            .clicked()
+                        {
                             ui.ctx().copy_text(link.clone());
                         }
-                        if ui.add(outline_button("Stop sharing", tc.outline)).clicked() {
+                        if ui
+                            .add_sized([width, 48.0], outline_button("Stop sharing", tc.outline))
+                            .clicked()
+                        {
                             self.stop_sharing();
                         }
-                    });
+                    } else {
+                        ui.horizontal(|ui| {
+                            if ui.add(primary_button(&tc, "Copy private link")).clicked() {
+                                ui.ctx().copy_text(link.clone());
+                            }
+                            if ui.add(outline_button("Stop sharing", tc.outline)).clicked() {
+                                self.stop_sharing();
+                            }
+                        });
+                    }
                     ui.add_space(10.0);
-                    ui.label(RichText::new(LINK_WARNING).color(tc.error).size(12.0));
-                    ui.label(
-                        RichText::new("Keep this tab open while receivers download.")
-                            .color(tc.outline)
-                            .size(12.0),
-                    );
+                    egui::Frame::new()
+                        .fill(Color32::from_rgba_unmultiplied(
+                            tc.primary.r(),
+                            tc.primary.g(),
+                            tc.primary.b(),
+                            14,
+                        ))
+                        .stroke(Stroke::new(1.0, tc.outline_var))
+                        .corner_radius(CornerRadius::same(10))
+                        .inner_margin(egui::Margin::same(12))
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(LINK_WARNING).color(tc.error).size(13.0),
+                                )
+                                .wrap(),
+                            );
+                            ui.label(
+                                RichText::new("Keep this tab open while receivers download.")
+                                    .color(tc.on_surface_var)
+                                    .size(13.0),
+                            );
+                        });
                 }
                 (_, false) => {
                     ui.label(
@@ -1154,9 +1329,9 @@ impl P2PTransfer {
                 ui.add_space(8.0);
                 let short = id.to_string();
                 let short = short.get(..12).unwrap_or(&short).to_string();
-                ui.horizontal(|ui| {
+                let peer_row = |ui: &mut Ui| {
                     ui.label(
-                        RichText::new(short)
+                        RichText::new(&short)
                             .color(tc.on_surface_var)
                             .monospace()
                             .size(12.0),
@@ -1171,10 +1346,15 @@ impl P2PTransfer {
                             .color(tc.secondary)
                             .size(12.0),
                     );
-                });
+                };
+                if compact(ui) {
+                    ui.vertical(peer_row);
+                } else {
+                    ui.horizontal_wrapped(peer_row);
+                }
                 if p.bytes_total > 0 {
                     let frac = p.bytes_done as f32 / p.bytes_total as f32;
-                    ui.add(egui::ProgressBar::new(frac).desired_height(6.0));
+                    ui.add(egui::ProgressBar::new(frac).desired_height(10.0));
                 }
                 if let Some(err) = &p.error {
                     ui.label(RichText::new(err).color(tc.error).size(11.0));
@@ -1194,6 +1374,7 @@ impl P2PTransfer {
 
     fn show_receive(&mut self, ui: &mut Ui) {
         let tc = Tc::for_ui(ui);
+        let compact = compact(ui);
         let progress = match &self.mode {
             Mode::Receive(r) => r.handle.as_ref().map(|h| h.latest()),
             _ => None,
@@ -1216,53 +1397,62 @@ impl P2PTransfer {
         let mut cancel = false;
 
         card(&tc).show(ui, |ui| {
-            ui.label(
-                RichText::new("Receive")
-                    .color(tc.on_surface)
-                    .size(19.0)
-                    .strong(),
-            );
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new("Receive on this device")
+                        .color(tc.on_surface)
+                        .size(21.0)
+                        .strong(),
+                );
+                pill(ui, &tc, "PRIVATE SESSION", true);
+            });
             ui.add_space(10.0);
 
             if progress.is_none() {
                 ui.label(
-                    RichText::new("Paste the share link you were sent")
-                        .color(tc.outline)
-                        .size(12.0),
+                    RichText::new("Paste the complete capability link you were sent.")
+                        .color(tc.on_surface_var)
+                        .size(14.0),
                 );
                 ui.add_space(6.0);
                 if let Mode::Receive(r) = &mut self.mode {
                     egui::Frame::new()
                         .fill(tc.surface_lowest)
-                        .corner_radius(CornerRadius::same(8))
-                        .inner_margin(egui::Margin::same(10))
+                        .corner_radius(CornerRadius::same(10))
+                        .stroke(Stroke::new(1.0, tc.outline_var))
+                        .inner_margin(egui::Margin::same(12))
                         .show(ui, |ui| {
-                            ui.add(
+                            ui.add_sized(
+                                [ui.available_width(), 48.0],
                                 egui::TextEdit::singleline(&mut r.input)
                                     .hint_text("https://…#endpoint…&cap=…")
                                     .frame(egui::Frame::new())
-                                    .font(egui::FontId::monospace(13.0))
+                                    .font(egui::FontId::monospace(14.0))
                                     .text_color(tc.on_surface)
                                     .desired_width(f32::INFINITY),
                             );
                         });
                 }
                 ui.add_space(10.0);
-                submit = ui.add(primary_button(&tc, "Download")).clicked();
+                submit = if compact {
+                    let width = ui.available_width();
+                    ui.add_sized([width, 48.0], primary_button(&tc, "Open secure transfer"))
+                        .clicked()
+                } else {
+                    ui.add(primary_button(&tc, "Open secure transfer"))
+                        .clicked()
+                };
             }
 
             if let Some(p) = &progress {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(
                         RichText::new(Self::phase_text(&p.phase))
                             .color(tc.on_surface)
-                            .size(14.0),
+                            .size(15.0)
+                            .strong(),
                     );
-                    ui.label(
-                        RichText::new(Self::path_badge(&p.phase, p.path))
-                            .color(tc.secondary)
-                            .size(12.0),
-                    );
+                    pill(ui, &tc, Self::path_badge(&p.phase, p.path), true);
                     if p.bytes_per_sec > 0.0 {
                         ui.label(
                             RichText::new(format!(
@@ -1278,11 +1468,20 @@ impl P2PTransfer {
                 if let Phase::AwaitingSave { manifest } = &p.phase {
                     ui.add_space(10.0);
                     for meta in manifest {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(&meta.name).color(tc.on_surface).size(13.0));
+                        let manifest_row = |ui: &mut Ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&meta.name)
+                                        .color(tc.on_surface)
+                                        .size(14.0)
+                                        .strong(),
+                                )
+                                .wrap(),
+                            );
                             ui.label(
                                 RichText::new(Self::format_size(meta.size))
                                     .color(tc.outline)
+                                    .monospace()
                                     .size(12.0),
                             );
                             let hex = meta.hash.to_hex();
@@ -1292,13 +1491,32 @@ impl P2PTransfer {
                                     .monospace()
                                     .size(11.0),
                             );
-                        });
+                        };
+                        if compact {
+                            ui.vertical(manifest_row);
+                        } else {
+                            ui.horizontal_wrapped(manifest_row);
+                        }
                     }
                     ui.add_space(12.0);
-                    if ui
-                        .add_enabled(!save_pending, primary_button(&tc, "Save"))
+                    let save = if compact {
+                        let width = ui.available_width();
+                        ui.add_enabled_ui(!save_pending, |ui| {
+                            ui.add_sized(
+                                [width, 48.0],
+                                primary_button(&tc, "Choose destination and save"),
+                            )
+                            .clicked()
+                        })
+                        .inner
+                    } else {
+                        ui.add_enabled(
+                            !save_pending,
+                            primary_button(&tc, "Choose destination and save"),
+                        )
                         .clicked()
-                    {
+                    };
+                    if save {
                         save_manifest = Some(manifest.clone());
                     }
                     if save_pending {
@@ -1311,7 +1529,7 @@ impl P2PTransfer {
                 } else if p.bytes_total > 0 {
                     ui.add_space(10.0);
                     let frac = p.bytes_done as f32 / p.bytes_total as f32;
-                    ui.add(egui::ProgressBar::new(frac).desired_height(8.0));
+                    ui.add(egui::ProgressBar::new(frac).desired_height(12.0));
                     ui.label(
                         RichText::new(format!(
                             "{} of {}",
@@ -1325,7 +1543,13 @@ impl P2PTransfer {
 
                 if !p.phase.is_terminal() {
                     ui.add_space(10.0);
-                    cancel = ui.add(outline_button("Cancel", tc.outline)).clicked();
+                    cancel = if compact {
+                        let width = ui.available_width();
+                        ui.add_sized([width, 48.0], outline_button("Cancel", tc.outline))
+                            .clicked()
+                    } else {
+                        ui.add(outline_button("Cancel", tc.outline)).clicked()
+                    };
                 }
             }
 
@@ -1360,6 +1584,7 @@ impl P2PTransfer {
 
     fn show_received_files(&mut self, ui: &mut Ui) {
         let tc = Tc::for_ui(ui);
+        let compact = compact(ui);
         let Ok(files) = self.received_files.lock() else {
             return;
         };
@@ -1375,16 +1600,30 @@ impl P2PTransfer {
                     .strong(),
             );
             for f in files.iter() {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(&f.name).color(tc.on_surface).size(13.0));
+                ui.add_space(10.0);
+                let file_row = |ui: &mut Ui| {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&f.name)
+                                .color(tc.on_surface)
+                                .size(14.0)
+                                .strong(),
+                        )
+                        .wrap(),
+                    );
                     ui.label(
                         RichText::new(Self::format_size(f.size))
                             .color(tc.outline)
+                            .monospace()
                             .size(12.0),
                     );
                     ui.label(RichText::new(&f.when).color(tc.outline_var).size(11.0));
-                });
+                };
+                if compact {
+                    ui.vertical(file_row);
+                } else {
+                    ui.horizontal_wrapped(file_row);
+                }
                 ui.label(
                     RichText::new(&f.location)
                         .color(tc.on_surface_var)
@@ -1395,36 +1634,75 @@ impl P2PTransfer {
     }
 
     fn show_header(&mut self, ui: &mut Ui, ctx: &egui::Context, tc: &Tc) {
-        ui.set_height(54.0);
+        let compact = ui.available_width() < 680.0;
+        ui.set_height(64.0);
         ui.horizontal_centered(|ui| {
-            ui.label(RichText::new("Oxfer").color(tc.primary).strong().size(20.0));
-
+            ui.label(
+                RichText::new("OX")
+                    .color(tc.primary)
+                    .monospace()
+                    .strong()
+                    .size(13.0),
+            );
+            ui.label(
+                RichText::new("Oxfer")
+                    .color(tc.on_surface)
+                    .strong()
+                    .size(if compact { 21.0 } else { 23.0 }),
+            );
             let at_home = matches!(self.mode, Mode::Home);
-            if !at_home {
-                ui.add_space(12.0);
-                if ui.add(outline_button("🏠 Home", tc.outline)).clicked() {
-                    self.mode = Mode::Home;
-                }
-            }
             let label = match self.mode {
-                Mode::Home => "HOME",
-                Mode::Send { .. } => "SENDING",
-                Mode::Receive(_) => "RECEIVING",
+                Mode::Home => "READY",
+                Mode::Send { .. } => "TX",
+                Mode::Receive(_) => "RX",
             };
-            ui.add_space(12.0);
-            ui.label(RichText::new(label).color(tc.outline).size(11.0));
+            if !compact {
+                ui.add_space(8.0);
+                pill(ui, tc, label, matches!(self.mode, Mode::Receive(_)));
+            }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                egui::widgets::global_theme_preference_buttons(ui);
-                ui.add_space(12.0);
-                if !matches!(self.mode, Mode::Receive(_))
+                let dark = ui.visuals().dark_mode;
+                let theme_label = if compact {
+                    if dark {
+                        "SUN"
+                    } else {
+                        "MOON"
+                    }
+                } else if dark {
+                    "Light mode"
+                } else {
+                    "Dark mode"
+                };
+                if ui
+                    .add_sized(
+                        [if compact { 56.0 } else { 108.0 }, 44.0],
+                        outline_button(theme_label, tc.outline),
+                    )
+                    .clicked()
+                {
+                    let next_dark = !dark;
+                    Self::apply_theme(ctx, ui, next_dark);
+                    self.last_dark_mode = Some(next_dark);
+                }
+                if !compact
+                    && !matches!(self.mode, Mode::Receive(_))
                     && ui.add(primary_button(tc, "Choose File")).clicked()
                 {
                     self.pick_file();
                 }
+                if !at_home
+                    && ui
+                        .add_sized(
+                            [if compact { 64.0 } else { 84.0 }, 44.0],
+                            outline_button("Home", tc.outline),
+                        )
+                        .clicked()
+                {
+                    self.mode = Mode::Home;
+                }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    ui.add_space(12.0);
                     ui.menu_button("File", |ui| {
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1438,8 +1716,9 @@ impl P2PTransfer {
     }
 
     fn show_terminal(&mut self, ui: &mut Ui, tc: &Tc) {
+        let compact = ui.available_width() < 620.0;
         ui.horizontal(|ui| {
-            ui.set_height(44.0);
+            ui.set_height(50.0);
             let chevron = if self.show_terminal_view {
                 "▼"
             } else {
@@ -1451,7 +1730,7 @@ impl P2PTransfer {
                         RichText::new(format!("{chevron} Terminal Output >_"))
                             .color(tc.secondary)
                             .monospace()
-                            .size(12.0),
+                            .size(13.0),
                     )
                     .fill(Color32::TRANSPARENT),
                 )
@@ -1460,7 +1739,7 @@ impl P2PTransfer {
                 self.show_terminal_view = !self.show_terminal_view;
             }
             ui.add_space(12.0);
-            if !self.show_terminal_view {
+            if !compact && !self.show_terminal_view {
                 if let Ok(logs) = logging::terminal_buffer().lock() {
                     let msg = logs
                         .back()
@@ -1550,18 +1829,19 @@ impl eframe::App for P2PTransfer {
             self.last_dark_mode = Some(dark);
         }
         let tc = Tc::of(dark);
+        let compact = ui.available_width() < 680.0;
 
         let header_frame = egui::Frame::new()
             .fill(tc.surface)
             .stroke(Stroke::new(1.0_f32, tc.outline_var))
             .inner_margin(egui::Margin {
-                left: 24,
-                right: 24,
+                left: if compact { 14 } else { 24 },
+                right: if compact { 14 } else { 24 },
                 top: 0,
                 bottom: 0,
             });
         egui::Panel::top("header")
-            .exact_size(54.0)
+            .exact_size(64.0)
             .frame(header_frame)
             .show(ui, |ui| self.show_header(ui, ctx, &tc));
 
@@ -1569,34 +1849,45 @@ impl eframe::App for P2PTransfer {
             .fill(tc.surface_lowest)
             .stroke(Stroke::new(1.0_f32, tc.outline_var))
             .inner_margin(egui::Margin {
-                left: 20,
-                right: 20,
+                left: if compact { 12 } else { 20 },
+                right: if compact { 12 } else { 20 },
                 top: 0,
                 bottom: 0,
             });
-        let terminal_height = if self.show_terminal_view { 200.0 } else { 44.0 };
+        let terminal_height = if self.show_terminal_view {
+            if compact {
+                180.0
+            } else {
+                220.0
+            }
+        } else {
+            50.0
+        };
         egui::Panel::bottom("terminal_bar")
             .exact_size(terminal_height)
             .frame(terminal_frame)
             .show(ui, |ui| self.show_terminal(ui, &tc));
 
         let content_frame = egui::Frame::new().fill(tc.bg).inner_margin(egui::Margin {
-            left: 24,
-            right: 24,
-            top: 16,
-            bottom: 16,
+            left: if compact { 14 } else { 28 },
+            right: if compact { 14 } else { 28 },
+            top: if compact { 12 } else { 20 },
+            bottom: if compact { 16 } else { 24 },
         });
         egui::CentralPanel::default()
             .frame(content_frame)
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    match self.mode {
-                        Mode::Home => self.show_home(ui),
-                        Mode::Send { .. } => self.show_send(ui),
-                        Mode::Receive(_) => self.show_receive(ui),
-                    }
-                    self.show_received_files(ui);
+                    let content_width = ui.available_width().min(1040.0);
+                    ui.vertical_centered(|ui| {
+                        ui.set_width(content_width);
+                        match self.mode {
+                            Mode::Home => self.show_home(ui),
+                            Mode::Send { .. } => self.show_send(ui),
+                            Mode::Receive(_) => self.show_receive(ui),
+                        }
+                        self.show_received_files(ui);
+                    });
                 });
             });
     }
