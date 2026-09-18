@@ -1,0 +1,7 @@
+/*
+  Cache-Control: public, max-age=0, must-revalidate
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
