@@ -22,7 +22,7 @@ use crate::file_io::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::file_io::{FsSink, FsSource};
-use crate::node::{Node, RelayChoice, SinkPref};
+use crate::node::{Node, Peers, RelayChoice, SinkPref};
 use crate::protocol::{
     cap_eq, cap_from_hex, cap_to_hex, decode, encode_chunk, encode_control, max_payload,
     negotiate_chunk, ChunkHeader, ChunkPlan, Control, FileMeta, Frame, ProtocolError, CAP_LEN,
@@ -361,6 +361,41 @@ fn local_test_cap_hex_roundtrip_and_compare() {
         other[i] ^= 0x01;
         assert!(!cap_eq(&cap, &other), "byte {i} was not compared");
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// Sender transfer receipts
+// ---------------------------------------------------------------------------------------
+
+#[test]
+fn local_test_completed_peer_receipt_survives_session_close() {
+    let peers = Peers::default();
+    let id = SecretKey::generate().public();
+    let mut completed = TransferProgress::connecting();
+    completed.phase = Phase::Complete { saved: Vec::new() };
+    completed.path = Path::Direct;
+    completed.file_name = Some("kept-after-close.bin".to_string());
+    completed.bytes_done = 42;
+    completed.bytes_total = 42;
+    let (tx, rx) = watch::channel(completed);
+    peers.register(id, rx);
+    drop(tx);
+
+    for _ in 0..2 {
+        let snapshot = peers.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert!(matches!(snapshot[0].1.phase, Phase::Complete { .. }));
+        assert_eq!(snapshot[0].1.path, Path::Direct);
+    }
+
+    let (tx, rx) = watch::channel(TransferProgress::connecting());
+    peers.register(SecretKey::generate().public(), rx);
+    drop(tx);
+    assert_eq!(
+        peers.snapshot().len(),
+        1,
+        "an unfinished closed session must not become a receipt"
+    );
 }
 
 // ---------------------------------------------------------------------------------------

@@ -525,8 +525,6 @@ const INCOMPLETE_LINK: &str = "this link is incomplete; ask the sender for the f
 
 /// Context string of the capability derivation. Changing it invalidates every live link.
 const CAP_CONTEXT: &str = "syncoxiders/p2p-transfer cap v1";
-/// How long a finished peer entry stays visible before it is pruned.
-const PEER_LINGER: Duration = Duration::from_secs(30);
 /// Budget for `Endpoint::online()` before a share reports itself offline.
 const ONLINE_TIMEOUT: Duration = Duration::from_secs(15);
 /// Budget for one dial, for callers that bring no options of their own. A receive session
@@ -621,7 +619,6 @@ struct PeerEntry {
     id: EndpointId,
     progress: watch::Receiver<TransferProgress>,
     since: Instant,
-    terminal_at: Option<Instant>,
 }
 
 /// The peers currently talking to this node.
@@ -636,13 +633,15 @@ impl Peers {
                 id,
                 progress,
                 since: Instant::now(),
-                terminal_at: None,
             });
         }
     }
 
-    /// Current peers, pruning as it goes: an entry whose session task is gone disappears at
-    /// once, a finished one lingers briefly so the UI can show how it ended.
+    /// Current and completed peers.
+    ///
+    /// A completed receipt stays for the life of this share, even after its session task drops,
+    /// so the sender retains the final file, outcome, and transport path. A disconnected
+    /// non-terminal session is still pruned because it has no trustworthy result to preserve.
     pub fn snapshot(&self) -> Vec<(EndpointId, TransferProgress)> {
         let Ok(mut peers) = self.0.lock() else {
             return Vec::new();
@@ -650,23 +649,17 @@ impl Peers {
         let now = Instant::now();
         let mut out = Vec::with_capacity(peers.len());
         peers.retain_mut(|entry| {
-            if entry.progress.has_changed().is_err() {
+            let closed = entry.progress.has_changed().is_err();
+            let progress = entry.progress.borrow().clone();
+            if closed && !progress.phase.is_terminal() {
                 log::debug!(
-                    "peer {} pruned after {:?}",
+                    "unfinished peer {} pruned after {:?}",
                     entry.id.fmt_short(),
                     now.duration_since(entry.since)
                 );
                 return false;
             }
-            // Decide on the borrow, clone only what survives: this runs every UI frame and a
-            // finished entry carries a `SavedFile` per received file.
-            if entry.progress.borrow().phase.is_terminal() {
-                let terminal_at = *entry.terminal_at.get_or_insert(now);
-                if now.duration_since(terminal_at) > PEER_LINGER {
-                    return false;
-                }
-            }
-            out.push((entry.id, entry.progress.borrow().clone()));
+            out.push((entry.id, progress));
             true
         });
         out
