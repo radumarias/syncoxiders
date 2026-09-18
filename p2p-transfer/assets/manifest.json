@@ -3,6 +3,12 @@
   "short_name": "Oxfer",
   "icons": [
     {
+      "src": "./assets/oxfer-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
       "src": "./assets/icon-256.png",
       "sizes": "256x256",
       "type": "image/png"
@@ -23,6 +29,6 @@
   "id": "/index.html",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "white",
-  "theme_color": "white"
+  "background_color": "#084caa",
+  "theme_color": "#0d67c8"
 }
