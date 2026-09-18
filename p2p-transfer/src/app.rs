@@ -109,6 +109,7 @@ pub struct ReceivedFile {
     pub size: u64,
     pub location: String,
     pub when: String,
+    pub path: TransferPath,
 }
 
 /// A picked file waiting for `logic()` to turn it into a [`PrepareHandle`].
@@ -228,6 +229,9 @@ pub struct P2PTransfer {
     sharing: bool,
     #[serde(skip)]
     show_terminal_view: bool,
+    /// Stays visible until sharing stops, so copying has an unmistakable result.
+    #[serde(skip)]
+    link_copied: bool,
     #[serde(skip)]
     last_dark_mode: Option<bool>,
     #[serde(skip)]
@@ -252,6 +256,7 @@ impl Default for P2PTransfer {
             pending_handle: Arc::new(Mutex::new(None)),
             sharing: false,
             show_terminal_view: false,
+            link_copied: false,
             last_dark_mode: None,
             fragment_checked: false,
             #[cfg(target_arch = "wasm32")]
@@ -448,6 +453,7 @@ impl P2PTransfer {
         if self.sharing {
             return;
         }
+        self.link_copied = false;
         self.sharing = true;
         let files = self.shared_files.clone();
         let node_slot = self.node.clone();
@@ -482,6 +488,7 @@ impl P2PTransfer {
     /// Stop serving. The next share draws a fresh key, so the old link stops working.
     fn stop_sharing(&mut self) {
         self.sharing = false;
+        self.link_copied = false;
         let node = self.node.lock().ok().and_then(|mut n| n.take());
         if let Some(node) = node {
             task::spawn(async move { node.shutdown().await });
@@ -764,6 +771,7 @@ impl P2PTransfer {
         if !progress.phase.is_terminal() {
             return;
         }
+        let path = progress.path;
         match progress.phase {
             Phase::Complete { saved } => {
                 let when = Self::timestamp();
@@ -773,6 +781,7 @@ impl P2PTransfer {
                         size: f.size,
                         location: f.location,
                         when: when.clone(),
+                        path,
                     }));
                 }
             }
@@ -868,10 +877,14 @@ impl P2PTransfer {
         if matches!(phase, Phase::Signaling) {
             return "Signaling via relay";
         }
+        Self::transfer_path_text(path)
+    }
+
+    fn transfer_path_text(path: TransferPath) -> &'static str {
         match path {
-            TransferPath::Direct => "Direct",
-            TransferPath::Relayed => "Relayed",
-            TransferPath::Unknown => "…",
+            TransferPath::Direct => "Direct WebRTC",
+            TransferPath::Relayed => "Encrypted relay",
+            TransferPath::Unknown => "Path pending",
         }
     }
 
@@ -952,6 +965,16 @@ fn primary_button(tc: &Tc, label: &str) -> Button<'static> {
     .stroke(Stroke::new(1.0, tc.primary))
     .corner_radius(CornerRadius::same(10))
     .min_size(egui::vec2(0.0, 46.0))
+}
+
+fn copy_button(tc: &Tc, copied: bool) -> Button<'static> {
+    if copied {
+        primary_button(tc, "✓ Copied to clipboard")
+            .fill(tc.secondary)
+            .stroke(Stroke::new(1.0, tc.secondary))
+    } else {
+        primary_button(tc, "Copy private link")
+    }
 }
 
 fn outline_button(label: &str, color: Color32) -> Button<'static> {
@@ -1374,10 +1397,11 @@ impl P2PTransfer {
                     if compact {
                         let width = ui.available_width();
                         if ui
-                            .add_sized([width, 48.0], primary_button(&tc, "Copy private link"))
+                            .add_sized([width, 48.0], copy_button(&tc, self.link_copied))
                             .clicked()
                         {
                             ui.ctx().copy_text(link.clone());
+                            self.link_copied = true;
                         }
                         if ui
                             .add_sized([width, 48.0], outline_button("Stop sharing", tc.outline))
@@ -1387,12 +1411,24 @@ impl P2PTransfer {
                         }
                     } else {
                         ui.horizontal(|ui| {
-                            if ui.add(primary_button(&tc, "Copy private link")).clicked() {
+                            if ui.add(copy_button(&tc, self.link_copied)).clicked() {
                                 ui.ctx().copy_text(link.clone());
+                                self.link_copied = true;
                             }
                             if ui.add(outline_button("Stop sharing", tc.outline)).clicked() {
                                 self.stop_sharing();
                             }
+                        });
+                    }
+                    if self.link_copied {
+                        ui.horizontal_wrapped(|ui| {
+                            pill(ui, &tc, "COPIED", true);
+                            ui.label(
+                                RichText::new("The private link is ready to paste.")
+                                    .color(tc.secondary)
+                                    .size(13.0)
+                                    .strong(),
+                            );
                         });
                     }
                     ui.add_space(10.0);
@@ -1463,7 +1499,7 @@ impl P2PTransfer {
         ui.add_space(12.0);
         card(&tc).show(ui, |ui| {
             ui.label(
-                RichText::new(format!("Receivers ({})", peers.len()))
+                RichText::new(format!("Transfers ({})", peers.len()))
                     .color(tc.on_surface)
                     .size(15.0)
                     .strong(),
@@ -1498,6 +1534,26 @@ impl P2PTransfer {
                 if p.bytes_total > 0 {
                     let frac = p.bytes_done as f32 / p.bytes_total as f32;
                     ui.add(egui::ProgressBar::new(frac).desired_height(10.0));
+                    ui.horizontal_wrapped(|ui| {
+                        if let Some(name) = &p.file_name {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(name).color(tc.on_surface_var).size(12.0),
+                                )
+                                .wrap(),
+                            );
+                        }
+                        ui.label(
+                            RichText::new(format!(
+                                "{} / {}",
+                                Self::format_size(p.bytes_done),
+                                Self::format_size(p.bytes_total)
+                            ))
+                            .color(tc.outline)
+                            .monospace()
+                            .size(11.0),
+                        );
+                    });
                 }
                 if let Some(err) = &p.error {
                     ui.label(RichText::new(err).color(tc.error).size(11.0));
@@ -1772,6 +1828,7 @@ impl P2PTransfer {
                         .color(tc.on_surface_var)
                         .size(11.0),
                 );
+                pill(ui, &tc, Self::transfer_path_text(f.path), true);
             }
         });
     }
