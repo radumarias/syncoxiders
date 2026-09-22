@@ -138,6 +138,8 @@ impl PrepareHandle {
     }
 }
 
+type ReceiveStartup = Arc<Mutex<Option<Result<TransferHandle, String>>>>;
+
 /// Everything one receive needs.
 ///
 /// Boxed inside [`Mode`] because a parsed `FragmentParams` (which carries an
@@ -148,6 +150,8 @@ struct ReceiveState {
     params: FragmentParams,
     handle: Option<TransferHandle>,
     error: Option<String>,
+    opening: bool,
+    startup: ReceiveStartup,
     save_pending: Arc<AtomicBool>,
 }
 
@@ -202,6 +206,9 @@ pub struct P2PTransfer {
 
     #[serde(skip)]
     mode: Mode,
+    /// Wake the real UI when browser callbacks or endpoint startup finish.
+    #[serde(skip)]
+    repaint: egui::Context,
     /// Handles and metadata for everything this node offers — never bytes.
     #[serde(skip)]
     shared_files: SharedFiles,
@@ -219,14 +226,11 @@ pub struct P2PTransfer {
     /// Picks waiting to become `PrepareHandle`s (see [`PendingPick`]).
     #[serde(skip)]
     pending_picks: Arc<Mutex<Vec<PendingPick>>>,
-    /// A receive handle built by the on-demand bind task, waiting for `logic()` to adopt it.
-    #[serde(skip)]
-    pending_handle: Arc<Mutex<Option<TransferHandle>>>,
     /// Set the moment a bind task is spawned, not when it finishes: `node` stays `None` for
     /// the whole bind, so two picks in quick succession would otherwise start two nodes and
     /// the second would silently replace the first one's link.
     #[serde(skip)]
-    sharing: bool,
+    sharing: Arc<AtomicBool>,
     #[serde(skip)]
     show_terminal_view: bool,
     /// Stays visible until sharing stops, so copying has an unmistakable result.
@@ -234,11 +238,15 @@ pub struct P2PTransfer {
     link_copied: bool,
     #[serde(skip)]
     last_dark_mode: Option<bool>,
-    #[serde(skip)]
-    fragment_checked: bool,
     #[cfg(target_arch = "wasm32")]
     #[serde(skip)]
     file_input_closure: Option<wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>>,
+    #[cfg(target_arch = "wasm32")]
+    #[serde(skip)]
+    hashchange_closure: Option<HashChangeListener>,
+    #[cfg(target_arch = "wasm32")]
+    #[serde(skip)]
+    last_fragment: Option<String>,
 }
 
 impl Default for P2PTransfer {
@@ -247,20 +255,38 @@ impl Default for P2PTransfer {
             #[cfg(not(target_arch = "wasm32"))]
             save_directory: None,
             mode: Mode::Home,
+            repaint: egui::Context::default(),
             shared_files: Arc::new(Mutex::new(Vec::new())),
             node: Arc::new(Mutex::new(None)),
             link: Arc::new(Mutex::new(None)),
             node_error: Arc::new(Mutex::new(None)),
             received_files: Arc::new(Mutex::new(Vec::new())),
             pending_picks: Arc::new(Mutex::new(Vec::new())),
-            pending_handle: Arc::new(Mutex::new(None)),
-            sharing: false,
+            sharing: Arc::new(AtomicBool::new(false)),
             show_terminal_view: false,
             link_copied: false,
             last_dark_mode: None,
-            fragment_checked: false,
             #[cfg(target_arch = "wasm32")]
             file_input_closure: None,
+            #[cfg(target_arch = "wasm32")]
+            hashchange_closure: None,
+            #[cfg(target_arch = "wasm32")]
+            last_fragment: None,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+struct HashChangeListener(wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>);
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for HashChangeListener {
+    fn drop(&mut self) {
+        use wasm_bindgen::JsCast as _;
+
+        if let Some(window) = web_sys::window() {
+            let _ = window
+                .remove_event_listener_with_callback("hashchange", self.0.as_ref().unchecked_ref());
         }
     }
 }
@@ -272,10 +298,30 @@ impl P2PTransfer {
         #[cfg(target_arch = "wasm32")]
         cc.egui_ctx
             .options_mut(|options| options.sync_window_theme = false);
-        if let Some(storage) = cc.storage {
-            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+        let mut app: Self = cc
+            .storage
+            .and_then(|storage| eframe::get_value(storage, eframe::APP_KEY))
+            .unwrap_or_default();
+        app.repaint = cc.egui_ctx.clone();
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsCast as _;
+
+            let ctx = cc.egui_ctx.clone();
+            let closure =
+                wasm_bindgen::closure::Closure::wrap(Box::new(move |_event: web_sys::Event| {
+                    ctx.request_repaint();
+                })
+                    as Box<dyn FnMut(web_sys::Event)>);
+            if let Some(window) = web_sys::window() {
+                let _ = window.add_event_listener_with_callback(
+                    "hashchange",
+                    closure.as_ref().unchecked_ref(),
+                );
+                app.hashchange_closure = Some(HashChangeListener(closure));
+            }
         }
-        Self::default()
+        app
     }
 
     /// Record a failure for whichever panel is showing.
@@ -338,6 +384,7 @@ impl P2PTransfer {
         input.set_type("file");
 
         let picks = self.pending_picks.clone();
+        let repaint = self.repaint.clone();
         let closure = wasm_bindgen::closure::Closure::wrap(Box::new(move |event: web_sys::Event| {
             let Some(input) = event
                 .target()
@@ -359,6 +406,7 @@ impl P2PTransfer {
                     snapshot,
                 });
             }
+            repaint.request_repaint();
         })
             as Box<dyn FnMut(web_sys::Event)>);
 
@@ -450,15 +498,16 @@ impl P2PTransfer {
     }
 
     fn start_sharing(&mut self) {
-        if self.sharing {
+        if self.sharing.swap(true, Ordering::AcqRel) {
             return;
         }
         self.link_copied = false;
-        self.sharing = true;
         let files = self.shared_files.clone();
         let node_slot = self.node.clone();
         let link_slot = self.link.clone();
         let errors = self.node_error.clone();
+        let sharing = self.sharing.clone();
+        let repaint = self.repaint.clone();
         let base = Self::base_url();
         let dev = self.dev_flag();
 
@@ -466,7 +515,9 @@ impl P2PTransfer {
             let node = match Node::bind(files, RelayChoice::from_env()).await {
                 Ok(node) => Arc::new(node),
                 Err(e) => {
+                    sharing.store(false, Ordering::Release);
                     Self::report(&errors, e.to_string());
+                    repaint.request_repaint();
                     return;
                 }
             };
@@ -477,17 +528,24 @@ impl P2PTransfer {
                         *slot = Some(link);
                     }
                 }
-                Err(e) => Self::report(&errors, e.to_string()),
+                Err(e) => {
+                    sharing.store(false, Ordering::Release);
+                    Self::report(&errors, e.to_string());
+                    repaint.request_repaint();
+                    node.shutdown().await;
+                    return;
+                }
             }
             if let Ok(mut slot) = node_slot.lock() {
                 *slot = Some(node);
             }
+            repaint.request_repaint();
         });
     }
 
     /// Stop serving. The next share draws a fresh key, so the old link stops working.
     fn stop_sharing(&mut self) {
-        self.sharing = false;
+        self.sharing.store(false, Ordering::Release);
         self.link_copied = false;
         let node = self.node.lock().ok().and_then(|mut n| n.take());
         if let Some(node) = node {
@@ -506,38 +564,60 @@ impl P2PTransfer {
         let params = Node::parse_fragment(fragment);
 
         if let Some(error) = params.error.clone() {
-            self.set_receive(params, None, Some(error));
+            self.set_receive(params, Some(input.to_string()), None, Some(error), false);
             return;
         }
         let Some(ticket) = params.ticket.clone() else {
-            self.set_receive(params, None, Some("this is not a share link".to_string()));
+            self.set_receive(
+                params,
+                Some(input.to_string()),
+                None,
+                Some("this is not a share link".to_string()),
+                false,
+            );
             return;
         };
         // A bare ticket authorizes nothing (design §2.6): refuse before dialling, and say why,
         // so a truncated link never looks like a connectivity failure.
         if params.cap.is_none() {
-            self.set_receive(params, None, Some(MISSING_CAP.to_string()));
+            self.set_receive(
+                params,
+                Some(input.to_string()),
+                None,
+                Some(MISSING_CAP.to_string()),
+                false,
+            );
             return;
         }
 
         let opts = ReceiveOptions::from_fragment(&params);
         let relay = RelayChoice::from_env();
-        let slot = self.pending_handle.clone();
-        let errors = self.node_error.clone();
-        self.set_receive(params, None, None);
+        let repaint = self.repaint.clone();
+        self.set_receive(params, Some(input.to_string()), None, None, true);
+        let Mode::Receive(r) = &self.mode else {
+            return;
+        };
+        // Each receive owns its startup result. Leaving, cancelling, or opening another
+        // link drops this slot, so a late completion cannot replace the new session.
+        let slot = Arc::downgrade(&r.startup);
 
         task::spawn(async move {
             // A receiver binds its own node on demand; `run_receiver` shuts it down again on
             // every exit path, so a cancelled receive leaks nothing.
-            match Node::bind(Arc::new(Mutex::new(Vec::new())), relay).await {
-                Ok(node) => {
-                    let handle = TransferHandle::start_receive(Arc::new(node), ticket, opts);
-                    if let Ok(mut slot) = slot.lock() {
-                        *slot = Some(handle);
-                    }
+            let result = match Node::bind(Arc::new(Mutex::new(Vec::new())), relay).await {
+                Ok(node) if slot.strong_count() == 0 => {
+                    node.shutdown().await;
+                    return;
                 }
-                Err(e) => Self::report(&errors, e.to_string()),
+                Ok(node) => Ok(TransferHandle::start_receive(Arc::new(node), ticket, opts)),
+                Err(e) => Err(e.to_string()),
+            };
+            if let Some(slot) = slot.upgrade() {
+                if let Ok(mut slot) = slot.lock() {
+                    *slot = Some(result);
+                }
             }
+            repaint.request_repaint();
         });
     }
 
@@ -545,18 +625,22 @@ impl P2PTransfer {
     fn set_receive(
         &mut self,
         params: FragmentParams,
+        input: Option<String>,
         handle: Option<TransferHandle>,
         error: Option<String>,
+        opening: bool,
     ) {
-        let input = match &self.mode {
+        let input = input.unwrap_or_else(|| match &self.mode {
             Mode::Receive(r) => r.input.clone(),
             _ => String::new(),
-        };
+        });
         self.mode = Mode::Receive(Box::new(ReceiveState {
             input,
             params,
             handle,
             error,
+            opening,
+            startup: Arc::default(),
             save_pending: Arc::new(AtomicBool::new(false)),
         }));
     }
@@ -646,23 +730,35 @@ impl P2PTransfer {
         }
     }
 
-    /// Read the URL fragment once, start the receive it describes, and scrub the secrets.
+    /// Accept each new URL fragment, including navigation within the already-open page.
     ///
     /// A fragment never reaches a server, but it does stay on the machine — URL bar, history,
     /// session restore, a pasted screenshot. The ticket and the capability are removed
     /// immediately; the QA flags stay so a reload keeps them (design §4.7.1).
     #[cfg(target_arch = "wasm32")]
-    fn check_fragment(&mut self) {
-        use crate::node::SinkPref;
-        use wasm_bindgen::JsValue;
-
+    fn check_fragment_change(&mut self) {
         let Some(window) = web_sys::window() else {
             return;
         };
         let Ok(hash) = window.location().hash() else {
             return;
         };
-        let params = Node::parse_fragment(&hash);
+        if self.last_fragment.as_ref() == Some(&hash) {
+            return;
+        }
+        self.last_fragment = Some(hash.clone());
+        self.check_fragment(&hash);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn check_fragment(&mut self, hash: &str) {
+        use crate::node::SinkPref;
+        use wasm_bindgen::JsValue;
+
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let params = Node::parse_fragment(hash);
         if params.ticket.is_none() && params.cap.is_none() && params.error.is_none() {
             return;
         }
@@ -697,8 +793,11 @@ impl P2PTransfer {
         if let Ok(history) = window.history() {
             let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&scrubbed));
         }
+        // replaceState does not fire hashchange. Remember the scrubbed value now so opening
+        // the same original link again is still treated as a new navigation.
+        self.last_fragment = window.location().hash().ok();
 
-        self.start_receive(&hash);
+        self.start_receive(&href);
     }
 
     // ── Per-frame bookkeeping (called from `logic`) ───────────────────────
@@ -732,15 +831,28 @@ impl P2PTransfer {
         }
     }
 
+    /// Engine watches have no egui callback: poll while starting, serving, or receiving.
+    fn needs_progress_poll(&self) -> bool {
+        self.sharing.load(Ordering::Acquire)
+            || match &self.mode {
+                Mode::Send { preparing } => !preparing.is_empty(),
+                Mode::Receive(r) => r.opening || r.handle.is_some(),
+                Mode::Home => false,
+            }
+    }
+
     /// Adopt a receive handle built by the on-demand bind task.
     fn adopt_pending_handle(&mut self) {
-        let pending = self.pending_handle.lock().ok().and_then(|mut h| h.take());
-        if let Some(handle) = pending {
-            if let Mode::Receive(r) = &mut self.mode {
-                r.handle = Some(handle);
+        let Mode::Receive(r) = &mut self.mode else {
+            return;
+        };
+        let pending = r.startup.lock().ok().and_then(|mut h| h.take());
+        if let Some(result) = pending {
+            r.opening = false;
+            match result {
+                Ok(handle) => r.handle = Some(handle),
+                Err(error) => r.error = Some(error),
             }
-            // Not in receive mode any more: dropping the handle cancels the session, which is
-            // exactly what leaving the panel should do.
         }
     }
 
@@ -752,6 +864,7 @@ impl P2PTransfer {
             }
             let taken = self.node_error.lock().ok().and_then(|mut e| e.take());
             if taken.is_some() {
+                r.opening = false;
                 r.error = taken;
             }
         }
@@ -784,6 +897,9 @@ impl P2PTransfer {
                         path,
                     }));
                 }
+                // The URL was scrubbed as soon as it was accepted; after success, do not put the
+                // bearer credential back on screen.
+                r.input.clear();
             }
             Phase::Failed => {
                 r.error = Some(
@@ -1304,7 +1420,7 @@ impl P2PTransfer {
             self.pick_file();
         }
         if receive {
-            self.set_receive(FragmentParams::default(), None, None);
+            self.set_receive(FragmentParams::default(), None, None, None, false);
         }
     }
 
@@ -1320,6 +1436,8 @@ impl P2PTransfer {
         };
         let ready = self.shared_files.lock().map(|f| f.len()).unwrap_or(0);
         let link = self.link.lock().ok().and_then(|l| l.clone());
+        let node_error = self.node_error.lock().ok().and_then(|e| e.clone());
+        let mut retry_share = false;
 
         card(&tc).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -1463,24 +1581,42 @@ impl P2PTransfer {
                             .size(12.0),
                     );
                 }
-                (None, true) if ready > 0 => {
+                (None, true) if ready > 0 && self.sharing.load(Ordering::Acquire) => {
                     ui.label(
-                        RichText::new("Starting the node…")
+                        RichText::new("Opening encrypted sharing endpoint…")
                             .color(tc.outline)
                             .size(12.0),
                     );
+                    ui.add(egui::Spinner::new().size(20.0).color(tc.secondary));
+                }
+                (None, true) if ready > 0 => {
+                    retry_share = if compact {
+                        let width = ui.available_width();
+                        ui.add_sized(
+                            [width, 48.0],
+                            outline_button("Retry opening endpoint", tc.secondary),
+                        )
+                        .clicked()
+                    } else {
+                        ui.add(outline_button("Retry opening endpoint", tc.secondary))
+                            .clicked()
+                    };
                 }
                 _ => {}
             }
 
-            if let Ok(err) = self.node_error.lock() {
-                if let Some(err) = err.as_ref() {
-                    ui.add_space(8.0);
-                    ui.label(RichText::new(err).color(tc.error).size(12.0));
-                }
+            if let Some(err) = &node_error {
+                ui.add_space(8.0);
+                ui.label(RichText::new(err).color(tc.error).size(12.0));
             }
         });
 
+        if retry_share {
+            if let Ok(mut error) = self.node_error.lock() {
+                *error = None;
+            }
+            self.start_sharing();
+        }
         self.show_peers(ui);
     }
 
@@ -1590,6 +1726,7 @@ impl P2PTransfer {
             Mode::Receive(r) => r.save_pending.load(Ordering::Acquire),
             _ => false,
         };
+        let opening = matches!(&self.mode, Mode::Receive(r) if r.opening);
 
         let mut submit = false;
         let mut save_manifest: Option<Vec<FileMeta>> = None;
@@ -1607,7 +1744,34 @@ impl P2PTransfer {
             });
             ui.add_space(10.0);
 
-            if progress.is_none() {
+            if progress.is_none() && opening {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(egui::Spinner::new().size(24.0).color(tc.secondary));
+                    ui.label(
+                        RichText::new("Opening encrypted session…")
+                            .color(tc.on_surface)
+                            .size(15.0)
+                            .strong(),
+                    );
+                    pill(ui, &tc, "SIGNALING VIA RELAY", true);
+                });
+                ui.label(
+                    RichText::new(
+                        "The private link was accepted. Oxfer is starting this device's endpoint.",
+                    )
+                    .color(tc.on_surface_var)
+                    .size(13.0),
+                );
+                ui.add_space(10.0);
+                cancel = if compact {
+                    let width = ui.available_width();
+                    ui.add_sized([width, 48.0], outline_button("Cancel opening", tc.outline))
+                        .clicked()
+                } else {
+                    ui.add(outline_button("Cancel opening", tc.outline))
+                        .clicked()
+                };
+            } else if progress.is_none() {
                 ui.label(
                     RichText::new("Paste the complete capability link you were sent.")
                         .color(tc.on_surface_var)
@@ -1776,6 +1940,8 @@ impl P2PTransfer {
             if let Mode::Receive(r) = &mut self.mode {
                 // Dropping the handle cancels the session, which then aborts its sinks,
                 // closes the connection and shuts its node down on its own.
+                r.opening = false;
+                r.startup = Arc::default();
                 r.handle = None;
             }
         }
@@ -1991,14 +2157,7 @@ impl eframe::App for P2PTransfer {
     /// Non-drawing per-frame work. Runs before `ui`, and may show nothing itself.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_arch = "wasm32")]
-        if !self.fragment_checked {
-            self.fragment_checked = true;
-            self.check_fragment();
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.fragment_checked = true;
-        }
+        self.check_fragment_change();
 
         self.drain_picks();
         self.prune_preparing();
@@ -2006,13 +2165,7 @@ impl eframe::App for P2PTransfer {
         self.poll_receive();
         self.drain_error();
 
-        // Keep repainting only while something is actually moving.
-        let busy = match &self.mode {
-            Mode::Send { preparing } => !preparing.is_empty(),
-            Mode::Receive(r) => r.handle.is_some(),
-            Mode::Home => false,
-        };
-        if busy {
+        if self.needs_progress_poll() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }
@@ -2096,6 +2249,73 @@ impl eframe::App for P2PTransfer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_test_startup_keeps_polling_without_user_input() {
+        let mut app = P2PTransfer::default();
+        assert!(!app.needs_progress_poll());
+
+        // Hashing may already be done while the endpoint is still opening.
+        app.mode = Mode::Send { preparing: vec![] };
+        app.sharing.store(true, Ordering::Release);
+        assert!(app.needs_progress_poll());
+        app.sharing.store(false, Ordering::Release);
+        assert!(!app.needs_progress_poll());
+
+        // The receiver has no TransferHandle until its bind task finishes.
+        app.set_receive(FragmentParams::default(), None, None, None, true);
+        assert!(app.needs_progress_poll());
+    }
+
+    #[test]
+    fn local_test_receive_preserves_the_link_that_was_opened() {
+        let mut app = P2PTransfer::default();
+        let link = "https://oxfer.app/#ticket=invalid";
+        app.start_receive(link);
+        let Mode::Receive(r) = &app.mode else {
+            panic!("expected receive panel");
+        };
+        assert_eq!(r.input, link);
+        assert!(r.error.is_some());
+        assert!(!r.opening);
+    }
+
+    #[test]
+    fn local_test_receive_startup_failure_stops_spinner_and_keeps_input() {
+        let mut app = P2PTransfer::default();
+        let input = "a private link".to_string();
+        app.set_receive(
+            FragmentParams::default(),
+            Some(input.clone()),
+            None,
+            None,
+            true,
+        );
+        if let Mode::Receive(r) = &app.mode {
+            *r.startup.lock().unwrap() = Some(Err("endpoint startup timed out".to_string()));
+        }
+        app.adopt_pending_handle();
+        let Mode::Receive(r) = &app.mode else {
+            panic!("expected receive panel");
+        };
+        assert_eq!(r.input, input);
+        assert_eq!(r.error.as_deref(), Some("endpoint startup timed out"));
+        assert!(!app.needs_progress_poll());
+    }
+
+    #[test]
+    fn local_test_old_startup_cannot_replace_a_new_receive() {
+        let mut app = P2PTransfer::default();
+        app.set_receive(FragmentParams::default(), None, None, None, true);
+        let old_slot = match &app.mode {
+            Mode::Receive(r) => Arc::downgrade(&r.startup),
+            _ => unreachable!(),
+        };
+        app.set_receive(FragmentParams::default(), None, None, None, true);
+        assert!(old_slot.upgrade().is_none());
+        app.adopt_pending_handle();
+        assert!(app.needs_progress_poll());
+    }
 
     #[test]
     fn local_test_save_attempt_blocks_duplicates_and_allows_retry() {

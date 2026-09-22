@@ -527,6 +527,8 @@ const INCOMPLETE_LINK: &str = "this link is incomplete; ask the sender for the f
 const CAP_CONTEXT: &str = "syncoxiders/p2p-transfer cap v1";
 /// Budget for `Endpoint::online()` before a share reports itself offline.
 const ONLINE_TIMEOUT: Duration = Duration::from_secs(15);
+/// Endpoint construction includes browser relay setup and must never leave the UI spinning.
+const BIND_TIMEOUT: Duration = Duration::from_secs(15);
 /// Budget for one dial, for callers that bring no options of their own. A receive session
 /// passes its own `ReceiveOptions::connect_timeout`, which is defined from this same value.
 const DIAL_TIMEOUT: Duration = crate::transfer::CONNECT_TIMEOUT;
@@ -695,11 +697,14 @@ impl Node {
                 Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
             }
         };
-        let endpoint = builder
-            .secret_key(secret)
-            .alpns(vec![ALPN.to_vec()])
-            .bind()
+        let bind = builder.secret_key(secret).alpns(vec![ALPN.to_vec()]).bind();
+        let endpoint = timeout(BIND_TIMEOUT, bind)
             .await
+            .map_err(|_| {
+                NodeError::Bind(
+                    "endpoint startup timed out; check this device's network and retry".to_string(),
+                )
+            })?
             .map_err(|e| NodeError::Bind(e.to_string()))?;
 
         let peers = Peers::default();
