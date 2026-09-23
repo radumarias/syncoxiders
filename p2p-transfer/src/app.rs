@@ -197,6 +197,55 @@ enum Mode {
     Receive(Box<ReceiveState>),
 }
 
+/// Browser-only library of opt-in local copies. Neither this state nor any share link is
+/// serialized by eframe; the storage module owns versioned file checkpoints.
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Default)]
+struct LocalCopies {
+    entries: Arc<Mutex<Vec<file_io::web::resume::StoredTransfer>>>,
+    error: Arc<Mutex<Option<String>>>,
+    busy: Arc<AtomicBool>,
+}
+
+#[cfg(target_arch = "wasm32")]
+enum LocalCopyAction {
+    Refresh,
+    Discard(String),
+    Export(String, usize),
+}
+
+#[cfg(target_arch = "wasm32")]
+impl LocalCopies {
+    fn run(&self, action: LocalCopyAction, repaint: egui::Context) {
+        if self.busy.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let library = self.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = match action {
+                LocalCopyAction::Refresh => Ok(()),
+                LocalCopyAction::Discard(id) => file_io::web::resume::discard(&id).await,
+                LocalCopyAction::Export(id, index) => {
+                    file_io::web::resume::export(&id, index).await
+                }
+            };
+            let result = match result {
+                Ok(()) => file_io::web::resume::list().await,
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(entries) => {
+                    *library.entries.lock().unwrap() = entries;
+                    *library.error.lock().unwrap() = None;
+                }
+                Err(error) => *library.error.lock().unwrap() = Some(error.to_string()),
+            }
+            library.busy.store(false, Ordering::Release);
+            repaint.request_repaint();
+        });
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(default)]
 pub struct P2PTransfer {
@@ -247,6 +296,21 @@ pub struct P2PTransfer {
     #[cfg(target_arch = "wasm32")]
     #[serde(skip)]
     last_fragment: Option<String>,
+    #[cfg(target_arch = "wasm32")]
+    #[serde(skip)]
+    local_copies: LocalCopies,
+    /// Retaining plaintext on this device is always an explicit choice, never a persisted
+    /// preference silently applied to a later private transfer.
+    #[cfg(target_arch = "wasm32")]
+    #[serde(skip)]
+    keep_local_copy: bool,
+    #[cfg(target_arch = "wasm32")]
+    #[serde(skip)]
+    confirm_discard: Option<String>,
+    /// Set only when the user selected a specific partial copy to resume.
+    #[cfg(target_arch = "wasm32")]
+    #[serde(skip)]
+    resume_target: Option<String>,
 }
 
 impl Default for P2PTransfer {
@@ -272,6 +336,14 @@ impl Default for P2PTransfer {
             hashchange_closure: None,
             #[cfg(target_arch = "wasm32")]
             last_fragment: None,
+            #[cfg(target_arch = "wasm32")]
+            local_copies: LocalCopies::default(),
+            #[cfg(target_arch = "wasm32")]
+            keep_local_copy: false,
+            #[cfg(target_arch = "wasm32")]
+            confirm_discard: None,
+            #[cfg(target_arch = "wasm32")]
+            resume_target: None,
         }
     }
 }
@@ -320,6 +392,8 @@ impl P2PTransfer {
                 );
                 app.hashchange_closure = Some(HashChangeListener(closure));
             }
+            app.local_copies
+                .run(LocalCopyAction::Refresh, cc.egui_ctx.clone());
         }
         app
     }
@@ -650,7 +724,7 @@ impl P2PTransfer {
     /// Invoke the browser picker promptly after the Save gesture, without preceding
     /// asynchronous work. Transient activation is browser-controlled, not an await count.
     fn save_click(&mut self, manifest: Vec<FileMeta>) {
-        let Mode::Receive(r) = &self.mode else {
+        let Mode::Receive(r) = &mut self.mode else {
             return;
         };
         let Some(handle) = &r.handle else { return };
@@ -660,6 +734,7 @@ impl P2PTransfer {
         let Some(attempt) = SaveAttempt::begin(&r.save_pending) else {
             return;
         };
+        r.error = None;
         let commands = handle.commands.clone();
         let errors = self.node_error.clone();
 
@@ -693,10 +768,60 @@ impl P2PTransfer {
 
         #[cfg(target_arch = "wasm32")]
         {
+            if self.keep_local_copy {
+                if let Some(expected) = &self.resume_target {
+                    match file_io::web::resume::manifest_id(&manifest) {
+                        Ok(id) if &id == expected => {}
+                        Ok(_) => {
+                            Self::report(
+                                &errors,
+                                "this link offers different files than the selected local copy; \
+                                 ask the sender for the same files, names and ordering"
+                                    .to_string(),
+                            );
+                            return;
+                        }
+                        Err(error) => {
+                            Self::report(&errors, error.to_string());
+                            return;
+                        }
+                    }
+                }
+            }
             let pref = r.params.sink_pref;
             let cancel = handle.cancel.clone();
+            let keep_local_copy = self.keep_local_copy;
+            let repaint = self.repaint.clone();
+            let library = self.local_copies.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 if cancel.is_cancelled() {
+                    return;
+                }
+                if keep_local_copy {
+                    // Persistent copies are keyed by the complete manifest, not the link.
+                    // Reopening a fresh sender link can therefore resume the same bytes
+                    // without storing a bearer capability on this device.
+                    match file_io::web::resume::prepare(&manifest).await {
+                        Ok(files) => {
+                            let permit = tokio::select! {
+                                biased;
+                                _ = cancel.cancelled() => None,
+                                result = commands.reserve() => result.ok(),
+                            };
+                            if let Some(permit) = permit.filter(|_| !cancel.is_cancelled()) {
+                                permit.send(ReceiveCommand::Resume(files));
+                                attempt.submitted();
+                            } else {
+                                for file in files {
+                                    file_io::Sink::abort(file.sink).await;
+                                }
+                            }
+                        }
+                        Err(_) if cancel.is_cancelled() => {}
+                        Err(error) => Self::report(&errors, error.to_string()),
+                    }
+                    library.run(LocalCopyAction::Refresh, repaint.clone());
+                    repaint.request_repaint();
                     return;
                 }
                 // Keep awaiting the picker even if the receive is cancelled: a native dialog
@@ -914,6 +1039,13 @@ impl P2PTransfer {
             _ => {}
         }
         r.handle = None;
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.keep_local_copy = false;
+            self.resume_target = None;
+            self.local_copies
+                .run(LocalCopyAction::Refresh, self.repaint.clone());
+        }
     }
 
     /// Turn an engine error string into something a user can act on.
@@ -990,6 +1122,9 @@ impl P2PTransfer {
     }
 
     fn path_badge(phase: &Phase, path: TransferPath) -> &'static str {
+        if matches!(phase, Phase::Reconnecting { .. }) {
+            return "Restoring connection";
+        }
         if matches!(phase, Phase::Signaling) {
             return "Signaling via relay";
         }
@@ -1007,6 +1142,7 @@ impl P2PTransfer {
     fn phase_text(phase: &Phase) -> &'static str {
         match phase {
             Phase::Connecting => "Connecting…",
+            Phase::Reconnecting { .. } => "Reconnecting…",
             Phase::Handshake => "Authorizing…",
             Phase::AwaitingSave { .. } => "Ready to save",
             Phase::Signaling => "Negotiating a direct path…",
@@ -1827,6 +1963,19 @@ impl P2PTransfer {
                         );
                     }
                 });
+                if let Phase::Reconnecting {
+                    attempt,
+                    max_attempts,
+                } = p.phase
+                {
+                    ui.label(
+                        RichText::new(format!(
+                            "Retry {attempt} of {max_attempts}. Written bytes are kept; keep the sender sharing."
+                        ))
+                        .color(tc.on_surface_var)
+                        .size(13.0),
+                    );
+                }
 
                 if let Phase::AwaitingSave { manifest } = &p.phase {
                     ui.add_space(10.0);
@@ -1862,12 +2011,38 @@ impl P2PTransfer {
                         }
                     }
                     ui.add_space(12.0);
+                    #[cfg(target_arch = "wasm32")]
+                    ui.add_enabled_ui(!save_pending, |ui| {
+                        ui.checkbox(
+                            &mut self.keep_local_copy,
+                            "Keep a resumable copy on this device",
+                        );
+                        if self.keep_local_copy {
+                            ui.label(
+                                RichText::new(
+                                    "File data stays in this browser until you delete it. Reopen a sender link \
+                                     to resume after closing the tab. Completed copies can be downloaded below. \
+                                     Private browsing, clearing site data, or storage eviction can remove them.",
+                                )
+                                .color(tc.on_surface_var)
+                                .size(12.0),
+                            );
+                        }
+                    });
+                    #[cfg(target_arch = "wasm32")]
+                    let save_label = if self.keep_local_copy {
+                        "Receive / resume local copy"
+                    } else {
+                        "Choose destination and save"
+                    };
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let save_label = "Choose destination and save";
                     let save = if compact {
                         let width = ui.available_width();
                         ui.add_enabled_ui(!save_pending, |ui| {
                             ui.add_sized(
                                 [width, 48.0],
-                                primary_button(&tc, "Choose destination and save"),
+                                primary_button(&tc, save_label),
                             )
                             .clicked()
                         })
@@ -1875,7 +2050,7 @@ impl P2PTransfer {
                     } else {
                         ui.add_enabled(
                             !save_pending,
-                            primary_button(&tc, "Choose destination and save"),
+                            primary_button(&tc, save_label),
                         )
                         .clicked()
                     };
@@ -1883,8 +2058,16 @@ impl P2PTransfer {
                         save_manifest = Some(manifest.clone());
                     }
                     if save_pending {
+                        #[cfg(target_arch = "wasm32")]
+                        let preparing = if self.keep_local_copy {
+                            "Opening local storage and checking saved bytes…"
+                        } else {
+                            "Selecting destinations…"
+                        };
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let preparing = "Selecting destinations…";
                         ui.label(
-                            RichText::new("Selecting destinations…")
+                            RichText::new(preparing)
                                 .color(tc.outline)
                                 .size(12.0),
                         );
@@ -1944,6 +2127,129 @@ impl P2PTransfer {
                 r.startup = Arc::default();
                 r.handle = None;
             }
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.keep_local_copy = false;
+                self.resume_target = None;
+                self.local_copies
+                    .run(LocalCopyAction::Refresh, self.repaint.clone());
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn show_local_copies(&mut self, ui: &mut Ui) {
+        let entries = self.local_copies.entries.lock().unwrap().clone();
+        let error = self.local_copies.error.lock().unwrap().clone();
+        if entries.is_empty() && error.is_none() {
+            return;
+        }
+        let tc = Tc::for_ui(ui);
+        let busy = self.local_copies.busy.load(Ordering::Acquire);
+        let receiving = matches!(&self.mode, Mode::Receive(r) if r.opening || r.handle.is_some());
+        let mut action = None;
+        let mut resume = None;
+        ui.add_space(12.0);
+        card(&tc).show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new("Copies on this device")
+                        .color(tc.on_surface)
+                        .size(21.0)
+                        .strong(),
+                );
+                if ui
+                    .add_enabled(!busy, outline_button("Refresh", tc.outline))
+                    .clicked()
+                {
+                    action = Some(LocalCopyAction::Refresh);
+                }
+                if busy {
+                    ui.spinner();
+                }
+            });
+            ui.label(
+                RichText::new(
+                    "To resume, reopen the sender's link and select “Keep a resumable copy”. \
+                     If the sender restarted, ask for a fresh link to exactly the same files. \
+                     Private links are never saved here.",
+                )
+                .color(tc.on_surface_var)
+                .size(13.0),
+            );
+            for entry in &entries {
+                ui.separator();
+                for (index, file) in entry.files.iter().enumerate() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(&file.name).strong());
+                        ui.label(format!(
+                            "{} / {}",
+                            Self::format_size(file.written),
+                            Self::format_size(file.size),
+                        ));
+                        if file.verified {
+                            pill(ui, &tc, "VERIFIED LOCAL COPY", true);
+                            if ui
+                                .add_enabled(
+                                    !busy && !receiving,
+                                    outline_button("Download copy", tc.secondary),
+                                )
+                                .clicked()
+                            {
+                                action = Some(LocalCopyAction::Export(entry.id.clone(), index));
+                            }
+                        } else {
+                            pill(ui, &tc, "PARTIAL", false);
+                        }
+                    });
+                }
+                ui.add_enabled_ui(!busy && !receiving, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        if entry.files.iter().any(|f| !f.verified)
+                            && ui
+                                .add(outline_button("Resume with a link", tc.secondary))
+                                .clicked()
+                        {
+                            resume = Some(entry.id.clone());
+                        }
+                        if self.confirm_discard.as_ref() == Some(&entry.id) {
+                            ui.label("Delete this local copy and all saved progress?");
+                            if ui
+                                .add(outline_button("Delete permanently", tc.error))
+                                .clicked()
+                            {
+                                action = Some(LocalCopyAction::Discard(entry.id.clone()));
+                                self.confirm_discard = None;
+                            }
+                            if ui.add(outline_button("Keep", tc.outline)).clicked() {
+                                self.confirm_discard = None;
+                            }
+                        } else if ui
+                            .add(outline_button("Delete local copy", tc.outline))
+                            .clicked()
+                        {
+                            self.confirm_discard = Some(entry.id.clone());
+                        }
+                    });
+                });
+            }
+            if let Some(error) = &error {
+                ui.label(RichText::new(error).color(tc.error).size(13.0));
+            }
+        });
+        if let Some(id) = resume {
+            self.set_receive(
+                FragmentParams::default(),
+                Some(String::new()),
+                None,
+                None,
+                false,
+            );
+            self.keep_local_copy = true;
+            self.resume_target = Some(id);
+        }
+        if let Some(action) = action {
+            self.local_copies.run(action, self.repaint.clone());
         }
     }
 
@@ -2066,6 +2372,11 @@ impl P2PTransfer {
                         .clicked()
                 {
                     self.mode = Mode::Home;
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        self.keep_local_copy = false;
+                        self.resume_target = None;
+                    }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -2240,6 +2551,8 @@ impl eframe::App for P2PTransfer {
                             Mode::Receive(_) => self.show_receive(ui),
                         }
                         self.show_received_files(ui);
+                        #[cfg(target_arch = "wasm32")]
+                        self.show_local_copies(ui);
                     });
                 });
             });
@@ -2249,6 +2562,19 @@ impl eframe::App for P2PTransfer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_test_reconnect_ui_does_not_claim_the_old_path_is_active() {
+        let phase = Phase::Reconnecting {
+            attempt: 2,
+            max_attempts: 5,
+        };
+        assert_eq!(P2PTransfer::phase_text(&phase), "Reconnecting…");
+        assert_eq!(
+            P2PTransfer::path_badge(&phase, TransferPath::Direct),
+            "Restoring connection",
+        );
+    }
 
     #[test]
     fn local_test_startup_keeps_polling_without_user_input() {

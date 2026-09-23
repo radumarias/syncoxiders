@@ -21,6 +21,8 @@ use crate::file_io::{
 use crate::node::SinkPref;
 use crate::protocol::FileMeta;
 
+pub mod resume;
+
 /// Largest file the memory route will accept (design §4.4.3(3)).
 pub const MEM_SINK_CAP: usize = 256 * 1024 * 1024;
 /// What the user is told when no route can take a file this size. It lives beside the cap it

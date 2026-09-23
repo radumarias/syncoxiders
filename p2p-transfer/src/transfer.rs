@@ -51,6 +51,11 @@ pub const WRITE_DEADLINE: Duration = Duration::from_secs(60);
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long the receiver waits for the data channel to open before falling back to the relay.
 pub const WEBRTC_OPEN: Duration = Duration::from_secs(10);
+/// Number of fresh control connections attempted after the first one fails.
+pub const MAX_RECONNECT_ATTEMPTS: u32 = 4;
+/// Initial reconnect delay. It doubles up to [`MAX_RECONNECT_BACKOFF`].
+pub const RECONNECT_BACKOFF: Duration = Duration::from_millis(500);
+pub const MAX_RECONNECT_BACKOFF: Duration = Duration::from_secs(8);
 /// Read-ahead granularity of [`SourceReader`]. Sender memory is bounded by two of these.
 pub const READ_AHEAD: usize = 1024 * 1024;
 /// Progress is published at most this often, unless a phase changed or a MiB went by.
@@ -118,6 +123,10 @@ pub enum TransferError {
     Remote(String),
     Transport(TransportError),
     Io(String),
+    /// A destination operation timed out. Its commit state is uncertain, so it is never retried.
+    SinkTimeout,
+    /// A fresh connection offered different content than the authenticated original manifest.
+    ManifestChanged,
     Timeout,
     Cancelled,
 }
@@ -143,6 +152,14 @@ impl std::fmt::Display for TransferError {
             Self::Remote(m) => write!(f, "{m}"),
             Self::Transport(e) => write!(f, "{e}"),
             Self::Io(m) => write!(f, "{m}"),
+            Self::SinkTimeout => write!(
+                f,
+                "the destination stopped responding; retrying could corrupt the saved file"
+            ),
+            Self::ManifestChanged => write!(
+                f,
+                "the sender is sharing different files; resume requires the same names, sizes, hashes and ordering"
+            ),
             Self::Timeout => write!(f, "timed out"),
             Self::Cancelled => write!(f, "cancelled"),
         }
@@ -603,6 +620,7 @@ impl ByteBudget {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Phase {
     Connecting,
+    Reconnecting { attempt: u32, max_attempts: u32 },
     Handshake,
     AwaitingSave { manifest: Vec<protocol::FileMeta> },
     Signaling,
@@ -713,6 +731,9 @@ pub struct ReceiveOptions {
     pub aux_deadline: Duration,
     pub connect_timeout: Duration,
     pub webrtc_open: Duration,
+    pub max_reconnect_attempts: u32,
+    pub reconnect_backoff: Duration,
+    pub max_reconnect_backoff: Duration,
     /// The link's access code (design §2.6). `None` fails before dialling.
     pub cap: Option<[u8; CAP_LEN]>,
     /// Fragment `sink=`; consumed by `pick_sinks` in the app's Save task.
@@ -733,6 +754,9 @@ impl Default for ReceiveOptions {
             aux_deadline: AUX_DEADLINE,
             connect_timeout: CONNECT_TIMEOUT,
             webrtc_open: WEBRTC_OPEN,
+            max_reconnect_attempts: MAX_RECONNECT_ATTEMPTS,
+            reconnect_backoff: RECONNECT_BACKOFF,
+            max_reconnect_backoff: MAX_RECONNECT_BACKOFF,
             cap: None,
             sink_pref: SinkPref::Auto,
             kill_dc_after: None,
@@ -771,6 +795,15 @@ impl std::fmt::Debug for ReceiveOptions {
 pub enum ReceiveCommand {
     /// Sinks in manifest order, created inside the Save click's task.
     Save(Vec<AnySink>),
+    /// Durable sinks plus BLAKE3 states reconstructed from their checkpointed prefixes.
+    Resume(Vec<ResumeFile>),
+}
+
+/// One durable file prepared for restart recovery.
+pub struct ResumeFile {
+    pub meta: FileMeta,
+    pub sink: AnySink,
+    pub hasher: blake3::Hasher,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1125,10 +1158,9 @@ fn describe_io(e: &std::io::Error) -> String {
     }
 }
 
-/// Await `fut` under rule §4.6.0-R: cancellation and one named deadline stay live for the
-/// duration, and nothing else — so a handler can await without freezing the session's own
-/// escape hatches, and the deadline the doc promises is real.
-async fn bounded<T>(
+/// Destination timeouts are not ordinary network timeouts: the browser or filesystem may
+/// have committed the operation just before the deadline, so replaying it is unsafe.
+async fn bounded_sink<T>(
     cancel: &CancellationToken,
     deadline: Duration,
     fut: impl Future<Output = T>,
@@ -1136,7 +1168,7 @@ async fn bounded<T>(
     tokio::select! {
         biased;
         _ = cancel.cancelled() => Err(TransferError::Cancelled),
-        _ = sleep(deadline) => Err(TransferError::Timeout),
+        _ = sleep(deadline) => Err(TransferError::SinkTimeout),
         value = fut => Ok(value),
     }
 }
@@ -1606,12 +1638,39 @@ struct FileState {
 }
 
 /// Transport-generic receiver core (design §4.6.2).
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) async fn run_receiver_on<T: FrameTx, R: FrameRx, F: DcFactory>(
     io: SessionIo<T, R, F>,
     mut commands: mpsc::Receiver<ReceiveCommand>,
     progress: watch::Sender<TransferProgress>,
     cancel: CancellationToken,
     opts: ReceiveOptions,
+) -> Result<Vec<SavedFile>, TransferError> {
+    let mut state = ReceiverState::default();
+    let result = run_receiver_session(
+        io,
+        &mut commands,
+        &progress,
+        &cancel,
+        &opts,
+        &mut state,
+        false,
+    )
+    .await;
+    finish_receiver(result, &mut state, &progress, &opts).await
+}
+
+/// Run one authenticated control connection while keeping the receiver state outside it.
+/// The iroh wrapper can therefore replace a failed connection without replacing sinks,
+/// verified files, offsets, or hash state.
+async fn run_receiver_session<T: FrameTx, R: FrameRx, F: DcFactory>(
+    io: SessionIo<T, R, F>,
+    commands: &mut mpsc::Receiver<ReceiveCommand>,
+    progress: &watch::Sender<TransferProgress>,
+    cancel: &CancellationToken,
+    opts: &ReceiveOptions,
+    state: &mut ReceiverState,
+    reconnecting: bool,
 ) -> Result<Vec<SavedFile>, TransferError> {
     let SessionIo {
         ctrl_tx,
@@ -1627,7 +1686,9 @@ pub(crate) async fn run_receiver_on<T: FrameTx, R: FrameRx, F: DcFactory>(
         return Err(TransferError::Unauthorized(AuthFailure::MissingCap));
     };
 
-    let offer_webrtc = dc.available() && !opts.force_relay;
+    // A fresh control connection resumes immediately over the encrypted relay. It does not
+    // spend another WebRTC negotiation interval before asking for the known remaining offset.
+    let offer_webrtc = !reconnecting && dc.available() && !opts.force_relay;
     send_control(
         &*ctrl_tx,
         &Control::Hello {
@@ -1642,21 +1703,9 @@ pub(crate) async fn run_receiver_on<T: FrameTx, R: FrameRx, F: DcFactory>(
         p.path = ctrl_tx.path();
     });
 
-    let mut state = ReceiverState {
-        manifest: Vec::new(),
-        bytes_total: 0,
-        sinks: None,
-        saved: Vec::new(),
-        current: None,
-        next_file: 0,
-        epoch: 0,
-        meter: ProgressMeter::new(),
-        bytes_done: 0,
-    };
-
     let result = match receiver_handshake(&mut ctrl_rx, opts.inactivity).await {
         Err(e) => Err(e),
-        Ok(manifest) => {
+        Ok(manifest) if state.manifest.is_empty() => {
             state.bytes_total = manifest.iter().map(|m| m.size).sum();
             state.manifest = manifest.clone();
             progress.send_modify(|p| {
@@ -1668,18 +1717,68 @@ pub(crate) async fn run_receiver_on<T: FrameTx, R: FrameRx, F: DcFactory>(
                     ctrl_tx: &ctrl_tx,
                     ctrl_rx: &mut ctrl_rx,
                     dc: &dc,
-                    commands: &mut commands,
-                    progress: &progress,
-                    cancel: &cancel,
-                    opts: &opts,
+                    commands,
+                    progress,
+                    cancel,
+                    opts,
                 },
-                &mut state,
+                state,
+                false,
             )
             .await
         }
+        Ok(manifest) if state.manifest != manifest => Err(TransferError::ManifestChanged),
+        Ok(_) => {
+            if state.sinks.is_none() {
+                let manifest = state.manifest.clone();
+                progress.send_modify(|p| {
+                    p.phase = Phase::AwaitingSave { manifest };
+                    p.bytes_total = state.bytes_total;
+                });
+            }
+            {
+                let mut session_opts = opts.clone();
+                if reconnecting {
+                    session_opts.force_relay = true;
+                }
+                receive_loop(
+                    ReceiveCtx {
+                        ctrl_tx: &ctrl_tx,
+                        ctrl_rx: &mut ctrl_rx,
+                        dc: &dc,
+                        commands,
+                        progress,
+                        cancel,
+                        opts: &session_opts,
+                    },
+                    state,
+                    reconnecting,
+                )
+                .await
+            }
+        }
     };
+    close_session(
+        &mut close,
+        0,
+        if result.is_ok() {
+            b"done"
+        } else if reconnecting {
+            b"reconnect"
+        } else {
+            b"failed"
+        },
+    );
+    result
+}
 
-    // One exit for every outcome: no sink is left half-written, no phase left non-terminal.
+/// Publish one terminal result and clean up unfinished destinations exactly once.
+async fn finish_receiver(
+    result: Result<Vec<SavedFile>, TransferError>,
+    state: &mut ReceiverState,
+    progress: &watch::Sender<TransferProgress>,
+    opts: &ReceiveOptions,
+) -> Result<Vec<SavedFile>, TransferError> {
     match &result {
         Ok(saved) => {
             let saved = saved.clone();
@@ -1687,7 +1786,6 @@ pub(crate) async fn run_receiver_on<T: FrameTx, R: FrameRx, F: DcFactory>(
                 p.phase = Phase::Complete { saved };
                 p.bytes_done = p.bytes_total;
             });
-            close_session(&mut close, 0, b"done");
         }
         Err(e) => {
             abort_sinks(&mut state.sinks, opts.aux_deadline).await;
@@ -1701,11 +1799,6 @@ pub(crate) async fn run_receiver_on<T: FrameTx, R: FrameRx, F: DcFactory>(
                 };
                 p.error = Some(message);
             });
-            close_session(
-                &mut close,
-                0,
-                if cancelled { b"cancelled" } else { b"failed" },
-            );
         }
     }
     result
@@ -1722,6 +1815,24 @@ struct ReceiverState {
     epoch: u32,
     meter: ProgressMeter,
     bytes_done: u64,
+    resume_hashers: Vec<Option<blake3::Hasher>>,
+}
+
+impl Default for ReceiverState {
+    fn default() -> Self {
+        Self {
+            manifest: Vec::new(),
+            bytes_total: 0,
+            sinks: None,
+            saved: Vec::new(),
+            current: None,
+            next_file: 0,
+            epoch: 0,
+            meter: ProgressMeter::new(),
+            bytes_done: 0,
+            resume_hashers: Vec::new(),
+        }
+    }
 }
 
 /// Read the sender's `Hello` and `Manifest`.
@@ -1786,6 +1897,7 @@ struct ReceiveCtx<'a, T: FrameTx, R: FrameRx, F: DcFactory> {
 async fn receive_loop<T: FrameTx, R: FrameRx, F: DcFactory>(
     ctx: ReceiveCtx<'_, T, R, F>,
     state: &mut ReceiverState,
+    reconnecting: bool,
 ) -> Result<Vec<SavedFile>, TransferError> {
     let ReceiveCtx {
         ctrl_tx,
@@ -1810,6 +1922,13 @@ async fn receive_loop<T: FrameTx, R: FrameRx, F: DcFactory>(
     let mut killed_dc = false;
     let mut signals: Vec<Signal> = Vec::new();
     let relay_switch = Arc::new(Notify::new());
+
+    if reconnecting {
+        send_control(&**ctrl_tx, &Control::UseRelay).await?;
+        if restart_current(ctrl_tx, state, progress, opts.initial_window).await? {
+            inactivity_deadline = Some(Instant::now() + opts.inactivity);
+        }
+    }
 
     loop {
         if state.sinks.is_some()
@@ -1869,7 +1988,38 @@ async fn receive_loop<T: FrameTx, R: FrameRx, F: DcFactory>(
             command = commands.recv(), if commands_open => {
                 match command {
                     Some(ReceiveCommand::Save(sinks)) => {
+                        if sinks.len() != state.manifest.len()
+                            || sinks.iter().any(|sink| sink.bytes_written() != 0)
+                        {
+                            return Err(TransferError::Io(
+                                "fresh destinations do not match the file manifest".to_string(),
+                            ));
+                        }
                         state.sinks = Some(sinks.into_iter().map(Some).collect());
+                        state.resume_hashers =
+                            (0..state.manifest.len()).map(|_| None).collect();
+                        saved_arrived = true;
+                    }
+                    Some(ReceiveCommand::Resume(files)) => {
+                        if files.len() != state.manifest.len()
+                            || files
+                                .iter()
+                                .zip(&state.manifest)
+                                .any(|(file, meta)| {
+                                    file.meta != *meta || file.sink.bytes_written() > meta.size
+                                })
+                        {
+                            return Err(TransferError::ManifestChanged);
+                        }
+                        state.bytes_done =
+                            files.iter().map(|file| file.sink.bytes_written()).sum();
+                        let (sinks, hashers): (Vec<_>, Vec<_>) = files
+                            .into_iter()
+                            .map(|file| (Some(file.sink), Some(file.hasher)))
+                            .unzip();
+                        state.sinks = Some(sinks);
+                        state.resume_hashers = hashers;
+                        progress.send_modify(|p| p.bytes_done = state.bytes_done);
                         saved_arrived = true;
                     }
                     None => commands_open = false,
@@ -2036,7 +2186,11 @@ async fn receive_loop<T: FrameTx, R: FrameRx, F: DcFactory>(
                     epoch_start: sink_offset,
                     granted: opts.initial_window,
                     consumed_since_grant: 0,
-                    hasher: blake3::Hasher::new(),
+                    hasher: state
+                        .resume_hashers
+                        .get_mut(index as usize)
+                        .and_then(Option::take)
+                        .unwrap_or_default(),
                     active_rx: if dc_was_open && !use_relay {
                         Arrival::Dc
                     } else {
@@ -2294,7 +2448,7 @@ async fn handle_frame<T: FrameTx>(
             // The flow-control point: this returns only once the sink has taken the bytes.
             // Only cancellation and the write deadline stay live during it; the other arms
             // resume afterwards, delayed by at most one bounded write.
-            bounded(cancel, opts.write_deadline, sink.write(payload))
+            bounded_sink(cancel, opts.write_deadline, sink.write(payload))
                 .await?
                 .map_err(|e| TransferError::Io(e.to_string()))?;
 
@@ -2378,7 +2532,7 @@ async fn handle_frame<T: FrameTx>(
                 .as_mut()
                 .and_then(|sinks| sinks[index as usize].take());
             if let Some(sink) = sink {
-                let saved = bounded(cancel, opts.write_deadline, sink.finish())
+                let saved = bounded_sink(cancel, opts.write_deadline, sink.finish())
                     .await?
                     .map_err(|e| TransferError::Io(e.to_string()))?;
                 log::debug!("file {index} verified and saved to {}", saved.location);
@@ -2487,24 +2641,111 @@ async fn receive_over_iroh(
     if opts.cap.is_none() {
         return Err(TransferError::Unauthorized(AuthFailure::MissingCap));
     }
-    // `Node::connect` carries its own default budget for callers that have no options; a
-    // receive session uses the one it was configured with.
-    let conn = timeout(opts.connect_timeout, node.connect(&ticket))
-        .await
-        .map_err(|_| TransferError::Timeout)?
-        .map_err(|e| TransferError::Transport(TransportError::Io(e.to_string())))?;
-    let (send, recv) = conn
-        .open_bi()
-        .await
-        .map_err(|e| TransferError::Transport(TransportError::Io(e.to_string())))?;
-    let (ctrl_tx, ctrl_rx, _writer) = split_control(send, recv, iroh_path(), cancel.clone());
-    let io = SessionIo {
-        ctrl_tx,
-        ctrl_rx,
-        close: Box::new(move |code, reason| conn.close(code.into(), reason)),
-        dc: default_dc_factory(),
+    let connect_cancel = cancel.clone();
+    let connect_timeout = opts.connect_timeout;
+    let connect = || async {
+        // `Node::connect` carries its own default budget for callers that have no options; a
+        // receive session uses the one it was configured with.
+        let conn = timeout(connect_timeout, node.connect(&ticket))
+            .await
+            .map_err(|_| TransferError::Timeout)?
+            .map_err(|e| TransferError::Transport(TransportError::Io(e.to_string())))?;
+        let (send, recv) = conn
+            .open_bi()
+            .await
+            .map_err(|e| TransferError::Transport(TransportError::Io(e.to_string())))?;
+        let (ctrl_tx, ctrl_rx, writer) =
+            split_control(send, recv, iroh_path(), connect_cancel.clone());
+        Ok((
+            SessionIo {
+                ctrl_tx,
+                ctrl_rx,
+                close: Box::new(move |code, reason| conn.close(code.into(), reason)),
+                dc: default_dc_factory(),
+            },
+            writer,
+        ))
     };
-    run_receiver_on(io, commands, progress, cancel, opts).await
+    run_receiver_reconnecting(connect, commands, progress, cancel, opts).await
+}
+
+pub(crate) async fn run_receiver_reconnecting<T, R, F, G, C, Fut>(
+    mut connect: C,
+    mut commands: mpsc::Receiver<ReceiveCommand>,
+    progress: watch::Sender<TransferProgress>,
+    cancel: CancellationToken,
+    opts: ReceiveOptions,
+) -> Result<Vec<SavedFile>, TransferError>
+where
+    T: FrameTx,
+    R: FrameRx,
+    F: DcFactory,
+    C: FnMut() -> Fut,
+    Fut: Future<Output = Result<(SessionIo<T, R, F>, G), TransferError>>,
+{
+    let mut state = ReceiverState::default();
+    let mut retries = 0;
+    let mut backoff = opts.reconnect_backoff;
+
+    let result = loop {
+        let io = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => Err(TransferError::Cancelled),
+            result = connect() => result,
+        };
+        let session = match io {
+            Ok((io, _connection_guard)) => {
+                run_receiver_session(
+                    io,
+                    &mut commands,
+                    &progress,
+                    &cancel,
+                    &opts,
+                    &mut state,
+                    retries > 0,
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        match session {
+            Ok(saved) => break Ok(saved),
+            Err(error)
+                if reconnectable(&error)
+                    && retries < opts.max_reconnect_attempts
+                    && !cancel.is_cancelled() =>
+            {
+                retries += 1;
+                progress.send_modify(|p| {
+                    p.phase = Phase::Reconnecting {
+                        attempt: retries,
+                        max_attempts: opts.max_reconnect_attempts,
+                    };
+                    p.path = Path::Unknown;
+                    p.bytes_per_sec = 0.0;
+                    p.error = None;
+                });
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => break Err(TransferError::Cancelled),
+                    _ = sleep(backoff) => {}
+                }
+                backoff = backoff.saturating_mul(2).min(opts.max_reconnect_backoff);
+            }
+            Err(error) => break Err(error),
+        }
+    };
+    finish_receiver(result, &mut state, &progress, &opts).await
+}
+
+fn reconnectable(error: &TransferError) -> bool {
+    matches!(
+        error,
+        TransferError::Timeout
+            | TransferError::Transport(TransportError::Closed)
+            | TransferError::Transport(TransportError::Timeout)
+            | TransferError::Transport(TransportError::Io(_))
+    )
 }
 
 /// The path an iroh control stream starts on. In the browser it is always relayed; natively

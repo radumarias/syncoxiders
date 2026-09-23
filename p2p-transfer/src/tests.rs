@@ -4,6 +4,7 @@
 // environment; `online_test_*` touches real iroh endpoints and skips when the network or the
 // relay is unavailable.
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -29,10 +30,10 @@ use crate::protocol::{
     DEFAULT_CHUNK, INITIAL_WINDOW, LEN_PREFIX, MAX_FRAME, MIN_USABLE_FRAME,
 };
 use crate::transfer::{
-    run_receiver_on, run_sender_on, AuthFailure, ByteBudget, CloseSeam, DataChannel, DcFactory,
-    DcRole, FrameRx, FrameTx, MaybeDc, MemDcFactory, MemRx, MemTx, NoWebRtc, Path, PcState, Phase,
-    ReceiveCommand, ReceiveOptions, SenderOptions, SessionIo, TransferError, TransferHandle,
-    TransferProgress,
+    run_receiver_on, run_receiver_reconnecting, run_sender_on, AuthFailure, ByteBudget, CloseSeam,
+    DataChannel, DcFactory, DcRole, FrameRx, FrameTx, MaybeDc, MemDcFactory, MemRx, MemTx,
+    NoWebRtc, Path, PcState, Phase, ReceiveCommand, ReceiveOptions, ResumeFile, SenderOptions,
+    SessionIo, TransferError, TransferHandle, TransferProgress,
 };
 
 // ---------------------------------------------------------------------------------------
@@ -1161,6 +1162,364 @@ async fn local_test_engine_roundtrip_in_memory() {
 }
 
 #[tokio::test]
+async fn local_test_receiver_reconnects_and_resumes_from_committed_offset() {
+    let cap = test_cap(0x2a);
+    let data = filler(512 * 1024);
+    let data_len = data.len();
+    let meta = shared_file("resume.bin", &data).meta;
+    let Scripted {
+        io: first_io,
+        out: first_out,
+        inject: first_inject,
+        ..
+    } = scripted();
+    let Scripted {
+        io: second_io,
+        out: second_out,
+        inject: second_inject,
+        ..
+    } = scripted();
+    let sessions = Arc::new(Mutex::new(VecDeque::from([first_io, second_io])));
+    let connect_sessions = sessions.clone();
+    let connect = move || {
+        std::future::ready(
+            connect_sessions
+                .lock()
+                .expect("session queue")
+                .pop_front()
+                .map(|io| (io, ()))
+                .ok_or(TransferError::Transport(
+                    crate::transfer::TransportError::Closed,
+                )),
+        )
+    };
+    let (commands, command_rx) = mpsc::channel(1);
+    commands
+        .send(ReceiveCommand::Save(sinks_for(std::slice::from_ref(&meta))))
+        .await
+        .expect("save accepted");
+    let (progress, watch) = watch::channel(TransferProgress::connecting());
+    let cancel = CancellationToken::new();
+    let mut opts = receive_opts(cap);
+    opts.reconnect_backoff = Duration::from_millis(1);
+    opts.max_reconnect_backoff = Duration::from_millis(2);
+    opts.max_reconnect_attempts = 2;
+
+    let receiver = tokio::spawn(run_receiver_reconnecting(
+        connect, command_rx, progress, cancel, opts,
+    ));
+    let driver = tokio::spawn(async move {
+        let mut out = first_out;
+        let inject = first_inject;
+        assert!(matches!(
+            next_control(&mut out).await,
+            Control::Hello { .. }
+        ));
+        inject_control(
+            &inject,
+            Control::Hello {
+                version: 1,
+                webrtc: false,
+                cap: [0; CAP_LEN],
+            },
+        )
+        .await;
+        inject_control(
+            &inject,
+            Control::Manifest {
+                files: vec![meta.clone()],
+            },
+        )
+        .await;
+        let request = next_control(&mut out).await;
+        let epoch = match request {
+            Control::Request {
+                file: 0,
+                offset: 0,
+                epoch,
+            } => epoch,
+            other => panic!("expected initial request, got {other:?}"),
+        };
+        assert!(matches!(
+            next_control(&mut out).await,
+            Control::Credit { epoch: e, .. } if e == epoch
+        ));
+        let split = data.len() / 2;
+        inject_chunk(&inject, 0, epoch, 0, &data[..split]).await;
+        drop(inject);
+
+        let mut out = second_out;
+        let inject = second_inject;
+        assert!(matches!(
+            next_control(&mut out).await,
+            Control::Hello { .. }
+        ));
+        inject_control(
+            &inject,
+            Control::Hello {
+                version: 1,
+                webrtc: false,
+                cap: [0; CAP_LEN],
+            },
+        )
+        .await;
+        inject_control(
+            &inject,
+            Control::Manifest {
+                files: vec![meta.clone()],
+            },
+        )
+        .await;
+        assert!(matches!(next_control(&mut out).await, Control::UseRelay));
+        let resumed_epoch = match next_control(&mut out).await {
+            Control::Request {
+                file: 0,
+                offset,
+                epoch,
+            } => {
+                assert_eq!(offset, split as u64);
+                epoch
+            }
+            other => panic!("expected resumed request, got {other:?}"),
+        };
+        assert!(resumed_epoch > epoch);
+        assert!(matches!(
+            next_control(&mut out).await,
+            Control::Credit { epoch: e, .. } if e == resumed_epoch
+        ));
+        inject_chunk(&inject, 0, resumed_epoch, split as u64, &data[split..]).await;
+        inject_control(
+            &inject,
+            Control::Done {
+                file: 0,
+                epoch: resumed_epoch,
+            },
+        )
+        .await;
+    });
+
+    driver.await.expect("driver");
+    let saved = receiver
+        .await
+        .expect("receiver task")
+        .expect("receiver resumed");
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].size, data_len as u64);
+    let final_progress = watch.borrow().clone();
+    assert!(matches!(final_progress.phase, Phase::Complete { .. }));
+    assert_eq!(final_progress.bytes_done, data_len as u64);
+}
+
+#[tokio::test]
+async fn local_test_durable_resume_rehashes_prefix_and_requests_only_the_tail() {
+    let cap = test_cap(0x2d);
+    let data = filler(128 * 1024);
+    let split = data.len() / 3;
+    let meta = shared_file("durable.bin", &data).meta;
+    let mut sink = MemSink::new(meta.name.clone(), data.len());
+    sink.write(&data[..split]).await.expect("seed prefix");
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&data[..split]);
+    let Scripted {
+        io,
+        mut out,
+        inject,
+        ..
+    } = scripted();
+    let (commands, command_rx) = mpsc::channel(1);
+    commands
+        .send(ReceiveCommand::Resume(vec![ResumeFile {
+            meta: meta.clone(),
+            sink: AnySink::Mem(sink),
+            hasher,
+        }]))
+        .await
+        .expect("resume accepted");
+    let (progress, watch) = watch::channel(TransferProgress::connecting());
+    let receiver = tokio::spawn(run_receiver_on(
+        io,
+        command_rx,
+        progress,
+        CancellationToken::new(),
+        receive_opts(cap),
+    ));
+    assert!(matches!(
+        next_control(&mut out).await,
+        Control::Hello { .. }
+    ));
+    inject_control(&inject, hello([0; CAP_LEN], false)).await;
+    inject_control(&inject, Control::Manifest { files: vec![meta] }).await;
+    let epoch = match next_control(&mut out).await {
+        Control::Request {
+            file: 0,
+            offset,
+            epoch,
+        } => {
+            assert_eq!(offset, split as u64);
+            epoch
+        }
+        other => panic!("expected tail request, got {other:?}"),
+    };
+    let _ = next_control(&mut out).await;
+    inject_chunk(&inject, 0, epoch, split as u64, &data[split..]).await;
+    inject_control(&inject, Control::Done { file: 0, epoch }).await;
+    let saved = receiver.await.expect("receiver task").expect("resumed");
+    assert_eq!(saved[0].size, data.len() as u64);
+    assert_eq!(watch.borrow().bytes_done, data.len() as u64);
+}
+
+#[tokio::test]
+async fn local_test_reconnect_rejects_a_changed_manifest() {
+    let cap = test_cap(0x2b);
+    let original = shared_file("same.bin", b"original").meta;
+    let changed = shared_file("same.bin", b"changed!").meta;
+    let Scripted {
+        io: first_io,
+        out: first_out,
+        inject: first_inject,
+        ..
+    } = scripted();
+    let Scripted {
+        io: second_io,
+        out: second_out,
+        inject: second_inject,
+        ..
+    } = scripted();
+    let sessions = Arc::new(Mutex::new(VecDeque::from([first_io, second_io])));
+    let connect_sessions = sessions.clone();
+    let connect = move || {
+        std::future::ready(
+            connect_sessions
+                .lock()
+                .expect("session queue")
+                .pop_front()
+                .map(|io| (io, ()))
+                .ok_or(TransferError::Transport(
+                    crate::transfer::TransportError::Closed,
+                )),
+        )
+    };
+    let (_commands, command_rx) = mpsc::channel(1);
+    let (progress, _watch) = watch::channel(TransferProgress::connecting());
+    let mut opts = receive_opts(cap);
+    opts.reconnect_backoff = Duration::from_millis(1);
+    let receiver = tokio::spawn(run_receiver_reconnecting(
+        connect,
+        command_rx,
+        progress,
+        CancellationToken::new(),
+        opts,
+    ));
+    let driver = tokio::spawn(async move {
+        let mut out = first_out;
+        let inject = first_inject;
+        let _ = next_control(&mut out).await;
+        inject_control(&inject, hello([0; CAP_LEN], false)).await;
+        inject_control(
+            &inject,
+            Control::Manifest {
+                files: vec![original],
+            },
+        )
+        .await;
+        drop(inject);
+
+        let mut out = second_out;
+        let inject = second_inject;
+        let _ = next_control(&mut out).await;
+        inject_control(&inject, hello([0; CAP_LEN], false)).await;
+        inject_control(
+            &inject,
+            Control::Manifest {
+                files: vec![changed],
+            },
+        )
+        .await;
+    });
+    driver.await.expect("driver");
+    assert!(matches!(
+        receiver.await.expect("receiver task"),
+        Err(TransferError::ManifestChanged)
+    ));
+}
+
+#[tokio::test]
+async fn local_test_reconnect_attempts_are_bounded() {
+    let (_commands, command_rx) = mpsc::channel(1);
+    let (progress, watch) = watch::channel(TransferProgress::connecting());
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = attempts.clone();
+    let connect = move || {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        std::future::ready(Err(TransferError::Transport(
+            crate::transfer::TransportError::Closed,
+        ))
+            as Result<(SessionIo<MemTx, MemRx, NoWebRtc>, ()), TransferError>)
+    };
+    let mut opts = receive_opts(test_cap(0x2c));
+    opts.max_reconnect_attempts = 2;
+    opts.reconnect_backoff = Duration::from_millis(1);
+    opts.max_reconnect_backoff = Duration::from_millis(1);
+    let result = run_receiver_reconnecting(
+        connect,
+        command_rx,
+        progress,
+        CancellationToken::new(),
+        opts,
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(TransferError::Transport(
+            crate::transfer::TransportError::Closed
+        ))
+    ));
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 3);
+    assert!(matches!(watch.borrow().phase, Phase::Failed));
+}
+
+#[tokio::test]
+async fn local_test_cancel_interrupts_reconnect_backoff() {
+    let (_commands, command_rx) = mpsc::channel(1);
+    let (progress, mut watch) = watch::channel(TransferProgress::connecting());
+    let connect = || {
+        std::future::ready(Err(TransferError::Transport(
+            crate::transfer::TransportError::Closed,
+        ))
+            as Result<(SessionIo<MemTx, MemRx, NoWebRtc>, ()), TransferError>)
+    };
+    let cancel = CancellationToken::new();
+    let mut opts = receive_opts(test_cap(0x2e));
+    opts.max_reconnect_attempts = 4;
+    opts.reconnect_backoff = Duration::from_secs(60);
+    let session = tokio::spawn(run_receiver_reconnecting(
+        connect,
+        command_rx,
+        progress,
+        cancel.clone(),
+        opts,
+    ));
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if matches!(watch.borrow().phase, Phase::Reconnecting { .. }) {
+                break;
+            }
+            watch.changed().await.expect("progress sender");
+        }
+    })
+    .await
+    .expect("entered reconnect backoff");
+    cancel.cancel();
+    assert!(matches!(
+        timeout(Duration::from_secs(1), session)
+            .await
+            .expect("cancel completed")
+            .expect("receiver task"),
+        Err(TransferError::Cancelled)
+    ));
+}
+
+#[tokio::test]
 async fn local_test_wrong_cap_rejected_before_manifest() {
     let ours = test_cap(0xa1);
     let theirs = test_cap(0xb2);
@@ -1855,7 +2214,7 @@ async fn local_test_receiver_write_deadline_and_cancel() {
             (true, Err(TransferError::Cancelled)) => {
                 assert!(elapsed < Duration::from_millis(150), "{elapsed:?}");
             }
-            (false, Err(TransferError::Timeout)) => {
+            (false, Err(TransferError::SinkTimeout)) => {
                 assert!(elapsed < Duration::from_millis(400), "{elapsed:?}");
             }
             (_, other) => panic!("cancelling={cancelling} gave {other:?}"),
