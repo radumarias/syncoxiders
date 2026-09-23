@@ -48,3 +48,26 @@ jobs:
       with:
         name: syncoxiders_${{ matrix.runner }}
         path: target/release/syncoxiders.exe
+
+  p2p-browser-integration:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Rust
+      run: rustup toolchain install nightly --target wasm32-unknown-unknown
+
+    - name: Install wasm-pack
+      run: cargo install wasm-pack --version 0.13.1 --locked
+
+    - name: Test OPFS worker recovery
+      working-directory: p2p-transfer
+      run: node --test tests/resume_worker.test.mjs
+
+    - name: Test WebRTC in Firefox
+      working-directory: p2p-transfer
+      run: wasm-pack test --headless --firefox -- --test webrtc_wasm
+
+    - name: Test persistent resume in Firefox
+      working-directory: p2p-transfer
+      run: wasm-pack test --headless --firefox -- --test resume_wasm

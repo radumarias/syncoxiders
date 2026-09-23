@@ -21,7 +21,9 @@ from the workspace root may select the user's stable toolchain instead.
 - `trunk serve` — browser build at `http://127.0.0.1:8080`.
 - `trunk build` — static `dist/`.
 - `./check.sh` — required gate: native and wasm checks, fmt, clippy with
-  `-D warnings` on both targets, tests, doctests, and `trunk build`.
+  `-D warnings` on both targets, tests, doctests, OPFS worker fault tests,
+  real Firefox WebRTC and persistence tests, and `trunk build`. It requires
+  Node.js, Firefox, `wasm-pack`, and Trunk.
 - `cargo test <substring>` — run a focused unit test.
 
 There must be one workspace `../Cargo.lock`. A gitignored
@@ -105,3 +107,6 @@ Durable OPFS checkpoint/reopen behavior runs in a real browser worker with:
 ```sh
 wasm-pack test --headless --firefox -- --test resume_wasm
 ```
+
+Both commands, plus `node --test tests/resume_worker.test.mjs` for deterministic
+cross-worker race and failure injection, are part of `./check.sh` and CI.

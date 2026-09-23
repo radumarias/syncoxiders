@@ -53,6 +53,18 @@ function sameManifest(a, b) {
   );
 }
 
+function validateGroup(group, requested) {
+  if (!group || group.version !== 1 || !sameManifest(group.files, requested)) {
+    throw new Error('saved progress changed while local files were being locked');
+  }
+  if (group.files.some(file =>
+    !/^(0|[1-9][0-9]*)$/.test(file.written) ||
+    Number(file.written) > Number(file.size)
+  )) {
+    throw new Error('saved progress metadata is corrupt');
+  }
+}
+
 function database() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 1);
@@ -140,13 +152,7 @@ async function prepare(message) {
     group = { id: message.id, version: 1, files: requested, updated: Date.now() };
     await putGroup(group);
   }
-  if (group.version !== 1) throw new Error('saved progress uses an unsupported format');
-  if (group.files.some(file =>
-    !/^(0|[1-9][0-9]*)$/.test(file.written) ||
-    Number(file.written) > Number(file.size)
-  )) {
-    throw new Error('saved progress metadata is corrupt');
-  }
+  validateGroup(group, requested);
   if (group.files.some((_, index) => openFiles.has(key(message.id, index)))) {
     throw new Error('this local copy is already open in another transfer');
   }
@@ -156,30 +162,36 @@ async function prepare(message) {
     const base = await rootDirectory();
     const directory = await base.getDirectoryHandle(message.id, { create: true });
     for (let index = 0; index < group.files.length; index++) {
-      const meta = group.files[index];
       const file = await directory.getFileHandle(`${index}.part`, { create: true });
       if (typeof file.createSyncAccessHandle !== 'function') {
         throw new Error('this browser does not support resumable file storage');
       }
       // Default exclusive lock. Avoid Chrome-only lock mode options.
       const access = await file.createSyncAccessHandle();
-      const size = Number(await call(access, 'getSize'));
+      // Cleanup owns the handle immediately. Initialization failures must not leak an
+      // exclusive lock that can only be cleared by terminating this worker.
+      const entry = { id: message.id, index, access, written: 0, size: 0 };
+      openFiles.set(key(message.id, index), entry);
+      opened.push(entry);
+    }
+
+    // Acquiring every file handle excludes another receiver for this entire manifest. The
+    // checkpoint read before lock acquisition was only sufficient to locate those files:
+    // another tab may have advanced it while this worker waited. Reread it now, then perform
+    // recovery from this authoritative snapshot.
+    group = await getGroup(message.id);
+    validateGroup(group, requested);
+    for (const entry of opened) {
+      const meta = group.files[entry.index];
+      const size = Number(await call(entry.access, 'getSize'));
       const checkpoint = Number(meta.written);
       if (!Number.isSafeInteger(size) || size < checkpoint) {
-        await call(access, 'close');
         throw new Error('saved file is shorter than its durable checkpoint');
       }
       // Discard bytes flushed before a metadata transaction failed or the page was killed.
-      if (size !== checkpoint) await call(access, 'truncate', checkpoint);
-      const entry = {
-        id: message.id,
-        index,
-        access,
-        written: checkpoint,
-        size: Number(meta.size),
-      };
-      openFiles.set(key(message.id, index), entry);
-      opened.push(entry);
+      if (size !== checkpoint) await call(entry.access, 'truncate', checkpoint);
+      entry.written = checkpoint;
+      entry.size = Number(meta.size);
     }
     return group.files.map(file => ({ written: file.written }));
   } catch (error) {

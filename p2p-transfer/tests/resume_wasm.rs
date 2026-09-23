@@ -63,3 +63,38 @@ async fn browser_test_opfs_copy_reopens_rehashes_and_finishes() {
         .iter()
         .all(|transfer| transfer.id != id));
 }
+
+#[wasm_bindgen_test(async)]
+async fn browser_test_opfs_copy_rejects_concurrent_open_and_active_delete() {
+    let data = b"exclusive durable fixture";
+    let meta = FileMeta {
+        name: "resume-exclusive-test.bin".to_string(),
+        size: data.len() as u64,
+        hash: BlobHash(*blake3::hash(data).as_bytes()),
+    };
+    let id = resume::manifest_id(std::slice::from_ref(&meta)).expect("manifest id");
+    let _ = resume::discard(&id).await;
+
+    let first = resume::prepare(std::slice::from_ref(&meta))
+        .await
+        .expect("first open");
+    assert!(
+        resume::prepare(std::slice::from_ref(&meta)).await.is_err(),
+        "a concurrent receiver opened the same durable copy"
+    );
+    assert!(
+        resume::discard(&id).await.is_err(),
+        "an active durable copy was deleted"
+    );
+    for file in first {
+        file.sink.abort().await;
+    }
+
+    let reopened = resume::prepare(std::slice::from_ref(&meta))
+        .await
+        .expect("locks released for retry");
+    for file in reopened {
+        file.sink.abort().await;
+    }
+    resume::discard(&id).await.expect("delete after release");
+}
