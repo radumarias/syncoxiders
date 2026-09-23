@@ -185,6 +185,8 @@ pub enum AnySink {
     Fsa(web::FsaSink),
     #[cfg(target_arch = "wasm32")]
     Sw(web::SwSink),
+    #[cfg(target_arch = "wasm32")]
+    Persistent(web::resume::PersistentSink),
     Mem(MemSink),
     /// Test-only: yields for a fixed delay on every write.
     #[cfg(test)]
@@ -203,6 +205,8 @@ impl Sink for AnySink {
             Self::Fsa(s) => s.bytes_written(),
             #[cfg(target_arch = "wasm32")]
             Self::Sw(s) => s.bytes_written(),
+            #[cfg(target_arch = "wasm32")]
+            Self::Persistent(s) => s.bytes_written(),
             Self::Mem(s) => s.bytes_written(),
             #[cfg(test)]
             Self::Slow(s) => s.bytes_written(),
@@ -219,6 +223,8 @@ impl Sink for AnySink {
             Self::Fsa(s) => s.write(data).await,
             #[cfg(target_arch = "wasm32")]
             Self::Sw(s) => s.write(data).await,
+            #[cfg(target_arch = "wasm32")]
+            Self::Persistent(s) => s.write(data).await,
             Self::Mem(s) => s.write(data).await,
             #[cfg(test)]
             Self::Slow(s) => s.write(data).await,
@@ -235,6 +241,8 @@ impl Sink for AnySink {
             Self::Fsa(s) => s.finish().await,
             #[cfg(target_arch = "wasm32")]
             Self::Sw(s) => s.finish().await,
+            #[cfg(target_arch = "wasm32")]
+            Self::Persistent(s) => s.finish().await,
             Self::Mem(s) => s.finish().await,
             #[cfg(test)]
             Self::Slow(s) => s.finish().await,
@@ -251,6 +259,8 @@ impl Sink for AnySink {
             Self::Fsa(s) => s.abort().await,
             #[cfg(target_arch = "wasm32")]
             Self::Sw(s) => s.abort().await,
+            #[cfg(target_arch = "wasm32")]
+            Self::Persistent(s) => s.abort().await,
             Self::Mem(s) => s.abort().await,
             #[cfg(test)]
             Self::Slow(s) => s.abort().await,

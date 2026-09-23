@@ -11,7 +11,7 @@ pub mod transfer;
 pub mod webrtc;
 
 // The unit suite uses native filesystem and multi-thread Tokio test helpers. Browser-specific
-// integration tests live in `tests/webrtc_wasm.rs` and run through wasm-bindgen-test.
+// integration tests live in `tests/*_wasm.rs` and run through wasm-bindgen-test.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 

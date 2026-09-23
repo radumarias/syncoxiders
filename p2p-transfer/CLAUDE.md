@@ -99,3 +99,9 @@ normal suite. The real browser data-channel integration test runs with:
 ```sh
 wasm-pack test --headless --firefox -- --test webrtc_wasm
 ```
+
+Durable OPFS checkpoint/reopen behavior runs in a real browser worker with:
+
+```sh
+wasm-pack test --headless --firefox -- --test resume_wasm
+```
