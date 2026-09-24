@@ -19,5 +19,15 @@ pub use app::P2PTransfer;
 pub use blob_store::{Blob, BlobCollection, BlobHash, BlobInfo, BlobStore};
 pub use logging::init_logging;
 
+/// The exact source revision baked into this binary or browser bundle.
+pub const BUILD_REVISION: &str = env!("OXFER_GIT_REVISION");
+/// Visible identity of the running build, independent of the hosting site's cache.
+pub const BUILD_LABEL: &str = concat!(
+    "v",
+    env!("CARGO_PKG_VERSION"),
+    " · ",
+    env!("OXFER_GIT_REVISION")
+);
+
 #[cfg(not(target_arch = "wasm32"))]
 pub use blob_store::{BaoBlob, BaoReceiver, BaoStore, BLOCK_SIZE};
