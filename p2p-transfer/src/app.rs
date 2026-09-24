@@ -2467,6 +2467,12 @@ impl P2PTransfer {
                             .monospace()
                             .size(12.0),
                     );
+                    ui.label(
+                        RichText::new(format!("Commit time: {}", crate::BUILD_COMMITTED_AT))
+                            .color(tc.secondary)
+                            .monospace()
+                            .size(12.0),
+                    );
                     match logging::terminal_buffer().lock() {
                         Ok(logs) if !logs.is_empty() => {
                             for line in logs.iter() {
@@ -2609,6 +2615,11 @@ mod tests {
                     && crate::BUILD_REVISION
                         .bytes()
                         .all(|byte| byte.is_ascii_hexdigit()))
+        );
+        assert!(
+            crate::BUILD_COMMITTED_AT == "unknown"
+                || (crate::BUILD_COMMITTED_AT.len() == 25
+                    && crate::BUILD_COMMITTED_AT.as_bytes()[10] == b'T')
         );
     }
 
