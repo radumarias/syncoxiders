@@ -1267,12 +1267,17 @@ fn pill(ui: &mut Ui, tc: &Tc, text: &str, accent: bool) {
         .corner_radius(CornerRadius::same(20))
         .inner_margin(egui::Margin::symmetric(10, 5))
         .show(ui, |ui| {
-            ui.label(
-                RichText::new(text)
-                    .monospace()
-                    .strong()
-                    .size(11.0)
-                    .color(color),
+            // Keep badge text on one line; the compact badge set below leaves
+            // enough room for both badges even on narrow phone screens.
+            ui.add(
+                egui::Label::new(
+                    RichText::new(text)
+                        .monospace()
+                        .strong()
+                        .size(11.0)
+                        .color(color),
+                )
+                .extend(),
             );
         });
 }
@@ -1502,7 +1507,11 @@ impl P2PTransfer {
         ui.horizontal_wrapped(|ui| {
             pill(ui, &tc, "DTLS / QUIC ENCRYPTED", true);
             pill(ui, &tc, "BLAKE3 VERIFIED", false);
-            pill(ui, &tc, "NO ACCOUNT", false);
+            if !compact {
+                // The first two badges already fill a phone-width row; the account
+                // detail is also explained in "How Oxfer works".
+                pill(ui, &tc, "NO ACCOUNT", false);
+            }
         });
         ui.add_space(if compact { 16.0 } else { 22.0 });
 
@@ -2322,13 +2331,25 @@ impl P2PTransfer {
                     .strong()
                     .size(if compact { 21.0 } else { 23.0 }),
             );
-            ui.label(
-                RichText::new(crate::BUILD_LABEL)
-                    .color(tc.on_surface_var)
-                    .monospace()
-                    .size(if compact { 10.0 } else { 11.0 }),
-            )
-            .on_hover_text("Version and Git commit of this running build");
+            if ui
+                .add(
+                    Button::new(
+                        RichText::new("i")
+                            .color(tc.secondary)
+                            .monospace()
+                            .strong()
+                            .size(16.0),
+                    )
+                    .fill(Color32::TRANSPARENT)
+                    .stroke(Stroke::new(1.0, tc.outline))
+                    .corner_radius(CornerRadius::same(16))
+                    .min_size(egui::vec2(32.0, 44.0)),
+                )
+                .on_hover_text("Show this build's version in Terminal Output")
+                .clicked()
+            {
+                self.show_terminal_view = true;
+            }
             let at_home = matches!(self.mode, Mode::Home);
             let label = match self.mode {
                 Mode::Home => "READY",
