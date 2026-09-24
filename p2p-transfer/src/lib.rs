@@ -2,6 +2,8 @@
 
 mod app;
 pub mod blob_store;
+#[cfg(target_arch = "wasm32")]
+mod diagnostics;
 pub mod file_io;
 pub mod logging;
 pub mod node;

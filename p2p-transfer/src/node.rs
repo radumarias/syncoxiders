@@ -5,7 +5,10 @@ use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointId};
 use log::info;
 use n0_future::{task, Stream};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 use tokio::sync::mpsc;
 
 /// The files an [`EchoNode`] currently offers, as `(filename, contents)`.
@@ -875,6 +878,138 @@ impl Node {
             log::debug!("router shutdown: {e}");
         }
         self.endpoint.close().await;
+    }
+}
+
+/// Separate ALPN and no file handler: opening a diagnostics link never serves a
+/// shared file or turns it into a valid transfer link.
+const DIAGNOSTIC_ALPN: &[u8] = b"oxfer/diagnostics/1";
+
+/// Ephemeral iroh peer probe. Only the successful ping count is exported; the
+/// endpoint ID, ticket and peer IP addresses never enter a copied report.
+pub struct DiagnosticNode {
+    endpoint: Endpoint,
+    router: Router,
+    completed: Arc<AtomicUsize>,
+    relay: RelayChoice,
+}
+
+impl DiagnosticNode {
+    /// Short correlation key for the two reports; the ticket itself stays out
+    /// of report text and browser history.
+    pub fn session_id(ticket: &EndpointTicket) -> String {
+        blake3::hash(ticket.to_string().as_bytes()).to_hex()[..12].to_string()
+    }
+
+    pub async fn bind(relay: RelayChoice) -> Result<Self, NodeError> {
+        let builder = match &relay {
+            RelayChoice::N0 => Endpoint::builder(presets::N0),
+            RelayChoice::Custom(url) => Endpoint::builder(presets::Minimal)
+                .relay_mode(RelayMode::Custom(RelayMap::from(url.clone()))),
+            RelayChoice::None => {
+                Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
+            }
+        };
+        let endpoint = timeout(
+            BIND_TIMEOUT,
+            builder
+                .secret_key(SecretKey::generate())
+                .alpns(vec![DIAGNOSTIC_ALPN.to_vec()])
+                .bind(),
+        )
+        .await
+        .map_err(|_| NodeError::Bind("diagnostic endpoint startup timed out".into()))?
+        .map_err(|error| NodeError::Bind(error.to_string()))?;
+        let completed = Arc::new(AtomicUsize::new(0));
+        let router = Router::builder(endpoint.clone())
+            .accept(DIAGNOSTIC_ALPN, DiagnosticHandler(completed.clone()))
+            .spawn();
+        Ok(Self {
+            endpoint,
+            router,
+            completed,
+            relay,
+        })
+    }
+
+    pub async fn ticket(&self) -> Result<EndpointTicket, NodeError> {
+        if self.relay == RelayChoice::None {
+            let deadline = Instant::now() + LOCAL_ADDR_TIMEOUT;
+            while self.endpoint.addr().ip_addrs().next().is_none() {
+                if Instant::now() >= deadline {
+                    return Err(NodeError::Offline);
+                }
+                n0_future::time::sleep(LOCAL_ADDR_POLL).await;
+            }
+            return Ok(EndpointTicket::new(self.endpoint.addr()));
+        }
+        timeout(ONLINE_TIMEOUT, self.endpoint.online())
+            .await
+            .map_err(|_| NodeError::Offline)?;
+        Ok(EndpointTicket::new(self.endpoint.addr()))
+    }
+
+    pub async fn probe(&self, ticket: &EndpointTicket) -> Result<(), NodeError> {
+        let connection = timeout(
+            DIAL_TIMEOUT,
+            self.endpoint
+                .connect(ticket.endpoint_addr().clone(), DIAGNOSTIC_ALPN),
+        )
+        .await
+        .map_err(|_| NodeError::Connect("peer dial timed out".into()))?
+        .map_err(|error| NodeError::Connect(error.to_string()))?;
+        let result = timeout(DIAL_TIMEOUT, async {
+            let (mut send, mut recv) = connection.open_bi().await?;
+            send.write_all(b"PING").await?;
+            send.finish()?;
+            let mut reply = [0u8; 4];
+            recv.read_exact(&mut reply).await?;
+            if &reply != b"PONG" {
+                anyhow::bail!("unexpected diagnostic response");
+            }
+            anyhow::Ok(())
+        })
+        .await
+        .map_err(|_| NodeError::Connect("ping timed out".into()))?
+        .map_err(|error| NodeError::Connect(error.to_string()));
+        connection.close(0u8.into(), b"diagnostics complete");
+        result
+    }
+
+    pub fn completed_probes(&self) -> usize {
+        self.completed.load(Ordering::Acquire)
+    }
+
+    pub async fn shutdown(&self) {
+        let _ = self.router.shutdown().await;
+        self.endpoint.close().await;
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DiagnosticHandler(Arc<AtomicUsize>);
+
+impl ProtocolHandler for DiagnosticHandler {
+    async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
+        let (mut send, mut recv) = connection.accept_bi().await?;
+        let mut ping = [0u8; 4];
+        recv.read_exact(&mut ping)
+            .await
+            .map_err(std::io::Error::other)?;
+        if &ping != b"PING" {
+            return Err(AcceptError::from(std::io::Error::other(
+                "bad diagnostic ping",
+            )));
+        }
+        send.write_all(b"PONG")
+            .await
+            .map_err(std::io::Error::other)?;
+        send.finish().map_err(std::io::Error::other)?;
+        self.0.fetch_add(1, Ordering::AcqRel);
+        // Keep the connection alive until the peer has received the reply and
+        // closed it; dropping the handler immediately can discard the packet.
+        let _ = timeout(DIAL_TIMEOUT, connection.closed()).await;
+        Ok(())
     }
 }
 

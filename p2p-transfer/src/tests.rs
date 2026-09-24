@@ -23,7 +23,7 @@ use crate::file_io::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::file_io::{FsSink, FsSource};
-use crate::node::{Node, Peers, RelayChoice, SinkPref};
+use crate::node::{DiagnosticNode, Node, Peers, RelayChoice, SinkPref};
 use crate::protocol::{
     cap_eq, cap_from_hex, cap_to_hex, decode, encode_chunk, encode_control, max_payload,
     negotiate_chunk, ChunkHeader, ChunkPlan, Control, FileMeta, Frame, ProtocolError, CAP_LEN,
@@ -35,6 +35,27 @@ use crate::transfer::{
     NoWebRtc, Path, PcState, Phase, ReceiveCommand, ReceiveOptions, ResumeFile, SenderOptions,
     SessionIo, TransferError, TransferHandle, TransferProgress,
 };
+
+#[tokio::test]
+async fn local_test_diagnostics_peer_ping_has_a_separate_protocol() {
+    timeout(Duration::from_secs(20), async {
+        let sender = DiagnosticNode::bind(RelayChoice::None).await.unwrap();
+        let ticket = sender.ticket().await.unwrap();
+        let parsed: EndpointTicket = ticket.to_string().parse().unwrap();
+        assert_eq!(
+            DiagnosticNode::session_id(&ticket),
+            DiagnosticNode::session_id(&parsed)
+        );
+        let receiver = DiagnosticNode::bind(RelayChoice::None).await.unwrap();
+        receiver.probe(&ticket).await.unwrap();
+        assert_eq!(sender.completed_probes(), 1);
+        assert_eq!(receiver.completed_probes(), 0);
+        receiver.shutdown().await;
+        sender.shutdown().await;
+    })
+    .await
+    .expect("local diagnostic ping timed out");
+}
 
 // ---------------------------------------------------------------------------------------
 // Helpers

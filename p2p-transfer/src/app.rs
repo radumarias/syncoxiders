@@ -15,11 +15,15 @@ use tokio::sync::watch;
 
 use crate::file_io::{self, FileOrigin, FileSnapshot, SharedFile, SharedFiles};
 use crate::logging;
+#[cfg(target_arch = "wasm32")]
+use crate::node::DiagnosticNode;
 use crate::node::{FragmentParams, Node, RelayChoice};
 use crate::protocol::FileMeta;
 use crate::transfer::{
     Path as TransferPath, Phase, ReceiveCommand, ReceiveOptions, TransferHandle,
 };
+#[cfg(target_arch = "wasm32")]
+use iroh_tickets::endpoint::EndpointTicket;
 
 /// Shown next to a link, because the link *is* the credential (design §2.6).
 const LINK_WARNING: &str =
@@ -191,10 +195,24 @@ impl Drop for SaveAttempt {
 enum Mode {
     #[default]
     Home,
+    #[cfg(target_arch = "wasm32")]
+    Diagnostics,
     Send {
         preparing: Vec<PrepareHandle>,
     },
     Receive(Box<ReceiveState>),
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Default)]
+struct DiagnosticPeer {
+    node: Option<Arc<DiagnosticNode>>,
+    target: Option<EndpointTicket>,
+    link: Option<String>,
+    session: Option<String>,
+    outcome: Option<String>,
+    busy: bool,
+    generation: u64,
 }
 
 /// Browser-only library of opt-in local copies. Neither this state nor any share link is
@@ -311,6 +329,15 @@ pub struct P2PTransfer {
     #[cfg(target_arch = "wasm32")]
     #[serde(skip)]
     resume_target: Option<String>,
+    #[cfg(target_arch = "wasm32")]
+    #[serde(skip)]
+    diagnostics_report: Arc<Mutex<Option<String>>>,
+    #[cfg(target_arch = "wasm32")]
+    #[serde(skip)]
+    diagnostics_running: Arc<AtomicBool>,
+    #[cfg(target_arch = "wasm32")]
+    #[serde(skip)]
+    diagnostic_peer: Arc<Mutex<DiagnosticPeer>>,
 }
 
 impl Default for P2PTransfer {
@@ -344,6 +371,12 @@ impl Default for P2PTransfer {
             confirm_discard: None,
             #[cfg(target_arch = "wasm32")]
             resume_target: None,
+            #[cfg(target_arch = "wasm32")]
+            diagnostics_report: Arc::new(Mutex::new(None)),
+            #[cfg(target_arch = "wasm32")]
+            diagnostics_running: Arc::new(AtomicBool::new(false)),
+            #[cfg(target_arch = "wasm32")]
+            diagnostic_peer: Arc::new(Mutex::new(DiagnosticPeer::default())),
         }
     }
 }
@@ -883,6 +916,38 @@ impl P2PTransfer {
         let Some(window) = web_sys::window() else {
             return;
         };
+        if let Some(raw) = hash.strip_prefix("#diagnostics=") {
+            // Remove the ephemeral peer ticket from browser history immediately.
+            if let Ok(history) = window.history() {
+                let href = window.location().href().unwrap_or_default();
+                let base = href.split('#').next().unwrap_or(&href);
+                let _ = history.replace_state_with_url(
+                    &JsValue::NULL,
+                    "",
+                    Some(&format!("{base}#diagnostics")),
+                );
+            }
+            self.last_fragment = window.location().hash().ok();
+            self.reset_peer_diagnostics();
+            let mut peer = self.diagnostic_peer.lock().unwrap();
+            match raw.parse::<EndpointTicket>() {
+                Ok(ticket) => {
+                    peer.session = Some(DiagnosticNode::session_id(&ticket));
+                    peer.target = Some(ticket);
+                }
+                Err(_) => peer.outcome = Some("Invalid diagnostics link".into()),
+            }
+            drop(peer);
+            self.mode = Mode::Diagnostics;
+            self.run_diagnostics();
+            return;
+        }
+        if hash == "#diagnostics" {
+            self.reset_peer_diagnostics();
+            self.mode = Mode::Diagnostics;
+            self.run_diagnostics();
+            return;
+        }
         let params = Node::parse_fragment(hash);
         if params.ticket.is_none() && params.cap.is_none() && params.error.is_none() {
             return;
@@ -922,7 +987,115 @@ impl P2PTransfer {
         // the same original link again is still treated as a new navigation.
         self.last_fragment = window.location().hash().ok();
 
+        self.reset_peer_diagnostics();
         self.start_receive(&href);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn run_diagnostics(&mut self) {
+        if self.diagnostics_running.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        *self.diagnostics_report.lock().unwrap() = None;
+        let report = self.diagnostics_report.clone();
+        let running = self.diagnostics_running.clone();
+        let repaint = self.repaint.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            *report.lock().unwrap() = Some(crate::diagnostics::collect().await);
+            running.store(false, Ordering::Release);
+            repaint.request_repaint();
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn run_peer_diagnostics(&mut self) {
+        let (target, generation) = {
+            let mut peer = self.diagnostic_peer.lock().unwrap();
+            if peer.busy || peer.node.is_some() {
+                return;
+            }
+            peer.busy = true;
+            peer.outcome = None;
+            (peer.target.clone(), peer.generation)
+        };
+        let state = self.diagnostic_peer.clone();
+        let repaint = self.repaint.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let outcome = match DiagnosticNode::bind(RelayChoice::from_env()).await {
+                Ok(node) => {
+                    if let Some(ticket) = target {
+                        let outcome = if node.probe(&ticket).await.is_ok() {
+                            "Peer ping succeeded (iroh dial, stream and reply)".to_string()
+                        } else {
+                            "Peer ping failed or timed out (see terminal for network warnings)"
+                                .to_string()
+                        };
+                        node.shutdown().await;
+                        outcome
+                    } else {
+                        match node.ticket().await {
+                            Ok(ticket) => {
+                                let base = web_sys::window()
+                                    .and_then(|w| w.location().href().ok())
+                                    .unwrap_or_default();
+                                let base = base.split(['#', '?']).next().unwrap_or(&base);
+                                let link = format!("{base}#diagnostics={ticket}");
+                                let node = Arc::new(node);
+                                let stale = {
+                                    let mut peer = state.lock().unwrap();
+                                    if peer.generation == generation {
+                                        peer.session = Some(DiagnosticNode::session_id(&ticket));
+                                        peer.link = Some(link);
+                                        peer.node = Some(node.clone());
+                                        false
+                                    } else {
+                                        true
+                                    }
+                                };
+                                if stale {
+                                    node.shutdown().await;
+                                    return;
+                                }
+                                "Listening for a diagnostic peer; keep this tab open".to_string()
+                            }
+                            Err(_) => {
+                                node.shutdown().await;
+                                "Could not register diagnostic endpoint with relay".to_string()
+                            }
+                        }
+                    }
+                }
+                Err(_) => "Could not start diagnostic endpoint".to_string(),
+            };
+            let mut peer = state.lock().unwrap();
+            if peer.generation == generation {
+                peer.outcome = Some(outcome);
+                peer.busy = false;
+            }
+            repaint.request_repaint();
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn stop_peer_diagnostics(&mut self) {
+        let mut peer = self.diagnostic_peer.lock().unwrap();
+        peer.generation = peer.generation.wrapping_add(1);
+        peer.busy = false;
+        if let Some(node) = peer.node.take() {
+            wasm_bindgen_futures::spawn_local(async move { node.shutdown().await });
+        }
+        peer.link = None;
+        peer.outcome = Some("Stopped listening for diagnostic peers".into());
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn reset_peer_diagnostics(&mut self) {
+        self.stop_peer_diagnostics();
+        let mut peer = self.diagnostic_peer.lock().unwrap();
+        *peer = DiagnosticPeer {
+            generation: peer.generation,
+            ..DiagnosticPeer::default()
+        };
     }
 
     // ── Per-frame bookkeeping (called from `logic`) ───────────────────────
@@ -963,6 +1136,8 @@ impl P2PTransfer {
                 Mode::Send { preparing } => !preparing.is_empty(),
                 Mode::Receive(r) => r.opening || r.handle.is_some(),
                 Mode::Home => false,
+                #[cfg(target_arch = "wasm32")]
+                Mode::Diagnostics => false,
             }
     }
 
@@ -1560,6 +1735,12 @@ impl P2PTransfer {
         }
 
         show_how_it_works(ui, &tc);
+        #[cfg(target_arch = "wasm32")]
+        if ui.button("Network diagnostics").clicked() {
+            self.reset_peer_diagnostics();
+            self.mode = Mode::Diagnostics;
+            self.run_diagnostics();
+        }
 
         if pick {
             self.pick_file();
@@ -1567,6 +1748,108 @@ impl P2PTransfer {
         if receive {
             self.set_receive(FragmentParams::default(), None, None, None, false);
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn show_diagnostics(&mut self, ui: &mut Ui) {
+        let tc = Tc::for_ui(ui);
+        let link = web_sys::window()
+            .and_then(|window| window.location().href().ok())
+            .map(|href| {
+                format!(
+                    "{}#diagnostics",
+                    href.split(['#', '?']).next().unwrap_or(&href)
+                )
+            })
+            .unwrap_or_default();
+        let report = self.diagnostics_report.lock().unwrap().clone();
+        let cancelled_websockets = logging::terminal_buffer()
+            .lock()
+            .map(|logs| {
+                logs.iter()
+                    .filter(|line| line.contains("WsMeta::connect future was dropped"))
+                    .count()
+            })
+            .unwrap_or(0);
+        let (target, peer_link, session, outcome, busy, completed) = {
+            let peer = self.diagnostic_peer.lock().unwrap();
+            (
+                peer.target.is_some(),
+                peer.link.clone(),
+                peer.session.clone(),
+                peer.outcome.clone(),
+                peer.busy,
+                peer.node.as_ref().map(|node| node.completed_probes()),
+            )
+        };
+        card(&tc).show(ui, |ui| {
+            ui.heading("Network diagnostics");
+            ui.label("Use the peer test on both devices, then copy each report. Compare their session IDs and timestamps.");
+            ui.add_space(8.0);
+            if let Some(session) = &session {
+                ui.label(format!("Session ID: {session}"));
+            }
+            if target {
+                if ui.add_enabled(!busy, Button::new("Test peer connection")).clicked() {
+                    self.run_peer_diagnostics();
+                }
+            } else if peer_link.is_none()
+                && completed.is_none()
+                && ui.add_enabled(!busy, Button::new("Start peer test")).clicked()
+            {
+                self.run_peer_diagnostics();
+            }
+            if let Some(peer_link) = &peer_link {
+                ui.label("Keep this page open and send this test-only link to the other device. It cannot download files.");
+                if ui.button("Copy peer test link").clicked() {
+                    ui.ctx().copy_text(peer_link.clone());
+                }
+                ui.add(egui::Label::new(RichText::new(peer_link).monospace().size(12.0)).wrap());
+                if ui.button("Stop peer test").clicked() {
+                    self.stop_peer_diagnostics();
+                }
+            }
+            if busy {
+                ui.spinner();
+                ui.label("Starting or dialling the diagnostic peer…");
+            }
+            if let Some(outcome) = &outcome {
+                ui.label(outcome);
+            }
+            if let Some(completed) = completed {
+                ui.label(format!("Successful incoming peer pings: {completed}"));
+            }
+            ui.add_space(10.0);
+            ui.label("For local checks only, share this link. It contains no peer address or file access code.");
+            if ui.button("Copy local checks link").clicked() && !link.is_empty() {
+                ui.ctx().copy_text(link.clone());
+            }
+            ui.add(egui::Label::new(RichText::new(&link).monospace().size(12.0)).wrap());
+            ui.add_space(12.0);
+            if self.diagnostics_running.load(Ordering::Acquire) {
+                ui.spinner();
+                ui.label("Testing relay WebSockets and iroh registration (up to 36 seconds)…");
+            } else if ui.button("Run checks again").clicked() {
+                self.run_diagnostics();
+            }
+            if let Some(report) = report {
+                ui.add_space(12.0);
+                ui.label("Review before sharing: the report contains your browser version, time, relay checks and peer test result. It does not include tickets or files.");
+                let peer_report = format!(
+                    "\nSession ID: {}\nPeer test: {}\nSuccessful incoming pings: {}\nCancelled relay WebSocket attempts logged: {}",
+                    session.as_deref().unwrap_or("none"),
+                    outcome.as_deref().unwrap_or("not run"),
+                    completed.unwrap_or(0),
+                    cancelled_websockets,
+                );
+                if ui.button("Copy report").clicked() {
+                    ui.ctx().copy_text(format!("{report}{peer_report}"));
+                }
+                for line in format!("{report}{peer_report}").lines() {
+                    ui.add(egui::Label::new(RichText::new(line).monospace().size(12.0)).wrap());
+                }
+            }
+        });
     }
 
     fn show_send(&mut self, ui: &mut Ui) {
@@ -2353,6 +2636,8 @@ impl P2PTransfer {
             let at_home = matches!(self.mode, Mode::Home);
             let label = match self.mode {
                 Mode::Home => "READY",
+                #[cfg(target_arch = "wasm32")]
+                Mode::Diagnostics => "DIAG",
                 Mode::Send { .. } => "TX",
                 Mode::Receive(_) => "RX",
             };
@@ -2399,6 +2684,8 @@ impl P2PTransfer {
                         )
                         .clicked()
                 {
+                    #[cfg(target_arch = "wasm32")]
+                    self.stop_peer_diagnostics();
                     self.mode = Mode::Home;
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -2516,7 +2803,17 @@ impl eframe::App for P2PTransfer {
         self.poll_receive();
         self.drain_error();
 
-        if self.needs_progress_poll() {
+        if self.needs_progress_poll() || {
+            #[cfg(target_arch = "wasm32")]
+            {
+                matches!(self.mode, Mode::Diagnostics)
+                    && self.diagnostic_peer.lock().unwrap().node.is_some()
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                false
+            }
+        } {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }
@@ -2587,12 +2884,18 @@ impl eframe::App for P2PTransfer {
                         ui.set_width(content_width);
                         match self.mode {
                             Mode::Home => self.show_home(ui),
+                            #[cfg(target_arch = "wasm32")]
+                            Mode::Diagnostics => self.show_diagnostics(ui),
                             Mode::Send { .. } => self.show_send(ui),
                             Mode::Receive(_) => self.show_receive(ui),
                         }
-                        self.show_received_files(ui);
                         #[cfg(target_arch = "wasm32")]
-                        self.show_local_copies(ui);
+                        if !matches!(self.mode, Mode::Diagnostics) {
+                            self.show_received_files(ui);
+                            self.show_local_copies(ui);
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        self.show_received_files(ui);
                     });
                 });
             });
