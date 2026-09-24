@@ -392,6 +392,8 @@ impl Drop for HashChangeListener {
         if let Some(window) = web_sys::window() {
             let _ = window
                 .remove_event_listener_with_callback("hashchange", self.0.as_ref().unchecked_ref());
+            let _ = window
+                .remove_event_listener_with_callback("popstate", self.0.as_ref().unchecked_ref());
         }
     }
 }
@@ -423,6 +425,8 @@ impl P2PTransfer {
                     "hashchange",
                     closure.as_ref().unchecked_ref(),
                 );
+                let _ = window
+                    .add_event_listener_with_callback("popstate", closure.as_ref().unchecked_ref());
                 app.hashchange_closure = Some(HashChangeListener(closure));
             }
             app.local_copies
@@ -901,11 +905,50 @@ impl P2PTransfer {
         let Ok(hash) = window.location().hash() else {
             return;
         };
-        if self.last_fragment.as_ref() == Some(&hash) {
+        let path = window.location().pathname().unwrap_or_default();
+        let route = format!("{path}{hash}");
+        if self.last_fragment.as_ref() == Some(&route) {
             return;
         }
-        self.last_fragment = Some(hash.clone());
+        self.last_fragment = Some(route);
+        if path.trim_end_matches('/') == "/diags" && hash.is_empty() {
+            if !matches!(self.mode, Mode::Diagnostics) {
+                self.reset_peer_diagnostics();
+                self.mode = Mode::Diagnostics;
+                self.run_diagnostics();
+            }
+            return;
+        }
+        if path != "/diags" && hash.is_empty() && matches!(self.mode, Mode::Diagnostics) {
+            self.stop_peer_diagnostics();
+            self.mode = Mode::Home;
+            return;
+        }
         self.check_fragment(&hash);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn diagnostics_url() -> Option<String> {
+        Some(format!(
+            "{}/diags",
+            web_sys::window()?.location().origin().ok()?
+        ))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn open_diagnostics(&mut self) {
+        if matches!(self.mode, Mode::Diagnostics) {
+            return;
+        }
+        if let (Some(window), Some(url)) = (web_sys::window(), Self::diagnostics_url()) {
+            if let Ok(history) = window.history() {
+                let _ = history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&url));
+            }
+            self.last_fragment = None;
+        }
+        self.reset_peer_diagnostics();
+        self.mode = Mode::Diagnostics;
+        self.run_diagnostics();
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -921,13 +964,18 @@ impl P2PTransfer {
             if let Ok(history) = window.history() {
                 let href = window.location().href().unwrap_or_default();
                 let base = href.split('#').next().unwrap_or(&href);
-                let _ = history.replace_state_with_url(
-                    &JsValue::NULL,
-                    "",
-                    Some(&format!("{base}#diagnostics")),
-                );
+                let scrubbed = if window.location().pathname().ok().as_deref() == Some("/diags") {
+                    base.to_string()
+                } else {
+                    format!("{base}#diagnostics")
+                };
+                let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&scrubbed));
             }
-            self.last_fragment = window.location().hash().ok();
+            self.last_fragment = Some(format!(
+                "{}{}",
+                window.location().pathname().unwrap_or_default(),
+                window.location().hash().unwrap_or_default()
+            ));
             self.reset_peer_diagnostics();
             let mut peer = self.diagnostic_peer.lock().unwrap();
             match raw.parse::<EndpointTicket>() {
@@ -944,6 +992,21 @@ impl P2PTransfer {
         }
         if hash == "#diagnostics" {
             self.reset_peer_diagnostics();
+            self.mode = Mode::Diagnostics;
+            self.run_diagnostics();
+            return;
+        }
+        if window.location().pathname().ok().as_deref() == Some("/diags") {
+            // A transfer fragment on the diagnostics path is neither a peer
+            // diagnostic ticket nor a valid diagnostics URL. Discard it rather
+            // than starting a receive which the path router would cancel.
+            if let Ok(history) = window.history() {
+                let _ = history.replace_state_with_url(&JsValue::NULL, "", Some("/diags"));
+            }
+            self.last_fragment = Some("/diags".into());
+            self.reset_peer_diagnostics();
+            self.diagnostic_peer.lock().unwrap().outcome =
+                Some("This page runs diagnostics only; open file links on the home page".into());
             self.mode = Mode::Diagnostics;
             self.run_diagnostics();
             return;
@@ -985,7 +1048,11 @@ impl P2PTransfer {
         }
         // replaceState does not fire hashchange. Remember the scrubbed value now so opening
         // the same original link again is still treated as a new navigation.
-        self.last_fragment = window.location().hash().ok();
+        self.last_fragment = Some(format!(
+            "{}{}",
+            window.location().pathname().unwrap_or_default(),
+            window.location().hash().unwrap_or_default()
+        ));
 
         self.reset_peer_diagnostics();
         self.start_receive(&href);
@@ -1035,10 +1102,7 @@ impl P2PTransfer {
                     } else {
                         match node.ticket().await {
                             Ok(ticket) => {
-                                let base = web_sys::window()
-                                    .and_then(|w| w.location().href().ok())
-                                    .unwrap_or_default();
-                                let base = base.split(['#', '?']).next().unwrap_or(&base);
+                                let base = P2PTransfer::diagnostics_url().unwrap_or_default();
                                 let link = format!("{base}#diagnostics={ticket}");
                                 let node = Arc::new(node);
                                 let stale = {
@@ -1737,9 +1801,7 @@ impl P2PTransfer {
         show_how_it_works(ui, &tc);
         #[cfg(target_arch = "wasm32")]
         if ui.button("Network diagnostics").clicked() {
-            self.reset_peer_diagnostics();
-            self.mode = Mode::Diagnostics;
-            self.run_diagnostics();
+            self.open_diagnostics();
         }
 
         if pick {
@@ -1753,15 +1815,7 @@ impl P2PTransfer {
     #[cfg(target_arch = "wasm32")]
     fn show_diagnostics(&mut self, ui: &mut Ui) {
         let tc = Tc::for_ui(ui);
-        let link = web_sys::window()
-            .and_then(|window| window.location().href().ok())
-            .map(|href| {
-                format!(
-                    "{}#diagnostics",
-                    href.split(['#', '?']).next().unwrap_or(&href)
-                )
-            })
-            .unwrap_or_default();
+        let link = Self::diagnostics_url().unwrap_or_default();
         let report = self.diagnostics_report.lock().unwrap().clone();
         let cancelled_websockets = logging::terminal_buffer()
             .lock()
@@ -2685,7 +2739,21 @@ impl P2PTransfer {
                         .clicked()
                 {
                     #[cfg(target_arch = "wasm32")]
-                    self.stop_peer_diagnostics();
+                    {
+                        if matches!(self.mode, Mode::Diagnostics) {
+                            if let Some(window) = web_sys::window() {
+                                if let Ok(history) = window.history() {
+                                    let _ = history.push_state_with_url(
+                                        &wasm_bindgen::JsValue::NULL,
+                                        "",
+                                        Some("/"),
+                                    );
+                                }
+                                self.last_fragment = None;
+                            }
+                        }
+                        self.stop_peer_diagnostics();
+                    }
                     self.mode = Mode::Home;
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -2731,6 +2799,30 @@ impl P2PTransfer {
                 self.show_terminal_view = !self.show_terminal_view;
             }
             ui.add_space(12.0);
+            #[cfg(target_arch = "wasm32")]
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_sized([72.0, 44.0], outline_button("Diags", tc.outline))
+                    .clicked()
+                {
+                    self.open_diagnostics();
+                }
+                if !compact && !self.show_terminal_view {
+                    if let Ok(logs) = logging::terminal_buffer().lock() {
+                        let msg = logs
+                            .back()
+                            .cloned()
+                            .unwrap_or_else(|| "No logs yet…".into());
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(msg).color(tc.outline).monospace().size(12.0),
+                            )
+                            .truncate(),
+                        );
+                    }
+                }
+            });
+            #[cfg(not(target_arch = "wasm32"))]
             if !compact && !self.show_terminal_view {
                 if let Ok(logs) = logging::terminal_buffer().lock() {
                     let msg = logs
