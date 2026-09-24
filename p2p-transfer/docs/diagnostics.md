@@ -1,7 +1,8 @@
 # Paired browser diagnostics
 
-1. Open `https://oxfer.pages.dev/#diagnostics` on the first device. Wait for
-   local checks and press **Start peer test**. Keep this tab open.
+1. Open `https://oxfer.pages.dev/diags` on the first device, or press **Diags**
+   in the bottom bar from any app screen. Wait for local checks and press
+   **Start peer test**. Keep this tab open.
 2. Copy **peer test link** and open it on the second device. This link contains
    an ephemeral diagnostic endpoint address, not a file access code. The
    diagnostic endpoint serves no files and closes when the first device stops
