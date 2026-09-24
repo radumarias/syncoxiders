@@ -2322,6 +2322,13 @@ impl P2PTransfer {
                     .strong()
                     .size(if compact { 21.0 } else { 23.0 }),
             );
+            ui.label(
+                RichText::new(crate::BUILD_LABEL)
+                    .color(tc.on_surface_var)
+                    .monospace()
+                    .size(if compact { 10.0 } else { 11.0 }),
+            )
+            .on_hover_text("Version and Git commit of this running build");
             let at_home = matches!(self.mode, Mode::Home);
             let label = match self.mode {
                 Mode::Home => "READY",
@@ -2433,6 +2440,12 @@ impl P2PTransfer {
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
+                    ui.label(
+                        RichText::new(format!("Build {}", crate::BUILD_LABEL))
+                            .color(tc.secondary)
+                            .monospace()
+                            .size(12.0),
+                    );
                     match logging::terminal_buffer().lock() {
                         Ok(logs) if !logs.is_empty() => {
                             for line in logs.iter() {
@@ -2562,6 +2575,21 @@ impl eframe::App for P2PTransfer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_test_build_label_identifies_compiled_revision() {
+        assert_eq!(
+            crate::BUILD_LABEL,
+            format!("v{} · {}", env!("CARGO_PKG_VERSION"), crate::BUILD_REVISION)
+        );
+        assert!(
+            crate::BUILD_REVISION == "unknown"
+                || (crate::BUILD_REVISION.len() == 12
+                    && crate::BUILD_REVISION
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit()))
+        );
+    }
 
     #[test]
     fn local_test_reconnect_ui_does_not_claim_the_old_path_is_active() {
