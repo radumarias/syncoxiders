@@ -11,6 +11,7 @@ cargo clippy  --quiet -p p2p-transfer --all-features --lib --target wasm32-unkno
 cargo test    --quiet -p p2p-transfer --all-targets --all-features
 cargo test    --quiet -p p2p-transfer --doc
 node --test tests/resume_worker.test.mjs
+node --test tests/diagnostics.test.mjs
 wasm-pack test --headless --firefox -- --test webrtc_wasm
 wasm-pack test --headless --firefox -- --test resume_wasm
 trunk build
