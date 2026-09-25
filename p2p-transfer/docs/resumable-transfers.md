@@ -28,6 +28,25 @@ destination write has an uncertain commit state and must not be replayed.
 After the retry budget is exhausted, ordinary destinations are cleaned up.
 Opt-in resumable browser copies remain available locally.
 
+## Keeping the browser awake
+
+During browser sharing and active receives, Oxfer requests the browser's
+**screen wake lock** and shows whether it is active. The receiver does not
+keep the screen awake indefinitely while waiting at the Save prompt; pressing
+Save requests the lock again while the browser still has that user gesture.
+The sender releases its lock on **Stop sharing**, and the receiver releases
+its lock on completion or cancellation. Browsers release it automatically
+when the tab becomes hidden; Oxfer requests a new lock if the transfer is
+still active when the tab becomes visible again.
+
+Wake locks require a supporting browser, HTTPS, and a visible page. They can
+be denied or revoked for power or OS reasons. **Keep the tab in the foreground
+and the screen unlocked**: manually locking a device or switching apps may
+suspend WebRTC, WASM, or browser storage, regardless of wake lock or fullscreen
+mode. Oxfer does not play hidden media or force fullscreen to bypass this
+restriction. A normal browser download cannot be resumed after the browser
+closes; use the opt-in resumable-copy route for that case.
+
 ## Verified completion
 
 The receiver checks each file's BLAKE3 hash against the authenticated manifest

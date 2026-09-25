@@ -13,6 +13,7 @@ cargo test    --quiet -p p2p-transfer --doc
 node --test tests/resume_worker.test.mjs
 node --test tests/diagnostics.test.mjs
 node --test tests/webrtc_stats.test.mjs
+node --test tests/wake_lock.test.mjs
 wasm-pack test --headless --firefox -- --test webrtc_wasm
 wasm-pack test --headless --firefox -- --test relay_wasm
 wasm-pack test --headless --firefox -- --test resume_wasm

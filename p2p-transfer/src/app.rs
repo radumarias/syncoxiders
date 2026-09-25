@@ -25,6 +25,17 @@ use crate::transfer::{
 #[cfg(target_arch = "wasm32")]
 use iroh_tickets::endpoint::EndpointTicket;
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(module = "/assets/wake-lock.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = setTransferWakeLock)]
+    fn set_transfer_wake_lock(active: bool);
+    #[wasm_bindgen(js_name = retryTransferWakeLock)]
+    fn retry_transfer_wake_lock();
+    #[wasm_bindgen(js_name = transferWakeLockStatus)]
+    fn transfer_wake_lock_status() -> String;
+}
+
 /// Shown next to a link, because the link *is* the credential (design §2.6).
 const LINK_WARNING: &str =
     "Anyone with this link can download these files — it contains an access code.";
@@ -506,6 +517,9 @@ impl P2PTransfer {
             let Some(file) = input.files().and_then(|files| files.get(0)) else {
                 return;
             };
+            // A file-picker change is still a user action on WebKit. Try the
+            // first screen wake lock here, before async hashing/binding.
+            set_transfer_wake_lock(true);
             // `File` freezes name, size and mtime at pick time, so this snapshot is the
             // one the browser will still report later.
             let snapshot = file_io::snapshot_web(&file);
@@ -677,6 +691,8 @@ impl P2PTransfer {
     /// Stop serving. The next share draws a fresh key, so the old link stops working.
     fn stop_sharing(&mut self) {
         self.sharing.store(false, Ordering::Release);
+        #[cfg(target_arch = "wasm32")]
+        set_transfer_wake_lock(false);
         self.link_copied = false;
         let node = self.node.lock().ok().and_then(|mut n| n.take());
         if let Some(node) = node {
@@ -791,6 +807,8 @@ impl P2PTransfer {
         let Some(attempt) = SaveAttempt::begin(&r.save_pending) else {
             return;
         };
+        #[cfg(target_arch = "wasm32")]
+        retry_transfer_wake_lock();
         r.error = None;
         let commands = handle.commands.clone();
         let errors = self.node_error.clone();
@@ -1223,6 +1241,61 @@ impl P2PTransfer {
                 #[cfg(target_arch = "wasm32")]
                 Mode::Diagnostics => false,
             }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn needs_wake_lock(&self) -> bool {
+        self.sharing.load(Ordering::Acquire)
+            || match &self.mode {
+                Mode::Send { preparing } => !preparing.is_empty(),
+                Mode::Receive(r) => {
+                    let progress = r.handle.as_ref().map(|h| h.latest());
+                    Self::receive_needs_wake_lock(
+                        r.opening,
+                        r.save_pending.load(Ordering::Acquire),
+                        progress.as_ref().map(|p| &p.phase),
+                    )
+                }
+                Mode::Home | Mode::Diagnostics => false,
+            }
+    }
+
+    #[cfg(any(test, target_arch = "wasm32"))]
+    fn receive_needs_wake_lock(opening: bool, save_pending: bool, phase: Option<&Phase>) -> bool {
+        opening
+            || phase.is_some_and(|phase| {
+                !phase.is_terminal()
+                    && (save_pending || !matches!(phase, Phase::AwaitingSave { .. }))
+            })
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn show_wake_lock_notice(ui: &mut Ui, tc: &Tc) {
+        let (status, color) = match transfer_wake_lock_status().as_str() {
+            "active" => (
+                "Screen wake lock active (uses battery); keep this tab visible.",
+                tc.secondary,
+            ),
+            "requesting" => (
+                "Asking the browser to keep this screen awake…",
+                tc.on_surface_var,
+            ),
+            _ => (
+                "Screen wake lock unavailable. Keep your screen on and the tab visible.",
+                tc.error,
+            ),
+        };
+        ui.add(egui::Label::new(RichText::new(status).color(color).size(12.0)).wrap());
+        ui.add(
+            egui::Label::new(
+                RichText::new(
+                    "Locking your device or switching apps can interrupt a browser transfer.",
+                )
+                .color(tc.on_surface_var)
+                .size(12.0),
+            )
+            .wrap(),
+        );
     }
 
     /// Adopt a receive handle built by the on-demand bind task.
@@ -2022,6 +2095,12 @@ impl P2PTransfer {
                 ui.add(egui::ProgressBar::new(*pct).desired_height(10.0));
             }
 
+            #[cfg(target_arch = "wasm32")]
+            if self.sharing.load(Ordering::Acquire) || !preparing_names.is_empty() {
+                ui.add_space(10.0);
+                Self::show_wake_lock_notice(ui, &tc);
+            }
+
             ui.add_space(14.0);
             match (&link, preparing_names.is_empty()) {
                 (Some(link), true) => {
@@ -2051,6 +2130,8 @@ impl P2PTransfer {
                             .add_sized([width, 48.0], copy_button(&tc, self.link_copied))
                             .clicked()
                         {
+                            #[cfg(target_arch = "wasm32")]
+                            retry_transfer_wake_lock();
                             ui.ctx().copy_text(link.clone());
                             self.link_copied = true;
                         }
@@ -2063,6 +2144,8 @@ impl P2PTransfer {
                     } else {
                         ui.horizontal(|ui| {
                             if ui.add(copy_button(&tc, self.link_copied)).clicked() {
+                                #[cfg(target_arch = "wasm32")]
+                                retry_transfer_wake_lock();
                                 ui.ctx().copy_text(link.clone());
                                 self.link_copied = true;
                             }
@@ -2279,6 +2362,29 @@ impl P2PTransfer {
                 pill(ui, &tc, "PRIVATE SESSION", true);
             });
             ui.add_space(10.0);
+
+            #[cfg(target_arch = "wasm32")]
+            if opening || progress.as_ref().is_some_and(|p| !p.phase.is_terminal()) {
+                if matches!(
+                    progress.as_ref().map(|p| &p.phase),
+                    Some(Phase::AwaitingSave { .. })
+                ) && !save_pending
+                {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(
+                                "Keep this tab visible. Screen wake lock starts when you choose a destination.",
+                            )
+                            .color(tc.on_surface_var)
+                            .size(12.0),
+                        )
+                        .wrap(),
+                    );
+                } else {
+                    Self::show_wake_lock_notice(ui, &tc);
+                }
+                ui.add_space(8.0);
+            }
 
             if progress.is_none() && opening {
                 ui.horizontal_wrapped(|ui| {
@@ -2942,6 +3048,9 @@ impl eframe::App for P2PTransfer {
         self.poll_receive();
         self.drain_error();
 
+        #[cfg(target_arch = "wasm32")]
+        set_transfer_wake_lock(self.needs_wake_lock());
+
         if self.needs_progress_poll() || {
             #[cfg(target_arch = "wasm32")]
             {
@@ -3087,6 +3196,34 @@ mod tests {
             P2PTransfer::share_base_url("https://oxfer.pages.dev/#private"),
             "https://oxfer.pages.dev/"
         );
+    }
+
+    #[test]
+    fn local_test_receiver_wake_lock_requires_active_session_or_save_attempt() {
+        let preview = Phase::AwaitingSave { manifest: vec![] };
+        let done = Phase::Complete { saved: vec![] };
+        assert!(P2PTransfer::receive_needs_wake_lock(true, false, None));
+        assert!(!P2PTransfer::receive_needs_wake_lock(false, true, None));
+        assert!(!P2PTransfer::receive_needs_wake_lock(
+            false,
+            false,
+            Some(&preview)
+        ));
+        assert!(P2PTransfer::receive_needs_wake_lock(
+            false,
+            true,
+            Some(&preview)
+        ));
+        assert!(P2PTransfer::receive_needs_wake_lock(
+            false,
+            true,
+            Some(&Phase::Transferring)
+        ));
+        assert!(!P2PTransfer::receive_needs_wake_lock(
+            false,
+            true,
+            Some(&done)
+        ));
     }
 
     #[test]
