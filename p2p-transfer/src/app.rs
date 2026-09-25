@@ -1034,7 +1034,7 @@ impl P2PTransfer {
 
     #[cfg(target_arch = "wasm32")]
     fn open_diagnostics(&mut self) {
-        if matches!(self.mode, Mode::Diagnostics) {
+        if matches!(self.mode, Mode::Diagnostics) || self.is_preparing_share() {
             return;
         }
         if let (Some(window), Some(url)) = (web_sys::window(), Self::diagnostics_url()) {
@@ -1978,9 +1978,12 @@ fn show_how_it_works(ui: &mut Ui, tc: &Tc) {
 }
 
 impl P2PTransfer {
-    /// Home does not revoke a share. Keep its status and return path visible
-    /// instead of hiding an active endpoint behind the "READY" home screen.
-    fn show_active_share_on_home(&mut self, ui: &mut Ui, tc: &Tc) {
+    fn is_preparing_share(&self) -> bool {
+        matches!(&self.mode, Mode::Send { preparing } if !preparing.is_empty())
+    }
+
+    /// Home and diagnostics do not revoke a share. Preserve its status and return path.
+    fn show_active_share_overview(&mut self, ui: &mut Ui, tc: &Tc) {
         if !self.sharing.load(Ordering::Acquire) {
             return;
         }
@@ -1997,18 +2000,33 @@ impl P2PTransfer {
             return_to_share = ui.add(primary_button(tc, "Return to sharing")).clicked();
         });
         if return_to_share {
-            self.mode = Mode::Send {
-                preparing: Vec::new(),
-            };
+            self.return_to_sharing();
         }
         self.show_peers(ui);
         ui.add_space(12.0);
     }
 
+    fn return_to_sharing(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        if matches!(self.mode, Mode::Diagnostics) {
+            if let Some(window) = web_sys::window() {
+                if let Ok(history) = window.history() {
+                    let _ =
+                        history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/"));
+                }
+            }
+            self.last_fragment = None;
+            self.stop_peer_diagnostics();
+        }
+        self.mode = Mode::Send {
+            preparing: Vec::new(),
+        };
+    }
+
     fn show_home_rusty(&mut self, ui: &mut Ui) {
         let tc = Tc::of(Theme::Rusty, ui.visuals().dark_mode);
         let compact = compact(ui);
-        self.show_active_share_on_home(ui, &tc);
+        self.show_active_share_overview(ui, &tc);
         ui.add_space(if compact { 8.0 } else { 22.0 });
         ui.vertical_centered(|ui| {
             ui.horizontal_wrapped(|ui| {
@@ -2145,7 +2163,7 @@ impl P2PTransfer {
         }
         let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let compact = compact(ui);
-        self.show_active_share_on_home(ui, &tc);
+        self.show_active_share_overview(ui, &tc);
         ui.add_space(if compact { 4.0 } else { 16.0 });
         egui::Frame::new()
             .fill(tc.surface_low)
@@ -2272,6 +2290,7 @@ impl P2PTransfer {
     #[cfg(target_arch = "wasm32")]
     fn show_diagnostics(&mut self, ui: &mut Ui) {
         let tc = Tc::of(self.theme, ui.visuals().dark_mode);
+        self.show_active_share_overview(ui, &tc);
         let link = Self::diagnostics_url().unwrap_or_default();
         let report = self.diagnostics_report.lock().unwrap().clone();
         let cancelled_websockets = logging::terminal_buffer()
@@ -3324,10 +3343,7 @@ impl P2PTransfer {
                 if !at_home {
                     // Dropping Mode::Send also drops in-flight hashing tasks. Do not let Home
                     // silently abort file preparation while the endpoint remains live.
-                    let preparing = matches!(
-                        &self.mode,
-                        Mode::Send { preparing } if !preparing.is_empty()
-                    );
+                    let preparing = self.is_preparing_share();
                     let home = ui
                         .add_enabled_ui(!preparing, |ui| {
                             ui.add_sized(
@@ -3402,10 +3418,13 @@ impl P2PTransfer {
             ui.add_space(12.0);
             #[cfg(target_arch = "wasm32")]
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add_sized([72.0, 44.0], outline_button("Diags", tc.outline))
-                    .clicked()
-                {
+                let diagnostics = ui
+                    .add_enabled_ui(!self.is_preparing_share(), |ui| {
+                        ui.add_sized([72.0, 44.0], outline_button("Diags", tc.outline))
+                    })
+                    .inner
+                    .on_disabled_hover_text("Wait for files to finish preparing");
+                if diagnostics.clicked() {
                     self.open_diagnostics();
                 }
                 if !compact && !self.show_terminal_view {
