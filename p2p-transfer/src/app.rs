@@ -36,6 +36,13 @@ extern "C" {
     fn transfer_wake_lock_status() -> String;
 }
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(module = "/assets/theme.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = setBrowserTheme)]
+    fn set_browser_theme(theme: &str, dark: bool);
+}
+
 /// Shown next to a link, because the link *is* the credential (design §2.6).
 const LINK_WARNING: &str =
     "Anyone with this link can download these files — it contains an access code.";
@@ -46,10 +53,19 @@ const CAP_REJECTED: &str =
     "this link is not valid for these files. Ask the sender for a fresh link — the old one stops \
      working when they restart sharing.";
 
-// ── Stitch Design System — theme-aware color palette ──────────────────────────
+// ── File-messenger theme — shared colors for desktop and browser ────────────
+
+/// A display preference, independent of the light/dark setting and transfer state.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+enum Theme {
+    #[default]
+    Classic,
+    Telegram,
+}
 
 #[derive(Clone, Copy)]
 struct Tc {
+    theme: Theme,
     bg: Color32,
     surface_lowest: Color32,
     surface_low: Color32,
@@ -66,52 +82,89 @@ struct Tc {
 }
 
 impl Tc {
-    const fn dark() -> Self {
+    const fn telegram_dark() -> Self {
         Self {
-            bg: Color32::from_rgb(16, 13, 12),                // #100d0c
-            surface_lowest: Color32::from_rgb(10, 8, 7),      // #0a0807
-            surface_low: Color32::from_rgb(28, 22, 19),       // #1c1613
-            surface: Color32::from_rgb(35, 27, 23),           // #231b17
-            surface_high: Color32::from_rgb(54, 39, 31),      // #36271f
-            primary: Color32::from_rgb(239, 112, 56),         // #ef7038
-            on_primary: Color32::from_rgb(34, 15, 7),         // #220f07
-            secondary: Color32::from_rgb(68, 218, 181),       // #44dab5
-            on_surface: Color32::from_rgb(247, 235, 226),     // #f7ebe2
-            on_surface_var: Color32::from_rgb(213, 190, 176), // #d5beb0
-            outline: Color32::from_rgb(168, 137, 120),        // #a88978
-            outline_var: Color32::from_rgb(81, 57, 46),       // #51392e
-            error: Color32::from_rgb(255, 181, 164),          // #ffb5a4
+            theme: Theme::Telegram,
+            bg: Color32::from_rgb(14, 22, 33), // #0e1621
+            surface_lowest: Color32::from_rgb(11, 18, 28), // #0b121c
+            surface_low: Color32::from_rgb(23, 33, 43), // #17212b
+            surface: Color32::from_rgb(29, 40, 53), // #1d2835
+            surface_high: Color32::from_rgb(36, 51, 67), // #243343
+            primary: Color32::from_rgb(80, 162, 233), // #50a2e9
+            on_primary: Color32::from_rgb(8, 25, 43), // #08192b
+            secondary: Color32::from_rgb(113, 198, 255), // #71c6ff
+            on_surface: Color32::from_rgb(239, 246, 251), // #eff6fb
+            on_surface_var: Color32::from_rgb(183, 201, 217), // #b7c9d9
+            outline: Color32::from_rgb(151, 177, 198), // #97b1c6
+            outline_var: Color32::from_rgb(55, 75, 94), // #374b5e
+            error: Color32::from_rgb(255, 168, 167), // #ffa8a7
         }
     }
 
-    const fn light() -> Self {
+    const fn telegram_light() -> Self {
         Self {
-            bg: Color32::from_rgb(250, 246, 242),             // #faf6f2
-            surface_lowest: Color32::from_rgb(255, 253, 251), // #fffdfb
-            surface_low: Color32::from_rgb(244, 235, 228),    // #f4ebe4
-            surface: Color32::from_rgb(237, 222, 212),        // #edded4
-            surface_high: Color32::from_rgb(226, 202, 187),   // #e2cabb
-            primary: Color32::from_rgb(176, 66, 22),          // #b04216
-            on_primary: Color32::from_rgb(255, 249, 245),     // #fff9f5
-            secondary: Color32::from_rgb(0, 113, 88),         // #007158
-            on_surface: Color32::from_rgb(48, 28, 20),        // #301c14
-            on_surface_var: Color32::from_rgb(94, 67, 55),    // #5e4337
-            outline: Color32::from_rgb(132, 99, 82),          // #846352
-            outline_var: Color32::from_rgb(211, 187, 173),    // #d3bbad
-            error: Color32::from_rgb(177, 46, 30),            // #b12e1e
+            theme: Theme::Telegram,
+            bg: Color32::from_rgb(229, 235, 241), // #e5ebf1
+            surface_lowest: Color32::from_rgb(245, 248, 251), // #f5f8fb
+            surface_low: Color32::from_rgb(255, 255, 255), // #ffffff
+            surface: Color32::from_rgb(248, 250, 252), // #f8fafc
+            surface_high: Color32::from_rgb(222, 235, 246), // #deebf6
+            primary: Color32::from_rgb(32, 119, 193), // #2077c1
+            on_primary: Color32::from_rgb(255, 255, 255), // #ffffff
+            secondary: Color32::from_rgb(27, 107, 180), // #1b6bb4
+            on_surface: Color32::from_rgb(24, 43, 60), // #182b3c
+            on_surface_var: Color32::from_rgb(69, 91, 109), // #455b6d
+            outline: Color32::from_rgb(69, 98, 122), // #45627a
+            outline_var: Color32::from_rgb(201, 216, 227), // #c9d8e3
+            error: Color32::from_rgb(167, 44, 48), // #a72c30
         }
     }
 
-    fn of(dark: bool) -> Self {
-        if dark {
-            Self::dark()
-        } else {
-            Self::light()
+    const fn classic_dark() -> Self {
+        Self {
+            theme: Theme::Classic,
+            bg: Color32::from_rgb(16, 13, 12),
+            surface_lowest: Color32::from_rgb(10, 8, 7),
+            surface_low: Color32::from_rgb(28, 22, 19),
+            surface: Color32::from_rgb(35, 27, 23),
+            surface_high: Color32::from_rgb(54, 39, 31),
+            primary: Color32::from_rgb(239, 112, 56),
+            on_primary: Color32::from_rgb(34, 15, 7),
+            secondary: Color32::from_rgb(68, 218, 181),
+            on_surface: Color32::from_rgb(247, 235, 226),
+            on_surface_var: Color32::from_rgb(213, 190, 176),
+            outline: Color32::from_rgb(168, 137, 120),
+            outline_var: Color32::from_rgb(81, 57, 46),
+            error: Color32::from_rgb(255, 181, 164),
         }
     }
 
-    fn for_ui(ui: &Ui) -> Self {
-        Self::of(ui.visuals().dark_mode)
+    const fn classic_light() -> Self {
+        Self {
+            theme: Theme::Classic,
+            bg: Color32::from_rgb(250, 246, 242),
+            surface_lowest: Color32::from_rgb(255, 253, 251),
+            surface_low: Color32::from_rgb(244, 235, 228),
+            surface: Color32::from_rgb(237, 222, 212),
+            surface_high: Color32::from_rgb(226, 202, 187),
+            primary: Color32::from_rgb(176, 66, 22),
+            on_primary: Color32::from_rgb(255, 249, 245),
+            secondary: Color32::from_rgb(0, 113, 88),
+            on_surface: Color32::from_rgb(48, 28, 20),
+            on_surface_var: Color32::from_rgb(94, 67, 55),
+            outline: Color32::from_rgb(132, 99, 82),
+            outline_var: Color32::from_rgb(211, 187, 173),
+            error: Color32::from_rgb(177, 46, 30),
+        }
+    }
+
+    fn of(theme: Theme, dark: bool) -> Self {
+        match (theme, dark) {
+            (Theme::Classic, true) => Self::classic_dark(),
+            (Theme::Classic, false) => Self::classic_light(),
+            (Theme::Telegram, true) => Self::telegram_dark(),
+            (Theme::Telegram, false) => Self::telegram_light(),
+        }
     }
 }
 
@@ -278,10 +331,12 @@ impl LocalCopies {
 #[derive(Deserialize, Serialize)]
 #[serde(default)]
 pub struct P2PTransfer {
-    /// The only persisted field: where native receives are written.
+    /// Only native receives persist a destination; links and file bytes never do.
     #[cfg(not(target_arch = "wasm32"))]
     save_directory: Option<std::path::PathBuf>,
 
+    /// The original design remains the default for existing installs.
+    theme: Theme,
     #[serde(skip)]
     mode: Mode,
     /// Wake the real UI when browser callbacks or endpoint startup finish.
@@ -316,6 +371,8 @@ pub struct P2PTransfer {
     link_copied: bool,
     #[serde(skip)]
     last_dark_mode: Option<bool>,
+    #[serde(skip)]
+    last_theme: Option<Theme>,
     #[cfg(target_arch = "wasm32")]
     #[serde(skip)]
     file_input_closure: Option<wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>>,
@@ -356,6 +413,7 @@ impl Default for P2PTransfer {
         Self {
             #[cfg(not(target_arch = "wasm32"))]
             save_directory: None,
+            theme: Theme::default(),
             mode: Mode::Home,
             repaint: egui::Context::default(),
             shared_files: Arc::new(Mutex::new(Vec::new())),
@@ -368,6 +426,7 @@ impl Default for P2PTransfer {
             show_terminal_view: false,
             link_copied: false,
             last_dark_mode: None,
+            last_theme: None,
             #[cfg(target_arch = "wasm32")]
             file_input_closure: None,
             #[cfg(target_arch = "wasm32")]
@@ -1494,8 +1553,17 @@ impl P2PTransfer {
         }
     }
 
-    fn apply_theme(ctx: &egui::Context, ui: &mut Ui, dark: bool) {
-        let tc = Tc::of(dark);
+    fn apply_theme(ctx: &egui::Context, ui: &mut Ui, theme: Theme, dark: bool) {
+        let tc = Tc::of(theme, dark);
+        #[cfg(target_arch = "wasm32")]
+        set_browser_theme(
+            if theme == Theme::Telegram {
+                "telegram"
+            } else {
+                "classic"
+            },
+            dark,
+        );
         let mut v = if dark {
             egui::Visuals::dark()
         } else {
@@ -1520,9 +1588,10 @@ impl P2PTransfer {
         v.selection.bg_fill =
             Color32::from_rgba_unmultiplied(tc.primary.r(), tc.primary.g(), tc.primary.b(), 60);
         v.override_text_color = Some(tc.on_surface);
-        v.widgets.inactive.corner_radius = CornerRadius::same(10);
-        v.widgets.hovered.corner_radius = CornerRadius::same(10);
-        v.widgets.active.corner_radius = CornerRadius::same(10);
+        let radius = if theme == Theme::Telegram { 18 } else { 10 };
+        v.widgets.inactive.corner_radius = CornerRadius::same(radius);
+        v.widgets.hovered.corner_radius = CornerRadius::same(radius);
+        v.widgets.active.corner_radius = CornerRadius::same(radius);
         // Both, and in this order: the context so later frames start correct, and the live
         // `Ui` so *this* frame is already themed. Setting only the context would leave the
         // root `Ui` — built before `logic()` ran — one frame behind on every toggle.
@@ -1540,7 +1609,11 @@ impl P2PTransfer {
 fn card(tc: &Tc) -> egui::Frame {
     egui::Frame::new()
         .fill(tc.surface_low)
-        .corner_radius(CornerRadius::same(16))
+        .corner_radius(CornerRadius::same(if tc.theme == Theme::Telegram {
+            20
+        } else {
+            16
+        }))
         .stroke(Stroke::new(1.0_f32, tc.outline_var))
         .inner_margin(egui::Margin::same(22))
 }
@@ -1554,7 +1627,11 @@ fn primary_button(tc: &Tc, label: &str) -> Button<'static> {
     )
     .fill(tc.primary)
     .stroke(Stroke::new(1.0, tc.primary))
-    .corner_radius(CornerRadius::same(10))
+    .corner_radius(CornerRadius::same(if tc.theme == Theme::Telegram {
+        18
+    } else {
+        10
+    }))
     .min_size(egui::vec2(0.0, 46.0))
 }
 
@@ -1620,6 +1697,67 @@ fn pill(ui: &mut Ui, tc: &Tc, text: &str, accent: bool) {
         });
 }
 
+/// A file-shaped message used for outgoing shares, incoming manifests, and history.
+fn file_attachment(ui: &mut Ui, tc: &Tc, name: &str, detail: &str, outgoing: bool) {
+    if tc.theme == Theme::Classic {
+        ui.horizontal_wrapped(|ui| {
+            ui.add(
+                egui::Label::new(RichText::new(name).color(tc.on_surface).size(14.0).strong())
+                    .wrap(),
+            );
+            ui.label(
+                RichText::new(detail)
+                    .color(tc.outline)
+                    .monospace()
+                    .size(12.0),
+            );
+        });
+        return;
+    }
+    egui::Frame::new()
+        .fill(if outgoing {
+            tc.surface_high
+        } else {
+            tc.surface
+        })
+        .stroke(Stroke::new(1.0, tc.outline_var))
+        .corner_radius(CornerRadius::same(16))
+        .inner_margin(egui::Margin::same(12))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                egui::Frame::new()
+                    .fill(tc.primary)
+                    .corner_radius(CornerRadius::same(18))
+                    .inner_margin(egui::Margin::same(9))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(if outgoing { "↑" } else { "↓" })
+                                .color(tc.on_primary)
+                                .strong()
+                                .size(17.0),
+                        );
+                    });
+                ui.vertical(|ui| {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(name).color(tc.on_surface).size(14.0).strong(),
+                        )
+                        .wrap(),
+                    );
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(detail)
+                                .color(tc.on_surface_var)
+                                .monospace()
+                                .size(11.0),
+                        )
+                        .wrap(),
+                    );
+                });
+            });
+        });
+}
+
 fn home_action(
     ui: &mut Ui,
     tc: &Tc,
@@ -1631,9 +1769,28 @@ fn home_action(
 ) -> bool {
     let mut clicked = false;
     card(tc).show(ui, |ui| {
-        ui.set_min_height(164.0);
+        ui.set_min_height(if tc.theme == Theme::Classic {
+            164.0
+        } else {
+            168.0
+        });
         ui.horizontal(|ui| {
-            pill(ui, tc, code, primary);
+            if tc.theme == Theme::Classic {
+                pill(ui, tc, code, primary);
+            } else {
+                egui::Frame::new()
+                    .fill(if primary { tc.primary } else { tc.surface_high })
+                    .corner_radius(CornerRadius::same(20))
+                    .inner_margin(egui::Margin::same(10))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(code)
+                                .color(if primary { tc.on_primary } else { tc.secondary })
+                                .strong()
+                                .size(18.0),
+                        );
+                    });
+            }
             ui.label(
                 RichText::new(title)
                     .color(tc.on_surface)
@@ -1802,8 +1959,8 @@ fn show_how_it_works(ui: &mut Ui, tc: &Tc) {
 }
 
 impl P2PTransfer {
-    fn show_home(&mut self, ui: &mut Ui) {
-        let tc = Tc::for_ui(ui);
+    fn show_home_classic(&mut self, ui: &mut Ui) {
+        let tc = Tc::of(Theme::Classic, ui.visuals().dark_mode);
         let compact = compact(ui);
         ui.add_space(if compact { 8.0 } else { 22.0 });
         ui.vertical_centered(|ui| {
@@ -1868,8 +2025,6 @@ impl P2PTransfer {
 
         let (mut pick, mut receive) = (false, false);
         if compact {
-            // Two full-height stacked cards can put Receive below the viewport
-            // (especially with large system text). Keep both actions together.
             card(&tc).show(ui, |ui| {
                 ui.label(
                     RichText::new("Transfer a file")
@@ -1936,9 +2091,139 @@ impl P2PTransfer {
         }
     }
 
+    fn show_home(&mut self, ui: &mut Ui) {
+        if self.theme == Theme::Classic {
+            self.show_home_classic(ui);
+            return;
+        }
+        let tc = Tc::of(self.theme, ui.visuals().dark_mode);
+        let compact = compact(ui);
+        ui.add_space(if compact { 4.0 } else { 16.0 });
+        egui::Frame::new()
+            .fill(tc.surface_low)
+            .stroke(Stroke::new(1.0, tc.outline_var))
+            .corner_radius(CornerRadius::same(20))
+            .inner_margin(egui::Margin::same(if compact { 16 } else { 24 }))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    egui::Frame::new()
+                        .fill(tc.primary)
+                        .corner_radius(CornerRadius::same(24))
+                        .inner_margin(egui::Margin::same(12))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("↗").color(tc.on_primary).size(23.0));
+                        });
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new("Your private file space")
+                                .color(tc.on_surface)
+                                .size(if compact { 20.0 } else { 25.0 })
+                                .strong(),
+                        );
+                        ui.label(
+                            RichText::new("Share a file directly with another device.")
+                                .color(tc.on_surface_var)
+                                .size(13.0),
+                        );
+                    });
+                });
+                ui.add_space(12.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(
+                            "No account or cloud storage. Oxfer streams encrypted bytes between \
+                             devices and verifies each file before reporting success.",
+                        )
+                        .color(tc.on_surface_var)
+                        .size(if compact { 13.0 } else { 15.0 }),
+                    )
+                    .wrap(),
+                );
+            });
+        ui.add_space(if compact { 14.0 } else { 20.0 });
+
+        // Show all three assurances at every width; a chat-like horizontal row
+        // must not silently clip the final badge on narrow phones.
+        ui.horizontal_wrapped(|ui| {
+            pill(ui, &tc, "ENCRYPTED", true);
+            pill(ui, &tc, "BLAKE3 VERIFIED", false);
+            pill(ui, &tc, "NO ACCOUNT", false);
+        });
+        ui.add_space(if compact { 12.0 } else { 18.0 });
+
+        let (mut pick, mut receive) = (false, false);
+        if compact {
+            // Two full-height stacked cards can put Receive below the viewport
+            // (especially with large system text). Keep both actions together.
+            card(&tc).show(ui, |ui| {
+                ui.label(
+                    RichText::new("Start a file transfer")
+                        .color(tc.on_surface)
+                        .size(21.0)
+                        .strong(),
+                );
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("Choose a file to send, or open a link to receive.")
+                            .color(tc.on_surface_var)
+                            .size(14.0),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let button_width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                    pick = ui
+                        .add_sized([button_width, 48.0], primary_button(&tc, "Send file"))
+                        .clicked();
+                    receive = ui
+                        .add_sized(
+                            [button_width, 48.0],
+                            outline_button("Receive file", tc.secondary),
+                        )
+                        .clicked();
+                });
+            });
+        } else {
+            ui.columns(2, |cols| {
+                pick = home_action(
+                    &mut cols[0],
+                    &tc,
+                    "↑",
+                    "Send a file",
+                    "Choose a file, hash it locally, then share one private capability link.",
+                    "Choose file",
+                    true,
+                );
+                receive = home_action(
+                    &mut cols[1],
+                    &tc,
+                    "↓",
+                    "Receive a file",
+                    "Open a link and save bytes streamed directly from the sender.",
+                    "Open a transfer link",
+                    false,
+                );
+            });
+        }
+
+        show_how_it_works(ui, &tc);
+        #[cfg(target_arch = "wasm32")]
+        if ui.button("Network diagnostics").clicked() {
+            self.open_diagnostics();
+        }
+
+        if pick {
+            self.pick_file();
+        }
+        if receive {
+            self.set_receive(FragmentParams::default(), None, None, None, false);
+        }
+    }
+
     #[cfg(target_arch = "wasm32")]
     fn show_diagnostics(&mut self, ui: &mut Ui) {
-        let tc = Tc::for_ui(ui);
+        let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let link = Self::diagnostics_url().unwrap_or_default();
         let report = self.diagnostics_report.lock().unwrap().clone();
         let cancelled_websockets = logging::terminal_buffer()
@@ -2031,7 +2316,7 @@ impl P2PTransfer {
     }
 
     fn show_send(&mut self, ui: &mut Ui) {
-        let tc = Tc::for_ui(ui);
+        let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let compact = compact(ui);
         let preparing_names: Vec<(String, f32)> = match &self.mode {
             Mode::Send { preparing } => preparing
@@ -2059,28 +2344,8 @@ impl P2PTransfer {
 
             if let Ok(files) = self.shared_files.lock() {
                 for f in files.iter() {
-                    let file_row = |ui: &mut Ui| {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(&f.meta.name)
-                                    .color(tc.on_surface)
-                                    .size(15.0)
-                                    .strong(),
-                            )
-                            .wrap(),
-                        );
-                        ui.label(
-                            RichText::new(Self::format_size(f.meta.size))
-                                .color(tc.outline)
-                                .monospace()
-                                .size(12.0),
-                        );
-                    };
-                    if compact {
-                        ui.vertical(file_row);
-                    } else {
-                        ui.horizontal_wrapped(file_row);
-                    }
+                    file_attachment(ui, &tc, &f.meta.name, &Self::format_size(f.meta.size), true);
+                    ui.add_space(6.0);
                 }
             }
 
@@ -2238,7 +2503,7 @@ impl P2PTransfer {
 
     /// Per-peer progress for whatever this node is currently serving.
     fn show_peers(&mut self, ui: &mut Ui) {
-        let tc = Tc::for_ui(ui);
+        let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let peers = self
             .node
             .lock()
@@ -2327,7 +2592,7 @@ impl P2PTransfer {
     }
 
     fn show_receive(&mut self, ui: &mut Ui) {
-        let tc = Tc::for_ui(ui);
+        let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let compact = compact(ui);
         let progress = match &self.mode {
             Mode::Receive(r) => r.handle.as_ref().map(|h| h.latest()),
@@ -2479,35 +2744,19 @@ impl P2PTransfer {
                 if let Phase::AwaitingSave { manifest } = &p.phase {
                     ui.add_space(10.0);
                     for meta in manifest {
-                        let manifest_row = |ui: &mut Ui| {
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(&meta.name)
-                                        .color(tc.on_surface)
-                                        .size(14.0)
-                                        .strong(),
-                                )
-                                .wrap(),
-                            );
-                            ui.label(
-                                RichText::new(Self::format_size(meta.size))
-                                    .color(tc.outline)
-                                    .monospace()
-                                    .size(12.0),
-                            );
-                            let hex = meta.hash.to_hex();
-                            ui.label(
-                                RichText::new(hex.get(..12).unwrap_or(&hex).to_string())
-                                    .color(tc.outline_var)
-                                    .monospace()
-                                    .size(11.0),
-                            );
-                        };
-                        if compact {
-                            ui.vertical(manifest_row);
-                        } else {
-                            ui.horizontal_wrapped(manifest_row);
-                        }
+                        let hex = meta.hash.to_hex();
+                        file_attachment(
+                            ui,
+                            &tc,
+                            &meta.name,
+                            &format!(
+                                "{} · BLAKE3 {}…",
+                                Self::format_size(meta.size),
+                                hex.get(..12).unwrap_or(&hex)
+                            ),
+                            false,
+                        );
+                        ui.add_space(6.0);
                     }
                     ui.add_space(12.0);
                     #[cfg(target_arch = "wasm32")]
@@ -2643,7 +2892,7 @@ impl P2PTransfer {
         if entries.is_empty() && error.is_none() {
             return;
         }
-        let tc = Tc::for_ui(ui);
+        let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let busy = self.local_copies.busy.load(Ordering::Acquire);
         let receiving = matches!(&self.mode, Mode::Receive(r) if r.opening || r.handle.is_some());
         let mut action = None;
@@ -2753,8 +3002,7 @@ impl P2PTransfer {
     }
 
     fn show_received_files(&mut self, ui: &mut Ui) {
-        let tc = Tc::for_ui(ui);
-        let compact = compact(ui);
+        let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let Ok(files) = self.received_files.lock() else {
             return;
         };
@@ -2771,29 +3019,13 @@ impl P2PTransfer {
             );
             for f in files.iter() {
                 ui.add_space(10.0);
-                let file_row = |ui: &mut Ui| {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(&f.name)
-                                .color(tc.on_surface)
-                                .size(14.0)
-                                .strong(),
-                        )
-                        .wrap(),
-                    );
-                    ui.label(
-                        RichText::new(Self::format_size(f.size))
-                            .color(tc.outline)
-                            .monospace()
-                            .size(12.0),
-                    );
-                    ui.label(RichText::new(&f.when).color(tc.outline_var).size(11.0));
-                };
-                if compact {
-                    ui.vertical(file_row);
-                } else {
-                    ui.horizontal_wrapped(file_row);
-                }
+                file_attachment(
+                    ui,
+                    &tc,
+                    &f.name,
+                    &format!("{} · {}", Self::format_size(f.size), f.when),
+                    false,
+                );
                 ui.label(
                     RichText::new(&f.location)
                         .color(tc.on_surface_var)
@@ -2808,35 +3040,58 @@ impl P2PTransfer {
         let compact = ui.available_width() < 680.0;
         ui.set_height(64.0);
         ui.horizontal_centered(|ui| {
+            if tc.theme == Theme::Telegram {
+                egui::Frame::new()
+                    .fill(tc.primary)
+                    .corner_radius(CornerRadius::same(19))
+                    .inner_margin(egui::Margin::same(8))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("↗").color(tc.on_primary).strong().size(17.0));
+                    });
+            } else {
+                ui.label(
+                    RichText::new("OX")
+                        .color(tc.primary)
+                        .monospace()
+                        .strong()
+                        .size(13.0),
+                );
+            }
             ui.label(
-                RichText::new("OX")
-                    .color(tc.primary)
-                    .monospace()
-                    .strong()
-                    .size(13.0),
+                RichText::new(if tc.theme == Theme::Telegram && !compact {
+                    "Oxfer Files"
+                } else {
+                    "Oxfer"
+                })
+                .color(tc.on_surface)
+                .strong()
+                .size(if compact {
+                    if tc.theme == Theme::Telegram {
+                        18.0
+                    } else {
+                        21.0
+                    }
+                } else {
+                    23.0
+                }),
             );
-            ui.label(
-                RichText::new("Oxfer")
-                    .color(tc.on_surface)
-                    .strong()
-                    .size(if compact { 21.0 } else { 23.0 }),
-            );
-            if ui
-                .add(
-                    Button::new(
-                        RichText::new("i")
-                            .color(tc.secondary)
-                            .monospace()
-                            .strong()
-                            .size(16.0),
+            if !compact
+                && ui
+                    .add(
+                        Button::new(
+                            RichText::new("i")
+                                .color(tc.secondary)
+                                .monospace()
+                                .strong()
+                                .size(16.0),
+                        )
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(Stroke::new(1.0, tc.outline))
+                        .corner_radius(CornerRadius::same(16))
+                        .min_size(egui::vec2(32.0, 44.0)),
                     )
-                    .fill(Color32::TRANSPARENT)
-                    .stroke(Stroke::new(1.0, tc.outline))
-                    .corner_radius(CornerRadius::same(16))
-                    .min_size(egui::vec2(32.0, 44.0)),
-                )
-                .on_hover_text("Show this build's version in Terminal Output")
-                .clicked()
+                    .on_hover_text("Show this build's version in Terminal Output")
+                    .clicked()
             {
                 self.show_terminal_view = true;
             }
@@ -2868,15 +3123,33 @@ impl P2PTransfer {
                 };
                 if ui
                     .add_sized(
-                        [if compact { 56.0 } else { 108.0 }, 44.0],
+                        [if compact { 48.0 } else { 108.0 }, 44.0],
                         outline_button(theme_label, tc.outline),
                     )
                     .clicked()
                 {
                     let next_dark = !dark;
-                    Self::apply_theme(ctx, ui, next_dark);
+                    Self::apply_theme(ctx, ui, self.theme, next_dark);
                     self.last_dark_mode = Some(next_dark);
                 }
+                ui.menu_button("Theme", |ui| {
+                    ui.label(RichText::new("Appearance").strong());
+                    if ui
+                        .selectable_value(&mut self.theme, Theme::Classic, "Classic Oxfer")
+                        .clicked()
+                        || ui
+                            .selectable_value(&mut self.theme, Theme::Telegram, "Telegram-style")
+                            .clicked()
+                    {
+                        self.last_theme = None;
+                        ctx.request_repaint();
+                        ui.close();
+                    }
+                    if compact && ui.button("Show build version").clicked() {
+                        self.show_terminal_view = true;
+                        ui.close();
+                    }
+                });
                 if !compact
                     && !matches!(self.mode, Mode::Receive(_))
                     && ui.add(primary_button(tc, "Choose File")).clicked()
@@ -2886,7 +3159,7 @@ impl P2PTransfer {
                 if !at_home
                     && ui
                         .add_sized(
-                            [if compact { 64.0 } else { 84.0 }, 44.0],
+                            [if compact { 52.0 } else { 84.0 }, 44.0],
                             outline_button("Home", tc.outline),
                         )
                         .clicked()
@@ -3073,11 +3346,12 @@ impl eframe::App for P2PTransfer {
         // Apply the theme here, not in `logic()`: the root `Ui` is built before `logic()`
         // runs, so a context-only update would leave this frame with the previous palette.
         let dark = ctx.global_style().visuals.dark_mode;
-        if self.last_dark_mode != Some(dark) {
-            Self::apply_theme(ctx, ui, dark);
+        if self.last_dark_mode != Some(dark) || self.last_theme != Some(self.theme) {
+            Self::apply_theme(ctx, ui, self.theme, dark);
             self.last_dark_mode = Some(dark);
+            self.last_theme = Some(self.theme);
         }
-        let tc = Tc::of(dark);
+        let tc = Tc::of(self.theme, dark);
         let compact = ui.available_width() < 680.0;
 
         let header_frame = egui::Frame::new()
@@ -3153,6 +3427,20 @@ impl eframe::App for P2PTransfer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_test_theme_choice_is_independent_of_light_and_dark_mode() {
+        assert_eq!(P2PTransfer::default().theme, Theme::Classic);
+        let encoded = postcard::to_stdvec(&Theme::Telegram).unwrap();
+        let restored: Theme = postcard::from_bytes(&encoded).unwrap();
+        assert_eq!(restored, Theme::Telegram);
+        for dark in [false, true] {
+            let classic = Tc::of(Theme::Classic, dark);
+            let telegram = Tc::of(Theme::Telegram, dark);
+            assert_ne!(classic.primary, telegram.primary);
+            assert_ne!(classic.bg, telegram.bg);
+        }
+    }
 
     #[test]
     fn local_test_build_label_identifies_compiled_revision() {
