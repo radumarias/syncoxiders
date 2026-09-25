@@ -20,7 +20,7 @@ use crate::node::DiagnosticNode;
 use crate::node::{FragmentParams, Node, RelayChoice};
 use crate::protocol::FileMeta;
 use crate::transfer::{
-    Path as TransferPath, Phase, ReceiveCommand, ReceiveOptions, TransferHandle,
+    Path as TransferPath, Phase, ReceiveCommand, ReceiveOptions, TransferHandle, TransferProgress,
 };
 #[cfg(target_arch = "wasm32")]
 use iroh_tickets::endpoint::EndpointTicket;
@@ -1338,6 +1338,13 @@ impl P2PTransfer {
         }
     }
 
+    fn transfer_speed(progress: &TransferProgress) -> Option<String> {
+        (matches!(progress.phase, Phase::Transferring)
+            && progress.bytes_per_sec.is_finite()
+            && progress.bytes_per_sec > 0.0)
+            .then(|| format!("{}/s", Self::format_size(progress.bytes_per_sec as u64)))
+    }
+
     /// The QA flags this receive is running with (design §7.1), or empty for a plain run.
     fn flag_summary(params: &FragmentParams) -> String {
         use crate::node::SinkPref;
@@ -2167,6 +2174,9 @@ impl P2PTransfer {
                             .color(tc.secondary)
                             .size(12.0),
                     );
+                    if let Some(speed) = Self::transfer_speed(&p) {
+                        ui.label(RichText::new(speed).color(tc.outline).size(12.0));
+                    }
                 };
                 if compact(ui) {
                     ui.vertical(peer_row);
@@ -2322,15 +2332,8 @@ impl P2PTransfer {
                             .strong(),
                     );
                     pill(ui, &tc, Self::path_badge(&p.phase, p.path), true);
-                    if p.bytes_per_sec > 0.0 {
-                        ui.label(
-                            RichText::new(format!(
-                                "{}/s",
-                                Self::format_size(p.bytes_per_sec as u64)
-                            ))
-                            .color(tc.outline)
-                            .size(12.0),
-                        );
+                    if let Some(speed) = Self::transfer_speed(p) {
+                        ui.label(RichText::new(speed).color(tc.outline).size(12.0));
                     }
                 });
                 if let Phase::Reconnecting {
@@ -3040,6 +3043,29 @@ mod tests {
                 || (crate::BUILD_COMMITTED_AT.len() == 25
                     && crate::BUILD_COMMITTED_AT.as_bytes()[10] == b'T')
         );
+    }
+
+    #[test]
+    fn local_test_transfer_speed_only_appears_while_transferring() {
+        let mut progress = TransferProgress::connecting();
+        progress.bytes_per_sec = 1_572_864.0;
+        assert_eq!(P2PTransfer::transfer_speed(&progress), None);
+
+        progress.phase = Phase::Transferring;
+        assert_eq!(
+            P2PTransfer::transfer_speed(&progress).as_deref(),
+            Some("1.50 MB/s")
+        );
+        progress.bytes_per_sec = 0.0;
+        assert_eq!(P2PTransfer::transfer_speed(&progress), None);
+        progress.bytes_per_sec = f64::NAN;
+        assert_eq!(P2PTransfer::transfer_speed(&progress), None);
+
+        progress.bytes_per_sec = 1_572_864.0;
+        progress.phase = Phase::Verifying;
+        assert_eq!(P2PTransfer::transfer_speed(&progress), None);
+        progress.phase = Phase::Complete { saved: Vec::new() };
+        assert_eq!(P2PTransfer::transfer_speed(&progress), None);
     }
 
     #[test]
