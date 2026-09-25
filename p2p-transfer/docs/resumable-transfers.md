@@ -28,6 +28,22 @@ destination write has an uncertain commit state and must not be replayed.
 After the retry budget is exhausted, ordinary destinations are cleaned up.
 Opt-in resumable browser copies remain available locally.
 
+## Verified completion
+
+The receiver checks each file's BLAKE3 hash against the authenticated manifest
+and finishes its destination before declaring that file saved. After **all**
+files pass, it sends a `Verified` receipt over the control stream. Only that
+receipt, not a full sender progress bar or connection close, marks TX Complete.
+The sender acknowledges it and waits briefly for the receiver to close before
+closing its own connection; a transport reset after a received receipt cannot
+turn that confirmed transfer into a TX failure.
+
+RX remains successful if its saved, hash-verified files outlive a failed final
+acknowledgment. The sender may still report a failure if the receipt never
+arrived: transport failures cannot prove the remote saw a message that was
+lost. This receipt handshake requires protocol version 2 on **both** devices;
+refresh both tabs before testing against a running older share.
+
 ## Recovery after closing the browser
 
 Before receiving, select **Keep a resumable copy on this device**, then

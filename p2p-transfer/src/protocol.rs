@@ -13,10 +13,11 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::blob_store::{hex, BlobHash};
 
-/// ALPN of this protocol. The old `EchoNode` ALPN is unrelated and disappears with it.
+/// ALPN of this protocol family. Incompatible frame semantics are negotiated
+/// with [`PROTOCOL_VERSION`] inside `Hello`, so keep this ALPN stable.
 pub const ALPN: &[u8] = b"syncoxiders/p2p-transfer/1";
 /// Protocol version carried in [`Control::Hello`].
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 /// Length of the 128-bit link capability (design §2.6).
 pub const CAP_LEN: usize = 16;
 /// Largest *complete* frame we ever emit, on any transport.
@@ -118,6 +119,15 @@ pub enum Control {
         epoch: Option<u32>,
         message: String,
     },
+    /// Sent only after every file passed BLAKE3 verification and the sink
+    /// finished. A sender must not infer success from a full progress bar or
+    /// a closed transport; only this receipt establishes remote success.
+    Verified {
+        files: u32,
+        bytes: u64,
+    },
+    /// Keep the connection alive until the sender has observed `Verified`.
+    VerifiedAck,
 }
 
 impl std::fmt::Debug for Control {
@@ -183,6 +193,12 @@ impl std::fmt::Debug for Control {
                 .field("epoch", epoch)
                 .field("message", message)
                 .finish(),
+            Self::Verified { files, bytes } => f
+                .debug_struct("Verified")
+                .field("files", files)
+                .field("bytes", bytes)
+                .finish(),
+            Self::VerifiedAck => f.write_str("VerifiedAck"),
         }
     }
 }
@@ -216,6 +232,7 @@ pub enum ProtocolError {
     LengthMismatch { declared: u32, actual: usize },
     TooLarge(usize),
     Version { theirs: u16 },
+    InvalidReceipt,
 }
 
 impl std::fmt::Display for ProtocolError {
@@ -229,6 +246,7 @@ impl std::fmt::Display for ProtocolError {
             }
             Self::TooLarge(n) => write!(f, "frame too large: {n} bytes"),
             Self::Version { theirs } => write!(f, "unsupported protocol version {theirs}"),
+            Self::InvalidReceipt => write!(f, "invalid verified transfer receipt"),
         }
     }
 }
