@@ -578,18 +578,38 @@ impl P2PTransfer {
 
     // ── Share ────────────────────────────────────────────────────────────
 
-    /// The page this app is served from, without any fragment — the base of a share link.
+    /// The page this app is served from, without private fragments or sender-only
+    /// diagnostic options — the base of a share link.
     fn base_url() -> String {
         #[cfg(target_arch = "wasm32")]
         {
             web_sys::window()
                 .and_then(|w| w.location().href().ok())
-                .map(|href| href.split('#').next().unwrap_or(&href).to_string())
+                .map(|href| Self::share_base_url(&href))
                 .unwrap_or_else(|| "https://oxfer.app/".to_string())
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
             "https://oxfer.app/".to_string()
+        }
+    }
+
+    #[cfg(any(test, target_arch = "wasm32"))]
+    fn share_base_url(href: &str) -> String {
+        let without_fragment = href.split('#').next().unwrap_or(href);
+        let Some((path, query)) = without_fragment.split_once('?') else {
+            return without_fragment.to_string();
+        };
+        let kept: Vec<&str> = query
+            .split('&')
+            .filter(|part| {
+                !url::form_urlencoded::parse(part.as_bytes()).any(|(key, _)| key == "dcframe")
+            })
+            .collect();
+        if kept.is_empty() {
+            path.to_string()
+        } else {
+            format!("{path}?{}", kept.join("&"))
         }
     }
 
@@ -3042,6 +3062,30 @@ mod tests {
             crate::BUILD_COMMITTED_AT == "unknown"
                 || (crate::BUILD_COMMITTED_AT.len() == 25
                     && crate::BUILD_COMMITTED_AT.as_bytes()[10] == b'T')
+        );
+    }
+
+    #[test]
+    fn local_test_share_link_excludes_sender_frame_diagnostics() {
+        assert_eq!(
+            P2PTransfer::share_base_url(
+                "https://oxfer.pages.dev/?dcframe=64&theme=dark#ticket&cap=private"
+            ),
+            "https://oxfer.pages.dev/?theme=dark"
+        );
+        assert_eq!(
+            P2PTransfer::share_base_url("https://oxfer.pages.dev/?dcframe=64#private"),
+            "https://oxfer.pages.dev/"
+        );
+        assert_eq!(
+            P2PTransfer::share_base_url(
+                "https://oxfer.pages.dev/?tag=kept&d%63frame=64&other=also-kept#private"
+            ),
+            "https://oxfer.pages.dev/?tag=kept&other=also-kept"
+        );
+        assert_eq!(
+            P2PTransfer::share_base_url("https://oxfer.pages.dev/#private"),
+            "https://oxfer.pages.dev/"
         );
     }
 

@@ -1084,13 +1084,29 @@ async fn serve_file<C: FrameTx, D: FrameTx>(job: ServeJob<C, D>) -> ServeOutcome
             if available > 0 {
                 break available;
             }
+            let waiting_since = Instant::now();
             window.notify.notified().await;
+            if waiting_since.elapsed() >= Duration::from_secs(1) {
+                log::debug!(
+                    "sender waited {}ms for receiver credit on {:?}",
+                    waiting_since.elapsed().as_millis(),
+                    path
+                );
+            }
         };
         let want = (budget as u64).min(size - offset).min(available) as usize;
+        let reading_since = Instant::now();
         let chunk = match reader.next(offset, want).await {
             Ok(chunk) => chunk,
             Err(e) => return file_error(index, epoch, describe_io(&e)),
         };
+        if reading_since.elapsed() >= Duration::from_secs(1) {
+            log::debug!(
+                "sender source read {} bytes took {}ms",
+                chunk.len(),
+                reading_since.elapsed().as_millis()
+            );
+        }
         if chunk.is_empty() {
             return file_error(
                 index,
@@ -1105,8 +1121,17 @@ async fn serve_file<C: FrameTx, D: FrameTx>(job: ServeJob<C, D>) -> ServeOutcome
             offset,
             len: chunk.len() as u32,
         };
+        let sending_since = Instant::now();
         if let Err(e) = tx.send(encode_chunk(header, &chunk)).await {
             return tx.failure(index, epoch, e);
+        }
+        if sending_since.elapsed() >= Duration::from_secs(1) {
+            log::debug!(
+                "sender {:?} frame send {} bytes took {}ms",
+                path,
+                len,
+                sending_since.elapsed().as_millis()
+            );
         }
         offset += len;
         in_flight += len;
@@ -1660,8 +1685,9 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
                 dcep_deadline = None;
                 let window = request.window.clone();
                 log::debug!(
-                    "serving file {file} from offset {offset} under epoch {epoch} on {:?}",
-                    tx.path()
+                    "serving file {file} from offset {offset} under epoch {epoch} on {:?}, frame limit {}B",
+                    tx.path(),
+                    tx.max_frame()
                 );
                 serve.as_mut().set_future(serve_file(ServeJob {
                     tx,
@@ -2153,7 +2179,7 @@ async fn receive_loop<T: FrameTx, R: FrameRx, F: DcFactory>(
                 if dc_was_open {
                     dc_gone = true;
                 } else {
-                    log::info!("WebRTC data channel opened; direct transfer selected");
+                    log::info!("WebRTC data channel opened; checking selected candidate path");
                     dc_was_open = true;
                 }
             }
@@ -2564,9 +2590,17 @@ async fn handle_frame<T: FrameTx>(
             // The flow-control point: this returns only once the sink has taken the bytes.
             // Only cancellation and the write deadline stay live during it; the other arms
             // resume afterwards, delayed by at most one bounded write.
+            let writing_since = Instant::now();
             bounded_sink(cancel, opts.write_deadline, sink.write(payload))
                 .await?
                 .map_err(|e| TransferError::Io(e.to_string()))?;
+            if writing_since.elapsed() >= Duration::from_secs(1) {
+                log::debug!(
+                    "receiver sink write {} bytes took {}ms",
+                    payload.len(),
+                    writing_since.elapsed().as_millis()
+                );
+            }
 
             file.hasher.update(payload);
             let len = payload.len() as u64;
@@ -2589,7 +2623,14 @@ async fn handle_frame<T: FrameTx>(
                 let bytes = file.consumed_since_grant;
                 file.granted += bytes;
                 file.consumed_since_grant = 0;
+                let credit_since = Instant::now();
                 send_control(&**ctrl_tx, &Control::Credit { epoch, bytes }).await?;
+                if credit_since.elapsed() >= Duration::from_secs(1) {
+                    log::debug!(
+                        "receiver control credit send took {}ms",
+                        credit_since.elapsed().as_millis()
+                    );
+                }
                 file.last_grant_at = Instant::now();
             }
 

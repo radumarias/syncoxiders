@@ -4234,6 +4234,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing-wasm",
+ "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",

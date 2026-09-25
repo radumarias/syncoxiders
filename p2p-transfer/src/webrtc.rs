@@ -36,6 +36,7 @@ extern "C" {
         on_ice: &Function,
         on_open: &Function,
         on_state: &Function,
+        on_stats: &Function,
     ) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(catch, js_name = createOffer)]
     fn create_offer(peer: &JsValue) -> Result<Promise, JsValue>;
@@ -149,6 +150,7 @@ pub struct PeerChannel {
     _ice_callback: SendWrapper<Closure<dyn FnMut(JsValue)>>,
     _open_callback: SendWrapper<Closure<dyn FnMut(bool)>>,
     _state_callback: SendWrapper<Closure<dyn FnMut(String)>>,
+    _stats_callback: SendWrapper<Closure<dyn FnMut(String)>>,
 }
 
 impl PeerChannel {
@@ -197,6 +199,9 @@ impl PeerChannel {
             log::debug!("WebRTC peer state: {value}");
             callback_state.send_replace(state(&value));
         });
+        let stats_callback = Closure::new(|line: String| {
+            log::debug!("{line}");
+        });
 
         let servers = Array::new();
         for server in ice_servers {
@@ -213,6 +218,7 @@ impl PeerChannel {
             ice_callback.as_ref().unchecked_ref(),
             open_callback.as_ref().unchecked_ref(),
             state_callback.as_ref().unchecked_ref(),
+            stats_callback.as_ref().unchecked_ref(),
         )
         .map_err(js_error)?;
         if let Ok(pc) = peer_connection(&peer).dyn_into::<web_sys::RtcPeerConnection>() {
@@ -231,6 +237,7 @@ impl PeerChannel {
             _ice_callback: SendWrapper::new(ice_callback),
             _open_callback: SendWrapper::new(open_callback),
             _state_callback: SendWrapper::new(state_callback),
+            _stats_callback: SendWrapper::new(stats_callback),
         })
     }
 }
@@ -354,7 +361,7 @@ impl DataChannel for PeerChannel {
 
     async fn path_kind(&self) -> Path {
         let Ok(promise) = path_kind(&self.peer) else {
-            return Path::Direct;
+            return Path::Unknown;
         };
         match JsFuture::from(promise)
             .await
@@ -363,7 +370,8 @@ impl DataChannel for PeerChannel {
             .as_deref()
         {
             Some("relayed") => Path::Relayed,
-            _ => Path::Direct,
+            Some("direct") => Path::Direct,
+            _ => Path::Unknown,
         }
     }
 
