@@ -74,6 +74,14 @@ test("unavailable or ambiguous stats are not mislabelled direct", async () => {
     assert.match(await performanceSample(peer), /path=unknown.*pairTx=-B\/s/);
     peer.pc.getStats = async () => { throw new Error("Safari hid statistics"); };
     assert.equal(await pathKind(peer), "unknown");
+    const partlyKnown = connection();
+    const reports = await partlyKnown.pc.getStats();
+    reports.delete("remote");
+    partlyKnown.pc.getStats = async () => reports;
+    assert.equal(await pathKind(partlyKnown), "unknown");
+    reports.get("local").candidateType = "relay";
+    assert.equal(await pathKind(partlyKnown), "relayed");
+    assert.match(await performanceSample(partlyKnown), /path=relayed candidates=relay\/unknown/);
 });
 
 test("explicit sender frame cap never exceeds the negotiated SCTP limit", () => {

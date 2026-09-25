@@ -602,7 +602,9 @@ impl P2PTransfer {
         };
         let kept: Vec<&str> = query
             .split('&')
-            .filter(|part| part.split('=').next() != Some("dcframe"))
+            .filter(|part| {
+                !url::form_urlencoded::parse(part.as_bytes()).any(|(key, _)| key == "dcframe")
+            })
             .collect();
         if kept.is_empty() {
             path.to_string()
@@ -3074,6 +3076,12 @@ mod tests {
         assert_eq!(
             P2PTransfer::share_base_url("https://oxfer.pages.dev/?dcframe=64#private"),
             "https://oxfer.pages.dev/"
+        );
+        assert_eq!(
+            P2PTransfer::share_base_url(
+                "https://oxfer.pages.dev/?tag=kept&d%63frame=64&other=also-kept#private"
+            ),
+            "https://oxfer.pages.dev/?tag=kept&other=also-kept"
         );
         assert_eq!(
             P2PTransfer::share_base_url("https://oxfer.pages.dev/#private"),

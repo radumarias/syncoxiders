@@ -205,8 +205,9 @@ function candidatePath(stats, pair) {
   if (!pair) return 'unknown';
   const local = candidateType(stats.get(pair.localCandidateId)?.candidateType);
   const remote = candidateType(stats.get(pair.remoteCandidateId)?.candidateType);
+  if (local === 'relay' || remote === 'relay') return 'relayed';
   if (local === 'unknown' || remote === 'unknown') return 'unknown';
-  return local === 'relay' || remote === 'relay' ? 'relayed' : 'direct';
+  return 'direct';
 }
 
 export async function pathKind(peer) {
