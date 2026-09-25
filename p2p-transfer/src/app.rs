@@ -1625,6 +1625,11 @@ impl P2PTransfer {
         // `Ui` so *this* frame is already themed. Setting only the context would leave the
         // root `Ui` — built before `logic()` ran — one frame behind on every toggle.
         ctx.set_visuals(v.clone());
+        ctx.global_style_mut(|style| {
+            style.spacing.button_padding = egui::vec2(18.0, 11.0);
+            style.spacing.item_spacing = egui::vec2(10.0, 10.0);
+            style.spacing.interact_size.y = 44.0;
+        });
         *ui.visuals_mut() = v;
         ui.spacing_mut().button_padding = egui::vec2(18.0, 11.0);
         ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
@@ -1973,9 +1978,37 @@ fn show_how_it_works(ui: &mut Ui, tc: &Tc) {
 }
 
 impl P2PTransfer {
+    /// Home does not revoke a share. Keep its status and return path visible
+    /// instead of hiding an active endpoint behind the "READY" home screen.
+    fn show_active_share_on_home(&mut self, ui: &mut Ui, tc: &Tc) {
+        if !self.sharing.load(Ordering::Acquire) {
+            return;
+        }
+        let mut return_to_share = false;
+        card(tc).show(ui, |ui| {
+            ui.label(
+                RichText::new("Sharing is still active")
+                    .color(tc.on_surface)
+                    .size(19.0)
+                    .strong(),
+            );
+            #[cfg(target_arch = "wasm32")]
+            Self::show_transfer_attention(ui, tc, true, false);
+            return_to_share = ui.add(primary_button(tc, "Return to sharing")).clicked();
+        });
+        if return_to_share {
+            self.mode = Mode::Send {
+                preparing: Vec::new(),
+            };
+        }
+        self.show_peers(ui);
+        ui.add_space(12.0);
+    }
+
     fn show_home_rusty(&mut self, ui: &mut Ui) {
         let tc = Tc::of(Theme::Rusty, ui.visuals().dark_mode);
         let compact = compact(ui);
+        self.show_active_share_on_home(ui, &tc);
         ui.add_space(if compact { 8.0 } else { 22.0 });
         ui.vertical_centered(|ui| {
             ui.horizontal_wrapped(|ui| {
@@ -2112,6 +2145,7 @@ impl P2PTransfer {
         }
         let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let compact = compact(ui);
+        self.show_active_share_on_home(ui, &tc);
         ui.add_space(if compact { 4.0 } else { 16.0 });
         egui::Frame::new()
             .fill(tc.surface_low)
@@ -2464,13 +2498,26 @@ impl P2PTransfer {
                         }
                     } else {
                         ui.horizontal(|ui| {
-                            if ui.add(copy_button(&tc, self.link_copied)).clicked() {
+                            let copy_width = 212.0;
+                            let stop_width = 140.0;
+                            let row_width = copy_width + stop_width + ui.spacing().item_spacing.x;
+                            ui.add_space(((ui.available_width() - row_width) / 2.0).max(0.0));
+                            if ui
+                                .add_sized([copy_width, 48.0], copy_button(&tc, self.link_copied))
+                                .clicked()
+                            {
                                 #[cfg(target_arch = "wasm32")]
                                 retry_transfer_wake_lock();
                                 ui.ctx().copy_text(link.clone());
                                 self.link_copied = true;
                             }
-                            if ui.add(outline_button("Stop sharing", tc.outline)).clicked() {
+                            if ui
+                                .add_sized(
+                                    [stop_width, 48.0],
+                                    outline_button("Stop sharing", tc.outline),
+                                )
+                                .clicked()
+                            {
                                 self.stop_sharing();
                             }
                         });
@@ -3211,6 +3258,7 @@ impl P2PTransfer {
             }
             let at_home = matches!(self.mode, Mode::Home);
             let label = match self.mode {
+                Mode::Home if self.sharing.load(Ordering::Acquire) => "SHARING",
                 Mode::Home => "READY",
                 #[cfg(target_arch = "wasm32")]
                 Mode::Diagnostics => "DIAG",
@@ -3273,35 +3321,45 @@ impl P2PTransfer {
                 {
                     self.pick_file();
                 }
-                if !at_home
-                    && ui
-                        .add_sized(
-                            [if compact { 52.0 } else { 84.0 }, 44.0],
-                            outline_button("Home", tc.outline),
-                        )
-                        .clicked()
-                {
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        if matches!(self.mode, Mode::Diagnostics) {
-                            if let Some(window) = web_sys::window() {
-                                if let Ok(history) = window.history() {
-                                    let _ = history.push_state_with_url(
-                                        &wasm_bindgen::JsValue::NULL,
-                                        "",
-                                        Some("/"),
-                                    );
+                if !at_home {
+                    // Dropping Mode::Send also drops in-flight hashing tasks. Do not let Home
+                    // silently abort file preparation while the endpoint remains live.
+                    let preparing = matches!(
+                        &self.mode,
+                        Mode::Send { preparing } if !preparing.is_empty()
+                    );
+                    let home = ui
+                        .add_enabled_ui(!preparing, |ui| {
+                            ui.add_sized(
+                                [if compact { 52.0 } else { 84.0 }, 44.0],
+                                outline_button("Home", tc.outline),
+                            )
+                        })
+                        .inner
+                        .on_disabled_hover_text("Wait for files to finish preparing");
+                    if home.clicked() {
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            if matches!(self.mode, Mode::Diagnostics) {
+                                if let Some(window) = web_sys::window() {
+                                    if let Ok(history) = window.history() {
+                                        let _ = history.push_state_with_url(
+                                            &wasm_bindgen::JsValue::NULL,
+                                            "",
+                                            Some("/"),
+                                        );
+                                    }
+                                    self.last_fragment = None;
                                 }
-                                self.last_fragment = None;
                             }
+                            self.stop_peer_diagnostics();
                         }
-                        self.stop_peer_diagnostics();
-                    }
-                    self.mode = Mode::Home;
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        self.keep_local_copy = false;
-                        self.resume_target = None;
+                        self.mode = Mode::Home;
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            self.keep_local_copy = false;
+                            self.resume_target = None;
+                        }
                     }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
@@ -3483,7 +3541,13 @@ impl eframe::App for P2PTransfer {
         egui::Panel::top("header")
             .exact_size(64.0)
             .frame(header_frame)
-            .show(ui, |ui| self.show_header(ui, ctx, &tc));
+            .show(ui, |ui| {
+                let content_width = ui.available_width().min(1040.0);
+                ui.vertical_centered(|ui| {
+                    ui.set_width(content_width);
+                    self.show_header(ui, ctx, &tc);
+                });
+            });
 
         let terminal_frame = egui::Frame::new()
             .fill(tc.surface_lowest)
@@ -3506,7 +3570,13 @@ impl eframe::App for P2PTransfer {
         egui::Panel::bottom("terminal_bar")
             .exact_size(terminal_height)
             .frame(terminal_frame)
-            .show(ui, |ui| self.show_terminal(ui, &tc));
+            .show(ui, |ui| {
+                let content_width = ui.available_width().min(1040.0);
+                ui.vertical_centered(|ui| {
+                    ui.set_width(content_width);
+                    self.show_terminal(ui, &tc);
+                });
+            });
 
         let content_frame = egui::Frame::new().fill(tc.bg).inner_margin(egui::Margin {
             left: if compact { 14 } else { 28 },
@@ -3649,6 +3719,23 @@ mod tests {
                     rect.max.x - width
                 );
             }
+        }
+    }
+
+    #[test]
+    fn local_test_theme_spacing_persists_across_frames() {
+        for theme in [Theme::Rusty, Theme::Clean] {
+            let ctx = egui::Context::default();
+            let first = ctx.run_ui(egui::RawInput::default(), |ui| {
+                P2PTransfer::apply_theme(&ctx, ui, theme, false);
+            });
+            first.drop_without_applying_deltas();
+            let second = ctx.run_ui(egui::RawInput::default(), |ui| {
+                assert_eq!(ui.spacing().button_padding, egui::vec2(18.0, 11.0));
+                assert_eq!(ui.spacing().item_spacing, egui::vec2(10.0, 10.0));
+                assert_eq!(ui.spacing().interact_size.y, 44.0);
+            });
+            second.drop_without_applying_deltas();
         }
     }
 
