@@ -66,6 +66,8 @@ const PROGRESS_BYTES: u64 = 1024 * 1024;
 const RATE_WINDOW: Duration = Duration::from_millis(250);
 /// Weight of the newest sample in the throughput average.
 const RATE_ALPHA: f64 = 0.3;
+/// Do not display a stale rate indefinitely while the sender waits for credit.
+const RATE_IDLE_MIN: Duration = Duration::from_secs(3);
 
 // ---------------------------------------------------------------------------------------
 // Errors
@@ -992,7 +994,6 @@ struct ServeJob<C: FrameTx, D: FrameTx> {
     index: u32,
     epoch: u32,
     offset: u64,
-    bytes_before: u64,
     bytes_total: u64,
     window: Arc<Window>,
     progress: watch::Sender<TransferProgress>,
@@ -1006,6 +1007,8 @@ struct Serving {
     offset: u64,
     epoch: u32,
     window: Arc<Window>,
+    initial_credit_seen: bool,
+    acknowledged: u64,
     started: bool,
 }
 
@@ -1037,7 +1040,6 @@ async fn serve_file<C: FrameTx, D: FrameTx>(job: ServeJob<C, D>) -> ServeOutcome
         index,
         epoch,
         mut offset,
-        bytes_before,
         bytes_total,
         window,
         progress,
@@ -1050,7 +1052,6 @@ async fn serve_file<C: FrameTx, D: FrameTx>(job: ServeJob<C, D>) -> ServeOutcome
     let size = file.meta.size;
     let mut reader = SourceReader::new(source);
     let mut in_flight: u64 = 0;
-    let mut meter = ProgressMeter::new();
     let path = tx.path();
     let frame_size = tx.max_frame();
 
@@ -1109,15 +1110,6 @@ async fn serve_file<C: FrameTx, D: FrameTx>(job: ServeJob<C, D>) -> ServeOutcome
         }
         offset += len;
         in_flight += len;
-
-        if meter.due(bytes_before + offset) {
-            let (done, rate) = (bytes_before + offset, meter.rate());
-            progress.send_modify(|p| {
-                p.file_done = offset;
-                p.bytes_done = done;
-                p.bytes_per_sec = rate;
-            });
-        }
     }
 
     // `Done` carries no payload and is never gated on credit: gating it would deadlock the
@@ -1130,8 +1122,6 @@ async fn serve_file<C: FrameTx, D: FrameTx>(job: ServeJob<C, D>) -> ServeOutcome
         return tx.failure(index, epoch, e);
     }
     progress.send_modify(|p| {
-        p.file_done = size;
-        p.bytes_done = bytes_before + size;
         p.bytes_total = bytes_total;
     });
     ServeOutcome::Done
@@ -1366,6 +1356,11 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
     let mut serve = std::pin::pin!(MaybeFuture::default());
     let mut verified = false;
     let mut receipt_deadline = None;
+    // One rate meter for the whole session: restarting it for each file or
+    // relay epoch would hide throughput for small files and resumed transfers.
+    let mut acknowledged_bytes = 0;
+    let mut meter = ProgressMeter::new();
+    let mut last_ack_at: Option<Instant> = None;
     let outcome: Result<(), TransferError>;
 
     loop {
@@ -1430,6 +1425,19 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
         let watching_ice = gathering && pc.is_some();
         let watching_open = parked && dc_open.is_some();
         let watching_state = parked && pc_state.is_some();
+        let rate_idle_deadline = last_ack_at.map(|at| {
+            // At a slow receive rate, accumulating a 256 KiB credit can
+            // legitimately take much longer than three seconds. Allow
+            // two expected credit intervals before calling the sample
+            // stale, but never outlive the session's inactivity budget.
+            let seconds = if meter.rate > 0.0 {
+                (2.0 * CREDIT_GRAIN as f64 / meter.rate)
+                    .clamp(RATE_IDLE_MIN.as_secs_f64(), INACTIVITY.as_secs_f64())
+            } else {
+                INACTIVITY.as_secs_f64()
+            };
+            at + Duration::from_secs_f64(seconds)
+        });
 
         tokio::select! {
             biased;
@@ -1476,18 +1484,55 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
                         // receiver's initial `Credit` is already behind this frame on the same
                         // ordered stream, and arrives while the request may still be parked.
                         epoch_seen = epoch;
+                        let bytes_before: u64 =
+                            files[..file as usize].iter().map(|f| f.meta.size).sum();
+                        progress.send_modify(|p| {
+                            p.file_done = offset;
+                            p.bytes_done = bytes_before + offset;
+                        });
                         serving = Some(Serving {
                             file,
                             offset,
                             epoch,
                             window: Arc::new(Window::new()),
+                            initial_credit_seen: false,
+                            acknowledged: offset,
                             started: false,
                         });
                     }
                     Control::Credit { epoch, bytes } => {
-                        match serving.as_ref().filter(|s| s.epoch == epoch) {
+                        match serving.as_mut().filter(|s| s.epoch == epoch) {
                             Some(current) => {
                                 current.window.grant(bytes);
+                                if !current.initial_credit_seen {
+                                    // The first grant is capacity, not bytes written. Start
+                                    // timing when the receiver is ready to receive.
+                                    current.initial_credit_seen = true;
+                                    if acknowledged_bytes == 0 {
+                                        meter = ProgressMeter::new();
+                                    }
+                                } else {
+                                    let index = current.file as usize;
+                                    let size = files[index].meta.size;
+                                    let next = current.acknowledged.saturating_add(bytes).min(size);
+                                    let newly_acked = next - current.acknowledged;
+                                    current.acknowledged = next;
+                                    if newly_acked > 0 {
+                                        acknowledged_bytes += newly_acked;
+                                        last_ack_at = Some(Instant::now());
+                                    }
+                                    let due = meter.due(acknowledged_bytes);
+                                    if due || current.acknowledged == size {
+                                        let bytes_before: u64 =
+                                            files[..index].iter().map(|f| f.meta.size).sum();
+                                        let (done, rate) = (current.acknowledged, meter.rate());
+                                        progress.send_modify(|p| {
+                                            p.file_done = done;
+                                            p.bytes_done = bytes_before + done;
+                                            p.bytes_per_sec = rate;
+                                        });
+                                    }
+                                }
                                 log::debug!("credit +{bytes} for epoch {epoch}");
                             }
                             None => log::debug!("discarded credit for stale epoch {epoch}"),
@@ -1518,7 +1563,12 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
                         }
                         verified = true;
                         receipt_deadline = Some(Instant::now() + opts.aux_deadline);
-                        progress.send_modify(|p| p.phase = Phase::Verifying);
+                        progress.send_modify(|p| {
+                            p.file_done = p.file_total;
+                            p.bytes_done = bytes_total;
+                            p.bytes_per_sec = 0.0;
+                            p.phase = Phase::Verifying;
+                        });
                         if let Err(e) = send_control(&*ctrl_tx, &Control::VerifiedAck).await {
                             log::debug!("could not acknowledge verified receipt: {e}");
                             outcome = Ok(());
@@ -1527,6 +1577,13 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
                     }
                     _ => {}
                 }
+            }
+            _ = at_deadline(rate_idle_deadline), if rate_idle_deadline.is_some() => {
+                last_ack_at = None;
+                meter.rate = 0.0;
+                meter.sampled_at = Instant::now();
+                meter.sampled_bytes = acknowledged_bytes;
+                progress.send_modify(|p| p.bytes_per_sec = 0.0);
             }
             candidate = next_ice(pc.as_mut()), if watching_ice => {
                 match candidate {
@@ -1602,7 +1659,6 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
             if let Some(tx) = tx {
                 dcep_deadline = None;
                 let window = request.window.clone();
-                let bytes_before: u64 = files[..file as usize].iter().map(|f| f.meta.size).sum();
                 log::debug!(
                     "serving file {file} from offset {offset} under epoch {epoch} on {:?}",
                     tx.path()
@@ -1613,7 +1669,6 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
                     index: file,
                     epoch,
                     offset,
-                    bytes_before,
                     bytes_total,
                     window,
                     progress: progress.clone(),
@@ -1672,6 +1727,7 @@ struct FileState {
     epoch_start: u64,
     granted: u64,
     consumed_since_grant: u64,
+    last_grant_at: Instant,
     hasher: blake3::Hasher,
     active_rx: Arrival,
 }
@@ -2244,6 +2300,7 @@ async fn receive_loop<T: FrameTx, R: FrameRx, F: DcFactory>(
                     epoch_start: sink_offset,
                     granted: opts.initial_window,
                     consumed_since_grant: 0,
+                    last_grant_at: Instant::now(),
                     hasher: state
                         .resume_hashers
                         .get_mut(index as usize)
@@ -2390,6 +2447,7 @@ async fn restart_current<T: FrameTx>(
         file.epoch_start = file.expected;
         file.granted = initial_window;
         file.consumed_since_grant = 0;
+        file.last_grant_at = Instant::now();
         file.active_rx = Arrival::Control;
         (file.index, file.expected)
     };
@@ -2518,15 +2576,21 @@ async fn handle_frame<T: FrameTx>(
             file.active_rx = from;
             *inactivity_deadline = Some(Instant::now() + opts.inactivity);
 
-            // Grant after the sink consumed, coalesced so it is ~one frame per MiB rather
-            // than one per chunk.
+            // Credits acknowledge committed bytes as well as replenishing the send
+            // window. Send the final partial grant so the sender's progress and
+            // measured speed do not get stuck short of the last grain.
             let received = file.expected - file.epoch_start;
             let remaining = file.granted.saturating_sub(received);
-            if file.consumed_since_grant >= CREDIT_GRAIN || remaining < CREDIT_GRAIN {
+            if file.consumed_since_grant >= CREDIT_GRAIN
+                || Instant::now().duration_since(file.last_grant_at) >= Duration::from_secs(1)
+                || remaining < CREDIT_GRAIN
+                || file.expected == manifest[file.index as usize].size
+            {
                 let bytes = file.consumed_since_grant;
                 file.granted += bytes;
                 file.consumed_since_grant = 0;
                 send_control(&**ctrl_tx, &Control::Credit { epoch, bytes }).await?;
+                file.last_grant_at = Instant::now();
             }
 
             if meter.due(*bytes_done) {

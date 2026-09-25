@@ -1161,6 +1161,22 @@ async fn acknowledge_verified(inject: &MemTx, out: &mut MemRx, files: u32, bytes
     assert_eq!(next_control(out).await, Control::VerifiedAck);
 }
 
+async fn next_verified(out: &mut MemRx, files: u32, bytes: u64) {
+    loop {
+        match next_control(out).await {
+            Control::Credit { .. } => {}
+            Control::Verified {
+                files: count,
+                bytes: total,
+            } => {
+                assert_eq!((count, total), (files, bytes));
+                break;
+            }
+            other => panic!("expected credit or verified receipt, got {other:?}"),
+        }
+    }
+}
+
 /// Deliver one chunk to a core under test.
 async fn inject_chunk(tx: &MemTx, file: u32, epoch: u32, offset: u64, payload: &[u8]) {
     let header = ChunkHeader {
@@ -1272,9 +1288,20 @@ async fn local_test_sender_requires_verified_receipt_not_a_full_bar_or_clean_clo
                 other => panic!("unexpected frame before Done: {other:?}"),
             }
         }
-        assert_eq!(watch.borrow().bytes_done, data.len() as u64);
+        // The sender has queued every byte, but the receiver has not
+        // acknowledged a destination write yet.
+        assert_eq!(watch.borrow().bytes_done, 0);
+        assert_eq!(watch.borrow().bytes_per_sec, 0.0);
 
         if verified {
+            inject_control(
+                &inject,
+                Control::Credit {
+                    epoch: 1,
+                    bytes: data.len() as u64,
+                },
+            )
+            .await;
             acknowledge_verified(&inject, &mut out, 1, data.len() as u64).await;
         }
         drop(inject);
@@ -1290,6 +1317,191 @@ async fn local_test_sender_requires_verified_receipt_not_a_full_bar_or_clean_clo
             assert_eq!(watch.borrow().phase, Phase::Failed);
         }
     }
+}
+
+#[tokio::test]
+async fn local_test_sender_rate_uses_committed_credits_not_queued_or_resumed_bytes() {
+    let cap = test_cap(0x34);
+    let data = filler(384 * 1024);
+    let offset = 64 * 1024_u64;
+    let Scripted {
+        io,
+        mut out,
+        inject,
+        ..
+    } = scripted();
+    let files = Arc::new(vec![shared_file("resumed.bin", &data)]);
+    let (progress, mut watch) = watch::channel(TransferProgress::connecting());
+    let session = tokio::spawn(run_sender_on(
+        io,
+        files,
+        progress,
+        CancellationToken::new(),
+        sender_opts(cap),
+    ));
+    inject_control(&inject, hello(cap, false)).await;
+    assert!(matches!(
+        next_control(&mut out).await,
+        Control::Hello { .. }
+    ));
+    assert!(matches!(
+        next_control(&mut out).await,
+        Control::Manifest { .. }
+    ));
+    inject_control(
+        &inject,
+        Control::Request {
+            file: 0,
+            offset,
+            epoch: 1,
+        },
+    )
+    .await;
+    inject_control(
+        &inject,
+        Control::Credit {
+            epoch: 1,
+            bytes: INITIAL_WINDOW,
+        },
+    )
+    .await;
+    loop {
+        match decode(&next_frame(&mut out).await).expect("decodes") {
+            Frame::Chunk { .. } => {}
+            Frame::Control(Control::Done { .. }) => break,
+            other => panic!("unexpected frame before Done: {other:?}"),
+        }
+    }
+    assert_eq!(watch.borrow().bytes_done, offset);
+    assert_eq!(watch.borrow().bytes_per_sec, 0.0);
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    watch.borrow_and_update();
+    inject_control(
+        &inject,
+        Control::Credit {
+            epoch: 1,
+            bytes: 128 * 1024,
+        },
+    )
+    .await;
+    timeout(Duration::from_secs(2), watch.changed())
+        .await
+        .expect("sender publishes committed progress")
+        .expect("sender still running");
+    let after_credit = watch.borrow();
+    assert_eq!(after_credit.bytes_done, offset + 128 * 1024);
+    assert!(after_credit.bytes_per_sec > 0.0);
+    assert!(
+        after_credit.bytes_per_sec < 1024.0 * 1024.0,
+        "the resumed prefix or queued bytes inflated the measured rate"
+    );
+    drop(after_credit);
+
+    watch.borrow_and_update();
+    timeout(Duration::from_secs(5), watch.changed())
+        .await
+        .expect("idle rate expires")
+        .expect("sender still running");
+    assert_eq!(watch.borrow().bytes_done, offset + 128 * 1024);
+    assert_eq!(watch.borrow().bytes_per_sec, 0.0);
+
+    acknowledge_verified(&inject, &mut out, 1, data.len() as u64).await;
+    drop(inject);
+    session.await.expect("sender task").expect("verified");
+    assert_eq!(watch.borrow().bytes_done, data.len() as u64);
+}
+
+#[tokio::test]
+async fn local_test_sender_rate_spans_small_files() {
+    let cap = test_cap(0x35);
+    let contents = filler(32 * 1024);
+    let files = Arc::new(
+        (0..6)
+            .map(|index| shared_file(&format!("{index}.bin"), &contents))
+            .collect::<Vec<_>>(),
+    );
+    let total = files.len() as u64 * contents.len() as u64;
+    let Scripted {
+        io,
+        mut out,
+        inject,
+        ..
+    } = scripted();
+    let (progress, mut watch) = watch::channel(TransferProgress::connecting());
+    let session = tokio::spawn(run_sender_on(
+        io,
+        files,
+        progress,
+        CancellationToken::new(),
+        sender_opts(cap),
+    ));
+    inject_control(&inject, hello(cap, false)).await;
+    assert!(matches!(
+        next_control(&mut out).await,
+        Control::Hello { .. }
+    ));
+    assert!(matches!(
+        next_control(&mut out).await,
+        Control::Manifest { .. }
+    ));
+
+    for index in 0..6 {
+        let epoch = index + 1;
+        inject_control(
+            &inject,
+            Control::Request {
+                file: index,
+                offset: 0,
+                epoch,
+            },
+        )
+        .await;
+        inject_control(
+            &inject,
+            Control::Credit {
+                epoch,
+                bytes: INITIAL_WINDOW,
+            },
+        )
+        .await;
+        loop {
+            match decode(&next_frame(&mut out).await).expect("decodes") {
+                Frame::Chunk { .. } => {}
+                Frame::Control(Control::Done { .. }) => break,
+                other => panic!("unexpected frame before Done: {other:?}"),
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        watch.borrow_and_update();
+        inject_control(
+            &inject,
+            Control::Credit {
+                epoch,
+                bytes: contents.len() as u64,
+            },
+        )
+        .await;
+        timeout(Duration::from_secs(2), watch.changed())
+            .await
+            .expect("acknowledged file is published")
+            .expect("sender still running");
+        assert_eq!(
+            watch.borrow().bytes_done,
+            (index as u64 + 1) * contents.len() as u64
+        );
+    }
+    assert!(
+        watch.borrow().bytes_per_sec > 0.0,
+        "resetting the meter for each short file hid the session throughput"
+    );
+
+    acknowledge_verified(&inject, &mut out, 6, total).await;
+    drop(inject);
+    session.await.expect("sender task").expect("verified");
+    let completed = watch.borrow();
+    assert_eq!(completed.file_done, contents.len() as u64);
+    assert_eq!(completed.bytes_done, total);
 }
 
 #[tokio::test]
@@ -1525,13 +1737,7 @@ async fn local_test_receiver_reconnects_and_resumes_from_committed_offset() {
             },
         )
         .await;
-        assert_eq!(
-            next_control(&mut out).await,
-            Control::Verified {
-                files: 1,
-                bytes: data.len() as u64
-            }
-        );
+        next_verified(&mut out, 1, data.len() as u64).await;
         inject_control(&inject, Control::VerifiedAck).await;
     });
 
@@ -1600,13 +1806,7 @@ async fn local_test_durable_resume_rehashes_prefix_and_requests_only_the_tail() 
     let _ = next_control(&mut out).await;
     inject_chunk(&inject, 0, epoch, split as u64, &data[split..]).await;
     inject_control(&inject, Control::Done { file: 0, epoch }).await;
-    assert_eq!(
-        next_control(&mut out).await,
-        Control::Verified {
-            files: 1,
-            bytes: data.len() as u64
-        }
-    );
+    next_verified(&mut out, 1, data.len() as u64).await;
     inject_control(&inject, Control::VerifiedAck).await;
     let saved = receiver.await.expect("receiver task").expect("resumed");
     assert_eq!(saved[0].size, data.len() as u64);
@@ -2278,7 +2478,7 @@ async fn local_test_credit_window_never_exceeded() {
 #[tokio::test]
 async fn local_test_receiver_grants_credit_after_consuming() {
     // The receiver's first frame after a Request is the explicit initial grant, and later
-    // grants are coalesced to roughly one per MiB actually written to the sink.
+    // grants are coalesced to roughly one per grain actually written to the sink.
     let cap = test_cap(0x77);
     let data = filler(3 * 1024 * 1024 + 7);
     let meta = FileMeta {
@@ -2363,7 +2563,7 @@ async fn local_test_receiver_grants_credit_after_consuming() {
     let expected = (data.len() as u64).div_ceil(crate::protocol::CREDIT_GRAIN);
     assert!(
         credits.len() as u64 <= expected + 2,
-        "credit was granted per chunk, not per MiB: {} frames",
+        "credit was granted per chunk, not per grain: {} frames",
         credits.len()
     );
     assert!(credits.len() as u64 >= expected - 1, "too few grants");
@@ -2372,12 +2572,85 @@ async fn local_test_receiver_grants_credit_after_consuming() {
         granted <= data.len() as u64,
         "more was granted ({granted}) than was consumed"
     );
-    // The last partial grain is deliberately never granted: no credit is owed after `Done`,
-    // and the next Request resets the window anyway.
-    assert!(
-        granted + crate::protocol::CREDIT_GRAIN >= data.len() as u64,
-        "grants fell more than a grain short: {granted}"
+    assert_eq!(
+        granted,
+        data.len() as u64,
+        "the final write was not acknowledged"
     );
+}
+
+#[tokio::test]
+async fn local_test_slow_receiver_reports_subgrain_writes() {
+    let cap = test_cap(0x36);
+    let data = filler(128 * 1024);
+    let meta = shared_file("slow.bin", &data).meta;
+    let Scripted {
+        io,
+        mut out,
+        inject,
+        ..
+    } = scripted();
+    let (progress, _watch) = watch::channel(TransferProgress::connecting());
+    let (commands, command_rx) = mpsc::channel(1);
+    let receiver = tokio::spawn(run_receiver_on(
+        io,
+        command_rx,
+        progress,
+        CancellationToken::new(),
+        receive_opts(cap),
+    ));
+    assert!(matches!(
+        next_control(&mut out).await,
+        Control::Hello { .. }
+    ));
+    inject_control(&inject, hello([0; CAP_LEN], false)).await;
+    inject_control(
+        &inject,
+        Control::Manifest {
+            files: vec![meta.clone()],
+        },
+    )
+    .await;
+    commands
+        .send(ReceiveCommand::Save(vec![AnySink::Slow(SlowSink::new(
+            meta.name.clone(),
+            data.len(),
+            Duration::from_millis(1100),
+        ))]))
+        .await
+        .expect("save accepted");
+    let epoch = match next_control(&mut out).await {
+        Control::Request { epoch, .. } => epoch,
+        other => panic!("expected request, got {other:?}"),
+    };
+    assert!(matches!(
+        next_control(&mut out).await,
+        Control::Credit { epoch: e, .. } if e == epoch
+    ));
+    inject_chunk(&inject, 0, epoch, 0, &data[..64 * 1024]).await;
+    assert_eq!(
+        timeout(Duration::from_secs(3), next_control(&mut out))
+            .await
+            .expect("slow write is acknowledged"),
+        Control::Credit {
+            epoch,
+            bytes: 64 * 1024
+        }
+    );
+    inject_chunk(&inject, 0, epoch, 64 * 1024, &data[64 * 1024..]).await;
+    inject_control(&inject, Control::Done { file: 0, epoch }).await;
+    assert_eq!(
+        timeout(Duration::from_secs(3), next_control(&mut out))
+            .await
+            .expect("final slow write is acknowledged"),
+        Control::Credit {
+            epoch,
+            bytes: 64 * 1024
+        }
+    );
+    next_verified(&mut out, 1, data.len() as u64).await;
+    inject_control(&inject, Control::VerifiedAck).await;
+    receiver.await.expect("receiver task").expect("saved");
 }
 
 #[tokio::test]

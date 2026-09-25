@@ -45,8 +45,9 @@ pub const MAX_MANIFEST_FILES: usize = 2_000;
 pub const INITIAL_WINDOW: u64 = 4 * 1024 * 1024;
 /// `win=` values above this are clamped by the fragment parser (QA knob, not a product limit).
 pub const MAX_WINDOW_MIB: u64 = 64;
-/// The receiver coalesces credit grants to roughly one per MiB consumed.
-pub const CREDIT_GRAIN: u64 = 1024 * 1024;
+/// The receiver coalesces committed-byte acknowledgments to roughly one per
+/// 256 KiB. The sender uses these credits to report receive-side throughput.
+pub const CREDIT_GRAIN: u64 = 256 * 1024;
 
 const TAG_CONTROL: u8 = 0;
 const TAG_CHUNK: u8 = 1;
