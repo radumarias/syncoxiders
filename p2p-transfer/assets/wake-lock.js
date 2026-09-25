@@ -5,6 +5,7 @@ let wanted = false;
 let sentinel = null;
 let pending = null;
 let status = 'off';
+let restartAfterPending = false;
 
 function supported() {
   return globalThis.isSecureContext && typeof navigator?.wakeLock?.request === 'function';
@@ -62,7 +63,15 @@ async function acquire(fromUserGesture = false) {
   } catch (_) {
     if (pending === request && !sentinel) status = wanted ? 'denied' : 'off';
   } finally {
-    if (pending === request) pending = null;
+    if (pending === request) {
+      pending = null;
+      // A new transfer may have started while this canceled request was
+      // awaiting release. Its first attempt was blocked by `pending`.
+      if (restartAfterPending) {
+        restartAfterPending = false;
+        if (wanted && !sentinel) void acquire();
+      }
+    }
   }
 }
 
@@ -70,8 +79,10 @@ export function setTransferWakeLock(active) {
   if (wanted === Boolean(active)) return;
   wanted = Boolean(active);
   if (wanted) {
+    if (pending) restartAfterPending = true;
     void acquire();
   } else {
+    restartAfterPending = false;
     status = 'off';
     void release();
   }

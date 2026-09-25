@@ -122,6 +122,40 @@ test("an in-flight request cannot retain a lock after transfer cancellation", as
     assert.equal(api.transferWakeLockStatus(), "off");
 });
 
+test("a new transfer retries after the canceled request finishes its delayed release", async () => {
+    let finishFirst;
+    let finishRelease;
+    let calls = 0;
+    const stale = sentinel();
+    stale.release = () => new Promise(resolve => {
+        finishRelease = async () => {
+            stale.revoke();
+            resolve();
+        };
+    });
+    const fresh = sentinel();
+    const { api } = await fixture(() => {
+        calls += 1;
+        return calls === 1
+            ? new Promise(resolve => { finishFirst = resolve; })
+            : Promise.resolve(fresh);
+    });
+    api.setTransferWakeLock(true);
+    api.setTransferWakeLock(false);
+    finishFirst(stale);
+    await settled();
+    assert.equal(typeof finishRelease, "function");
+    api.setTransferWakeLock(true);
+    assert.equal(calls, 1, "old request still owns the pending slot");
+    await finishRelease();
+    await settled();
+    assert.equal(calls, 2, "new session gets a request when the old one settles");
+    assert.equal(api.transferWakeLockStatus(), "active");
+    api.setTransferWakeLock(false);
+    await settled();
+    assert.equal(fresh.releaseCalls, 1);
+});
+
 test("unsupported wake lock reports the fallback without breaking transfer", async () => {
     const { api } = await fixture(undefined);
     api.setTransferWakeLock(true);
