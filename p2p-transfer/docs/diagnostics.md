@@ -20,10 +20,13 @@ not automatically upload data or include tickets, capabilities, files, IP
 addresses, or arbitrary terminal logs. Review the text before sharing; the
 browser user agent and time can still be identifying.
 
-If the default n0 relay registration fails, diagnostics also tests the same
-n0 preset with the trailing dots removed from its relay hostnames. This
-comparison is only a diagnostic experiment: normal file transfers still use
-the unmodified n0 preset. The extra check can take another 15 seconds.
+Browser file transfers use the n0 relay preset with trailing DNS dots removed
+from its relay hostnames. WebKit cannot open the dotted WebSocket URLs, even
+though it opens the equivalent no-dot URLs. Incoming tickets from older
+senders are normalized locally before dialing, without changing their peer
+identity or file access code. Native clients keep the upstream n0 preset.
+If registration still fails, diagnostics compares the legacy dotted preset;
+the extra check can take another 15 seconds.
 
 An opened WebSocket only establishes reachability for that relay. A completed
 peer ping tests an iroh connection and a bidirectional stream over a

@@ -24,7 +24,8 @@ use crate::file_io::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::file_io::{FsSink, FsSource};
 use crate::node::{
-    n0_relays_without_trailing_dots, DiagnosticNode, Node, Peers, RelayChoice, SinkPref,
+    n0_relays_without_trailing_dots, without_trailing_relay_dots, DiagnosticNode, Node, Peers,
+    RelayChoice, SinkPref,
 };
 use crate::protocol::{
     cap_eq, cap_from_hex, cap_to_hex, decode, encode_chunk, encode_control, max_payload,
@@ -61,7 +62,7 @@ async fn local_test_diagnostics_peer_ping_has_a_separate_protocol() {
 
 #[test]
 fn local_test_normalized_relay_map_only_removes_final_dns_dots() {
-    let original: Vec<iroh::RelayUrl> = iroh::defaults::prod::default_relay_map().urls();
+    let original: Vec<iroh::RelayUrl> = iroh::endpoint::default_relay_mode().relay_map().urls();
     let normalized: Vec<iroh::RelayUrl> = n0_relays_without_trailing_dots().unwrap().urls();
     assert_eq!(original.len(), normalized.len());
     for relay in original {
@@ -74,6 +75,47 @@ fn local_test_normalized_relay_map_only_removes_final_dns_dots() {
                 && url.port() == relay.port()
         }));
     }
+}
+
+#[test]
+fn local_test_old_tickets_keep_peer_and_ip_when_normalizing_relay() {
+    let id = SecretKey::generate().public();
+    let addr = EndpointAddr::new(id)
+        .with_ip_addr("127.0.0.1:4433".parse().unwrap())
+        .with_relay_url(
+            "https://euc1-1.relay.n0.iroh.link./relay?x=y"
+                .parse()
+                .unwrap(),
+        )
+        .with_relay_url("https://other.example/".parse().unwrap());
+    let old_ticket: EndpointTicket = EndpointTicket::new(addr.clone())
+        .to_string()
+        .parse()
+        .unwrap();
+    let normalized = without_trailing_relay_dots(old_ticket.endpoint_addr().clone()).unwrap();
+    assert_eq!(normalized.id, id);
+    assert_eq!(
+        normalized.ip_addrs().copied().collect::<Vec<_>>(),
+        addr.ip_addrs().copied().collect::<Vec<_>>()
+    );
+    assert!(normalized.relay_urls().any(|url| {
+        url.host_str() == Some("euc1-1.relay.n0.iroh.link")
+            && url.path() == "/relay"
+            && url.query() == Some("x=y")
+    }));
+    assert!(normalized
+        .relay_urls()
+        .any(|url| url.host_str() == Some("other.example")));
+    assert_eq!(normalized.addrs.len(), addr.addrs.len());
+    assert_eq!(
+        without_trailing_relay_dots(normalized.clone()).unwrap(),
+        normalized
+    );
+    // This is a local dial copy; do not rewrite the sender's original ticket.
+    assert!(old_ticket
+        .endpoint_addr()
+        .relay_urls()
+        .any(|url| { url.host_str() == Some("euc1-1.relay.n0.iroh.link.") }));
 }
 
 // ---------------------------------------------------------------------------------------
