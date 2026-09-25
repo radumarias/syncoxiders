@@ -58,8 +58,8 @@ const CAP_REJECTED: &str =
 /// A display preference, independent of the light/dark setting and transfer state.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 enum Theme {
-    #[default]
     Rusty,
+    #[default]
     Clean,
 }
 
@@ -335,7 +335,7 @@ pub struct P2PTransfer {
     #[cfg(not(target_arch = "wasm32"))]
     save_directory: Option<std::path::PathBuf>,
 
-    /// The original design remains the default for existing installs.
+    /// A missing preference (including settings from before themes existed) uses Clean.
     theme: Theme,
     #[serde(skip)]
     mode: Mode,
@@ -1329,32 +1329,61 @@ impl P2PTransfer {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn show_wake_lock_notice(ui: &mut Ui, tc: &Tc) {
-        let (status, color) = match transfer_wake_lock_status().as_str() {
-            "active" => (
-                "Screen wake lock active (uses battery); keep this tab visible.",
-                tc.secondary,
-            ),
-            "requesting" => (
-                "Asking the browser to keep this screen awake…",
-                tc.on_surface_var,
-            ),
-            _ => (
-                "Screen wake lock unavailable. Keep your screen on and the tab visible.",
-                tc.error,
-            ),
-        };
-        ui.add(egui::Label::new(RichText::new(status).color(color).size(12.0)).wrap());
-        ui.add(
-            egui::Label::new(
-                RichText::new(
-                    "Locking your device or switching apps can interrupt a browser transfer.",
-                )
-                .color(tc.on_surface_var)
-                .size(12.0),
-            )
-            .wrap(),
-        );
+    fn show_transfer_attention(ui: &mut Ui, tc: &Tc, sender: bool, awaiting_save: bool) {
+        egui::Frame::new()
+            .fill(Color32::from_rgba_unmultiplied(
+                tc.primary.r(),
+                tc.primary.g(),
+                tc.primary.b(),
+                24,
+            ))
+            .stroke(Stroke::new(1.0, tc.primary))
+            .corner_radius(CornerRadius::same(14))
+            .inner_margin(egui::Margin::same(14))
+            .show(ui, |ui| {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(if sender {
+                            "Keep this tab open while receivers download."
+                        } else {
+                            "Keep this tab open while you receive."
+                        })
+                        .color(tc.on_surface)
+                        .size(16.0)
+                        .strong(),
+                    )
+                    .wrap(),
+                );
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(
+                            "Keep this tab in the foreground and your screen on. Locking your \
+                             device or switching apps can interrupt the transfer.",
+                        )
+                        .color(tc.on_surface_var)
+                        .size(13.0),
+                    )
+                    .wrap(),
+                );
+                let (status, color) = if awaiting_save {
+                    (
+                        "Screen wake lock starts when you choose a destination.",
+                        tc.on_surface_var,
+                    )
+                } else {
+                    match transfer_wake_lock_status().as_str() {
+                        "active" => ("Screen wake lock active (uses battery).", tc.secondary),
+                        "requesting" => {
+                            ("Asking the browser to keep the screen awake…", tc.outline)
+                        }
+                        _ => (
+                            "Screen wake lock unavailable; keep the screen on yourself.",
+                            tc.error,
+                        ),
+                    }
+                };
+                ui.add(egui::Label::new(RichText::new(status).color(color).size(12.0)).wrap());
+            });
     }
 
     /// Adopt a receive handle built by the on-demand bind task.
@@ -2337,6 +2366,13 @@ impl P2PTransfer {
             }
             ui.add_space(10.0);
 
+            #[cfg(target_arch = "wasm32")]
+            if self.sharing.load(Ordering::Acquire) || link.is_some() || !preparing_names.is_empty()
+            {
+                Self::show_transfer_attention(ui, &tc, true, false);
+                ui.add_space(10.0);
+            }
+
             if let Ok(files) = self.shared_files.lock() {
                 for f in files.iter() {
                     if tc.theme == Theme::Rusty {
@@ -2384,12 +2420,6 @@ impl P2PTransfer {
                         .size(14.0),
                 );
                 ui.add(egui::ProgressBar::new(*pct).desired_height(10.0));
-            }
-
-            #[cfg(target_arch = "wasm32")]
-            if self.sharing.load(Ordering::Acquire) || !preparing_names.is_empty() {
-                ui.add_space(10.0);
-                Self::show_wake_lock_notice(ui, &tc);
             }
 
             ui.add_space(14.0);
@@ -2474,11 +2504,6 @@ impl P2PTransfer {
                                 )
                                 .wrap(),
                             );
-                            ui.label(
-                                RichText::new("Keep this tab open while receivers download.")
-                                    .color(tc.on_surface_var)
-                                    .size(13.0),
-                            );
                         });
                 }
                 (_, false) => {
@@ -2547,6 +2572,11 @@ impl P2PTransfer {
                     .size(15.0)
                     .strong(),
             );
+            #[cfg(target_arch = "wasm32")]
+            if peers.iter().any(|(_, p)| !p.phase.is_terminal()) {
+                ui.add_space(8.0);
+                Self::show_transfer_attention(ui, &tc, true, false);
+            }
             for (id, p) in peers {
                 ui.add_space(8.0);
                 let short = id.to_string();
@@ -2666,25 +2696,12 @@ impl P2PTransfer {
 
             #[cfg(target_arch = "wasm32")]
             if opening || progress.as_ref().is_some_and(|p| !p.phase.is_terminal()) {
-                if matches!(
+                let awaiting_save = matches!(
                     progress.as_ref().map(|p| &p.phase),
                     Some(Phase::AwaitingSave { .. })
-                ) && !save_pending
-                {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(
-                                "Keep this tab visible. Screen wake lock starts when you choose a destination.",
-                            )
-                            .color(tc.on_surface_var)
-                            .size(12.0),
-                        )
-                        .wrap(),
-                    );
-                } else {
-                    Self::show_wake_lock_notice(ui, &tc);
-                }
-                ui.add_space(8.0);
+                ) && !save_pending;
+                Self::show_transfer_attention(ui, &tc, false, awaiting_save);
+                ui.add_space(10.0);
             }
 
             if progress.is_none() && opening {
@@ -3530,7 +3547,7 @@ mod tests {
 
     #[test]
     fn local_test_theme_choice_is_independent_of_light_and_dark_mode() {
-        assert_eq!(P2PTransfer::default().theme, Theme::Rusty);
+        assert_eq!(P2PTransfer::default().theme, Theme::Clean);
         let encoded = postcard::to_stdvec(&Theme::Clean).unwrap();
         let restored: Theme = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(restored, Theme::Clean);
@@ -3567,20 +3584,20 @@ mod tests {
             r#"(save_directory:Some("/tmp/oxfer-receives"))"#.to_owned(),
         );
         let old: P2PTransfer = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
-        assert_eq!(old.theme, Theme::Rusty);
+        assert_eq!(old.theme, Theme::Clean);
         assert_eq!(
             old.save_directory,
             Some(std::path::PathBuf::from("/tmp/oxfer-receives"))
         );
 
         let app = P2PTransfer {
-            theme: Theme::Clean,
+            theme: Theme::Rusty,
             save_directory: old.save_directory,
             ..P2PTransfer::default()
         };
         eframe::set_value(&mut storage, eframe::APP_KEY, &app);
         let restored: P2PTransfer = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
-        assert_eq!(restored.theme, Theme::Clean);
+        assert_eq!(restored.theme, Theme::Rusty);
         assert_eq!(restored.save_directory, app.save_directory);
     }
 
