@@ -23,7 +23,9 @@ use crate::file_io::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::file_io::{FsSink, FsSource};
-use crate::node::{DiagnosticNode, Node, Peers, RelayChoice, SinkPref};
+use crate::node::{
+    n0_relays_without_trailing_dots, DiagnosticNode, Node, Peers, RelayChoice, SinkPref,
+};
 use crate::protocol::{
     cap_eq, cap_from_hex, cap_to_hex, decode, encode_chunk, encode_control, max_payload,
     negotiate_chunk, ChunkHeader, ChunkPlan, Control, FileMeta, Frame, ProtocolError, CAP_LEN,
@@ -55,6 +57,23 @@ async fn local_test_diagnostics_peer_ping_has_a_separate_protocol() {
     })
     .await
     .expect("local diagnostic ping timed out");
+}
+
+#[test]
+fn local_test_normalized_relay_map_only_removes_final_dns_dots() {
+    let original: Vec<iroh::RelayUrl> = iroh::defaults::prod::default_relay_map().urls();
+    let normalized: Vec<iroh::RelayUrl> = n0_relays_without_trailing_dots().unwrap().urls();
+    assert_eq!(original.len(), normalized.len());
+    for relay in original {
+        let host = relay.host_str().unwrap();
+        assert!(host.ends_with('.'));
+        let expected = host.trim_end_matches('.');
+        assert!(normalized.iter().any(|url| {
+            url.host_str() == Some(expected)
+                && url.scheme() == relay.scheme()
+                && url.port() == relay.port()
+        }));
+    }
 }
 
 // ---------------------------------------------------------------------------------------

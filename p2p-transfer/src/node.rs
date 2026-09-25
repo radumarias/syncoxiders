@@ -545,6 +545,9 @@ const LOCAL_ADDR_POLL: Duration = Duration::from_millis(100);
 pub enum RelayChoice {
     /// n0's public relays, with their address lookup.
     N0,
+    /// Diagnostic control: same n0 preset but normalize the relay DNS names
+    /// before the browser constructs a WebSocket. Not used for file transfers.
+    N0WithoutTrailingDots,
     /// A self-hosted relay, and no publishing to n0's infrastructure.
     Custom(RelayUrl),
     /// No relay at all: LAN and tests.
@@ -565,6 +568,23 @@ impl RelayChoice {
             None => Self::N0,
         }
     }
+}
+
+pub(crate) fn n0_relays_without_trailing_dots() -> Result<RelayMap, NodeError> {
+    let urls: Vec<RelayUrl> = iroh::defaults::prod::default_relay_map().urls();
+    let urls = urls
+        .into_iter()
+        .map(|relay| {
+            let mut url = (*relay).clone();
+            let host = relay
+                .host_str()
+                .ok_or_else(|| NodeError::Relay("default relay has no host".into()))?;
+            url.set_host(Some(host.trim_end_matches('.')))
+                .map_err(|error| NodeError::Relay(error.to_string()))?;
+            Ok(RelayUrl::from(url))
+        })
+        .collect::<Result<Vec<_>, NodeError>>()?;
+    Ok(RelayMap::from_iter(urls))
 }
 
 /// Why a node could not be bound, addressed or dialled.
@@ -694,6 +714,8 @@ impl Node {
         let cap = derive_cap(&secret);
         let builder = match &relay {
             RelayChoice::N0 => Endpoint::builder(presets::N0),
+            RelayChoice::N0WithoutTrailingDots => Endpoint::builder(presets::N0)
+                .relay_mode(RelayMode::Custom(n0_relays_without_trailing_dots()?)),
             RelayChoice::Custom(url) => Endpoint::builder(presets::Minimal)
                 .relay_mode(RelayMode::Custom(RelayMap::from(url.clone()))),
             RelayChoice::None => {
@@ -904,6 +926,8 @@ impl DiagnosticNode {
     pub async fn bind(relay: RelayChoice) -> Result<Self, NodeError> {
         let builder = match &relay {
             RelayChoice::N0 => Endpoint::builder(presets::N0),
+            RelayChoice::N0WithoutTrailingDots => Endpoint::builder(presets::N0)
+                .relay_mode(RelayMode::Custom(n0_relays_without_trailing_dots()?)),
             RelayChoice::Custom(url) => Endpoint::builder(presets::Minimal)
                 .relay_mode(RelayMode::Custom(RelayMap::from(url.clone()))),
             RelayChoice::None => {
