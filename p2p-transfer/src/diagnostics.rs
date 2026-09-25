@@ -44,7 +44,7 @@ pub async fn collect() -> String {
     // Unlike an unauthenticated WebSocket handshake, this exercises the same
     // iroh endpoint startup and relay registration as a real share. Never put
     // the generated ticket/key in the report.
-    let compare_default = relay == RelayChoice::N0;
+    let compare_default = relay == RelayChoice::N0WithoutTrailingDots;
     let endpoint = match DiagnosticNode::bind(relay).await {
         Ok(node) => {
             let online = node.ticket().await.is_ok();
@@ -57,12 +57,11 @@ pub async fn collect() -> String {
         }
         Err(_) => "endpoint could not start",
     };
-    // An iOS failure behind an otherwise successful WebSocket open can come
-    // from the trailing DNS dot in iroh's preset, or from later relay
-    // negotiation. Keep the n0 lookup preset identical and change only its
-    // relay DNS names to distinguish those cases without changing transfers.
+    // The browser's active configuration is now the no-dot n0 preset. If it
+    // fails, compare with the upstream dotted preset to distinguish a new
+    // relay problem from the observed WebKit DNS-dot incompatibility.
     let alternate = if compare_default && endpoint != "registered with relay" {
-        match DiagnosticNode::bind(RelayChoice::N0WithoutTrailingDots).await {
+        match DiagnosticNode::bind(RelayChoice::N0).await {
             Ok(node) => {
                 let online = node.ticket().await.is_ok();
                 node.shutdown().await;
@@ -75,10 +74,10 @@ pub async fn collect() -> String {
             Err(_) => "endpoint could not start",
         }
     } else {
-        "not run (default relay succeeded or a custom relay is configured)"
+        "not run (browser relay succeeded or a custom relay is configured)"
     };
     format!(
-        "Oxfer {}\n{checks}\nIroh endpoint: {endpoint}\nIroh endpoint (same preset, DNS dots removed): {alternate}",
+        "Oxfer {}\n{checks}\nIroh endpoint (browser, DNS dots removed): {endpoint}\nIroh endpoint (legacy dotted DNS): {alternate}",
         crate::BUILD_LABEL
     )
 }
