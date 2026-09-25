@@ -30,13 +30,13 @@ use crate::node::{
 use crate::protocol::{
     cap_eq, cap_from_hex, cap_to_hex, decode, encode_chunk, encode_control, max_payload,
     negotiate_chunk, ChunkHeader, ChunkPlan, Control, FileMeta, Frame, ProtocolError, CAP_LEN,
-    DEFAULT_CHUNK, INITIAL_WINDOW, LEN_PREFIX, MAX_FRAME, MIN_USABLE_FRAME,
+    DEFAULT_CHUNK, INITIAL_WINDOW, LEN_PREFIX, MAX_FRAME, MIN_USABLE_FRAME, PROTOCOL_VERSION,
 };
 use crate::transfer::{
     run_receiver_on, run_receiver_reconnecting, run_sender_on, AuthFailure, ByteBudget, CloseSeam,
     DataChannel, DcFactory, DcRole, FrameRx, FrameTx, MaybeDc, MemDcFactory, MemRx, MemTx,
     NoWebRtc, Path, PcState, Phase, ReceiveCommand, ReceiveOptions, ResumeFile, SenderOptions,
-    SessionIo, TransferError, TransferHandle, TransferProgress,
+    SessionIo, TransferError, TransferHandle, TransferProgress, TransportError,
 };
 
 #[tokio::test]
@@ -195,7 +195,7 @@ fn local_test_p2p_transfer_default() {
 fn local_test_protocol_control_roundtrip() {
     let frames = vec![
         Control::Hello {
-            version: 1,
+            version: PROTOCOL_VERSION,
             webrtc: true,
             cap: test_cap(7),
         },
@@ -239,6 +239,11 @@ fn local_test_protocol_control_roundtrip() {
             epoch: Some(4),
             message: "file changed since it was shared".to_string(),
         },
+        Control::Verified {
+            files: 2,
+            bytes: 1 << 20,
+        },
+        Control::VerifiedAck,
     ];
 
     for control in frames {
@@ -254,7 +259,7 @@ fn local_test_protocol_control_roundtrip() {
 fn local_test_protocol_hello_debug_redacts_cap() {
     // The terminal buffer is user-visible and copyable, so no `Debug` output may carry a cap.
     let hello = Control::Hello {
-        version: 1,
+        version: PROTOCOL_VERSION,
         webrtc: false,
         cap: test_cap(0x5a),
     };
@@ -1112,6 +1117,19 @@ struct Scripted {
     close: CloseRecord,
 }
 
+/// Model an iroh control stream that reports a lost connection rather than
+/// a clean EOF when the receiver closes immediately after saving.
+struct LostOnCloseRx(MemRx);
+
+impl FrameRx for LostOnCloseRx {
+    async fn recv(&mut self) -> Result<Option<Bytes>, TransportError> {
+        match self.0.recv().await {
+            Ok(None) => Err(TransportError::Io("connection lost".into())),
+            other => other,
+        }
+    }
+}
+
 fn scripted() -> Scripted {
     let (core_tx, out) = MemTx::pair();
     let (inject, core_rx) = MemTx::pair();
@@ -1134,6 +1152,13 @@ async fn inject_control(tx: &MemTx, control: Control) {
     tx.send(encode_control(&control).expect("encodes"))
         .await
         .expect("injects");
+}
+
+/// The sender may report Complete only after the receiver confirms every
+/// destination was verified and saved. Closing a stream is not confirmation.
+async fn acknowledge_verified(inject: &MemTx, out: &mut MemRx, files: u32, bytes: u64) {
+    inject_control(inject, Control::Verified { files, bytes }).await;
+    assert_eq!(next_control(out).await, Control::VerifiedAck);
 }
 
 /// Deliver one chunk to a core under test.
@@ -1177,7 +1202,7 @@ async fn drain(out: &mut MemRx) -> Vec<Bytes> {
 
 fn hello(cap: [u8; CAP_LEN], webrtc: bool) -> Control {
     Control::Hello {
-        version: 1,
+        version: PROTOCOL_VERSION,
         webrtc,
         cap,
     }
@@ -1186,6 +1211,128 @@ fn hello(cap: [u8; CAP_LEN], webrtc: bool) -> Control {
 // ---------------------------------------------------------------------------------------
 // Engine sessions
 // ---------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn local_test_sender_requires_verified_receipt_not_a_full_bar_or_clean_close() {
+    let cap = test_cap(0x31);
+    let data = filler(128 * 1024);
+    for verified in [false, true] {
+        let Scripted {
+            io,
+            mut out,
+            inject,
+            ..
+        } = scripted();
+        let (progress, watch) = watch::channel(TransferProgress::connecting());
+        let io = SessionIo {
+            ctrl_tx: io.ctrl_tx,
+            ctrl_rx: LostOnCloseRx(io.ctrl_rx),
+            close: io.close,
+            dc: io.dc,
+        };
+        let files = Arc::new(vec![shared_file("received.bin", &data)]);
+        let session = tokio::spawn(run_sender_on(
+            io,
+            files,
+            progress,
+            CancellationToken::new(),
+            sender_opts(cap),
+        ));
+
+        inject_control(&inject, hello(cap, false)).await;
+        assert!(matches!(
+            next_control(&mut out).await,
+            Control::Hello { .. }
+        ));
+        assert!(matches!(
+            next_control(&mut out).await,
+            Control::Manifest { .. }
+        ));
+        inject_control(
+            &inject,
+            Control::Request {
+                file: 0,
+                offset: 0,
+                epoch: 1,
+            },
+        )
+        .await;
+        inject_control(
+            &inject,
+            Control::Credit {
+                epoch: 1,
+                bytes: 1 << 20,
+            },
+        )
+        .await;
+        loop {
+            match decode(&next_frame(&mut out).await).expect("decodes") {
+                Frame::Chunk { .. } => {}
+                Frame::Control(Control::Done { .. }) => break,
+                other => panic!("unexpected frame before Done: {other:?}"),
+            }
+        }
+        assert_eq!(watch.borrow().bytes_done, data.len() as u64);
+
+        if verified {
+            acknowledge_verified(&inject, &mut out, 1, data.len() as u64).await;
+        }
+        drop(inject);
+        let result = session.await.expect("sender task");
+        if verified {
+            assert!(result.is_ok(), "{result:?}");
+            assert!(matches!(watch.borrow().phase, Phase::Complete { .. }));
+        } else {
+            assert!(matches!(
+                result,
+                Err(TransferError::Transport(TransportError::Io(_)))
+            ));
+            assert_eq!(watch.borrow().phase, Phase::Failed);
+        }
+    }
+}
+
+#[tokio::test]
+async fn local_test_sender_rejects_unverified_or_wrong_size_receipt() {
+    let cap = test_cap(0x32);
+    let Scripted {
+        io,
+        mut out,
+        inject,
+        ..
+    } = scripted();
+    let files = Arc::new(vec![shared_file("x.bin", b"contents")]);
+    let (progress, watch) = watch::channel(TransferProgress::connecting());
+    let session = tokio::spawn(run_sender_on(
+        io,
+        files,
+        progress,
+        CancellationToken::new(),
+        sender_opts(cap),
+    ));
+    inject_control(&inject, hello(cap, false)).await;
+    assert!(matches!(
+        next_control(&mut out).await,
+        Control::Hello { .. }
+    ));
+    assert!(matches!(
+        next_control(&mut out).await,
+        Control::Manifest { .. }
+    ));
+    inject_control(
+        &inject,
+        Control::Verified {
+            files: 1,
+            bytes: 99,
+        },
+    )
+    .await;
+    assert!(matches!(
+        session.await.expect("sender task"),
+        Err(TransferError::Protocol(ProtocolError::InvalidReceipt))
+    ));
+    assert_eq!(watch.borrow().phase, Phase::Failed);
+}
 
 #[tokio::test]
 async fn local_test_engine_roundtrip_in_memory() {
@@ -1300,7 +1447,7 @@ async fn local_test_receiver_reconnects_and_resumes_from_committed_offset() {
         inject_control(
             &inject,
             Control::Hello {
-                version: 1,
+                version: PROTOCOL_VERSION,
                 webrtc: false,
                 cap: [0; CAP_LEN],
             },
@@ -1339,7 +1486,7 @@ async fn local_test_receiver_reconnects_and_resumes_from_committed_offset() {
         inject_control(
             &inject,
             Control::Hello {
-                version: 1,
+                version: PROTOCOL_VERSION,
                 webrtc: false,
                 cap: [0; CAP_LEN],
             },
@@ -1378,6 +1525,14 @@ async fn local_test_receiver_reconnects_and_resumes_from_committed_offset() {
             },
         )
         .await;
+        assert_eq!(
+            next_control(&mut out).await,
+            Control::Verified {
+                files: 1,
+                bytes: data.len() as u64
+            }
+        );
+        inject_control(&inject, Control::VerifiedAck).await;
     });
 
     driver.await.expect("driver");
@@ -1445,6 +1600,14 @@ async fn local_test_durable_resume_rehashes_prefix_and_requests_only_the_tail() 
     let _ = next_control(&mut out).await;
     inject_chunk(&inject, 0, epoch, split as u64, &data[split..]).await;
     inject_control(&inject, Control::Done { file: 0, epoch }).await;
+    assert_eq!(
+        next_control(&mut out).await,
+        Control::Verified {
+            files: 1,
+            bytes: data.len() as u64
+        }
+    );
+    inject_control(&inject, Control::VerifiedAck).await;
     let saved = receiver.await.expect("receiver task").expect("resumed");
     assert_eq!(saved[0].size, data.len() as u64);
     assert_eq!(watch.borrow().bytes_done, data.len() as u64);
@@ -1634,9 +1797,17 @@ async fn local_test_wrong_cap_rejected_before_manifest() {
     );
 
     // The same script with the right capability must serve the manifest — otherwise the test
-    // above could pass for the wrong reason.
+    // above could pass for the wrong reason. The script then disconnects without saving, so
+    // unlike an authenticated receive it must NOT claim a completed transfer.
     let accepted = run_gate(ours, ours).await;
-    assert!(accepted.result.is_ok(), "{:?}", accepted.result);
+    assert!(
+        matches!(
+            accepted.result,
+            Err(TransferError::Transport(TransportError::Closed))
+        ),
+        "{:?}",
+        accepted.result
+    );
     let controls: Vec<Control> = accepted
         .frames
         .iter()
@@ -1662,6 +1833,48 @@ async fn local_test_wrong_cap_rejected_before_manifest() {
         );
         assert_eq!(outcome.frames.len(), 1, "byte {byte} leaked a frame");
     }
+}
+
+#[tokio::test]
+async fn local_test_old_protocol_is_rejected_before_any_manifest() {
+    let cap = test_cap(0xd0);
+    let Scripted {
+        io,
+        mut out,
+        inject,
+        ..
+    } = scripted();
+    let files = Arc::new(vec![shared_file("x.bin", b"contents")]);
+    let (progress, _watch) = watch::channel(TransferProgress::connecting());
+    let session = tokio::spawn(run_sender_on(
+        io,
+        files,
+        progress,
+        CancellationToken::new(),
+        sender_opts(cap),
+    ));
+    inject_control(
+        &inject,
+        Control::Hello {
+            version: PROTOCOL_VERSION - 1,
+            webrtc: false,
+            cap,
+        },
+    )
+    .await;
+    assert!(matches!(
+        next_control(&mut out).await,
+        Control::Error {
+            file: None,
+            epoch: None,
+            ..
+        }
+    ));
+    assert!(matches!(
+        session.await.expect("sender task"),
+        Err(TransferError::Version { theirs }) if theirs == PROTOCOL_VERSION - 1
+    ));
+    assert!(matches!(out.recv().await, Ok(None)));
 }
 
 struct GateOutcome {
@@ -1971,6 +2184,7 @@ async fn local_test_engine_resume_from_offset() {
         }
     }
     assert_eq!(offset, data.len() as u64, "the whole tail was not sent");
+    acknowledge_verified(&inject, &mut out, 1, data.len() as u64).await;
     drop(inject);
     session.await.expect("joins").expect("sender");
 }
@@ -2056,6 +2270,7 @@ async fn local_test_credit_window_never_exceeded() {
             "the sender stopped short of its window"
         );
     }
+    acknowledge_verified(&inject, &mut out, 1, data.len() as u64).await;
     drop(inject);
     session.await.expect("joins").expect("sender");
 }
@@ -2176,7 +2391,7 @@ async fn local_test_engine_hash_mismatch_fails() {
     let manifest: Vec<FileMeta> = files.iter().map(|f| f.meta.clone()).collect();
 
     let (sender_io, receiver_io, _sc, _rc) = duplex(NoWebRtc, NoWebRtc);
-    let (sender_progress, _sw) = watch::channel(TransferProgress::connecting());
+    let (sender_progress, sender_watch) = watch::channel(TransferProgress::connecting());
     let (receiver_progress, receiver_watch) = watch::channel(TransferProgress::connecting());
     let (commands, command_rx) = mpsc::channel(1);
     commands
@@ -2185,7 +2400,7 @@ async fn local_test_engine_hash_mismatch_fails() {
         .expect("save accepted");
     let cancel = CancellationToken::new();
 
-    let (_sent, received) = tokio::join!(
+    let (sent, received) = tokio::join!(
         run_sender_on(
             sender_io,
             files,
@@ -2205,6 +2420,11 @@ async fn local_test_engine_hash_mismatch_fails() {
         Err(TransferError::HashMismatch { file }) => assert_eq!(file, 0),
         other => panic!("expected a hash mismatch, got {other:?}"),
     }
+    assert!(
+        sent.is_err(),
+        "sender claimed success without a verified receipt"
+    );
+    assert_eq!(sender_watch.borrow().phase, Phase::Failed);
     assert_eq!(receiver_watch.borrow().phase, Phase::Failed);
 }
 
@@ -2390,7 +2610,10 @@ async fn local_test_sender_dcep_deadline_keeps_pumping_ice() {
         Frame::Chunk { .. }
     ));
     drop(inject);
-    session.await.expect("joins").expect("sender");
+    assert!(matches!(
+        session.await.expect("joins"),
+        Err(TransferError::Transport(TransportError::Closed))
+    ));
 }
 
 #[tokio::test]
@@ -2453,7 +2676,10 @@ async fn local_test_sender_use_relay_starts_a_parked_request_at_once() {
         "the parked request waited for its deadline anyway"
     );
     drop(inject);
-    session.await.expect("joins").expect("sender");
+    assert!(matches!(
+        session.await.expect("joins"),
+        Err(TransferError::Transport(TransportError::Closed))
+    ));
 }
 
 #[tokio::test]
@@ -2545,6 +2771,7 @@ async fn local_test_sender_survives_dc_failure() {
         }
     }
     assert_eq!(received, data.len() as u64);
+    acknowledge_verified(&inject, &mut out, 1, data.len() as u64).await;
     drop(inject);
     session.await.expect("joins").expect("sender");
 }
@@ -2676,6 +2903,7 @@ async fn local_test_engine_respects_max_frame() {
         }
     }
     assert!(chunks >= 10, "the payload was not split into frames");
+    acknowledge_verified(&inject, &mut out, 1, data.len() as u64).await;
     drop(inject);
     session.await.expect("joins").expect("sender");
 }
@@ -2743,6 +2971,7 @@ async fn local_test_engine_use_relay_does_not_abort_control_serve() {
         data.len() as u64,
         "UseRelay truncated a serve it must not touch"
     );
+    acknowledge_verified(&inject, &mut out, 1, data.len() as u64).await;
     drop(inject);
     session.await.expect("joins").expect("sender");
 }

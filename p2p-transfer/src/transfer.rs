@@ -1364,9 +1364,31 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
     let mut dc_expired = false;
     let mut signals: Vec<Signal> = Vec::new();
     let mut serve = std::pin::pin!(MaybeFuture::default());
+    let mut verified = false;
+    let mut receipt_deadline = None;
     let outcome: Result<(), TransferError>;
 
     loop {
+        if verified {
+            // The receiver has already verified every hash and finished its
+            // sinks. Wait for it to read our acknowledgment before closing
+            // the iroh connection: send_control only enqueues a frame.
+            tokio::select! {
+                biased;
+                _ = at_deadline(receipt_deadline) => { outcome = Ok(()); break; }
+                _ = cancel.cancelled() => { outcome = Ok(()); break; }
+                frame = ctrl_rx.recv() => match frame {
+                    Ok(Some(frame)) => {
+                        if let Ok(Frame::Control(Control::Error { message, .. })) = decode(&frame) {
+                            outcome = Err(TransferError::Remote(message));
+                            break;
+                        }
+                    }
+                    Ok(None) | Err(_) => { outcome = Ok(()); break; }
+                },
+            }
+            continue;
+        }
         // Applied before the next wait for the same reason as in the receiver: a queued
         // `Answer` or candidate must not sit until something else happens to wake the loop.
         for signal in signals.drain(..) {
@@ -1418,7 +1440,10 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
             frame = ctrl_rx.recv() => {
                 let frame = match frame {
                     Ok(Some(frame)) => frame,
-                    Ok(None) => { outcome = Ok(()); break; }
+                    Ok(None) => {
+                        outcome = Err(TransferError::Transport(TransportError::Closed));
+                        break;
+                    }
                     Err(e) => { outcome = Err(TransferError::Transport(e)); break; }
                 };
                 let control = match decode(&frame) {
@@ -1485,6 +1510,20 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
                     Control::Error { message, .. } => {
                         outcome = Err(TransferError::Remote(message));
                         break;
+                    }
+                    Control::Verified { files: count, bytes } => {
+                        if count as usize != files.len() || bytes != bytes_total {
+                            outcome = Err(TransferError::Protocol(ProtocolError::InvalidReceipt));
+                            break;
+                        }
+                        verified = true;
+                        receipt_deadline = Some(Instant::now() + opts.aux_deadline);
+                        progress.send_modify(|p| p.phase = Phase::Verifying);
+                        if let Err(e) = send_control(&*ctrl_tx, &Control::VerifiedAck).await {
+                            log::debug!("could not acknowledge verified receipt: {e}");
+                            outcome = Ok(());
+                            break;
+                        }
                     }
                     _ => {}
                 }
@@ -1935,7 +1974,26 @@ async fn receive_loop<T: FrameTx, R: FrameRx, F: DcFactory>(
             && state.current.is_none()
             && state.next_file as usize >= state.manifest.len()
         {
-            return Ok(std::mem::take(&mut state.saved));
+            let saved = std::mem::take(&mut state.saved);
+            // All hashes matched and every destination has finished. A full
+            // progress bar or stream closure alone cannot prove remote save.
+            let receipt = Control::Verified {
+                files: state.manifest.len() as u32,
+                bytes: state.bytes_total,
+            };
+            if let Err(e) = send_control(&**ctrl_tx, &receipt).await {
+                log::debug!("could not send verified transfer receipt: {e}");
+                return Ok(saved); // verified local copy remains successful
+            }
+            // The writer queues control frames, so let the sender consume the
+            // receipt before closing this connection. The acknowledgment is
+            // best effort: a lost reply cannot invalidate a saved, hashed file.
+            match timeout(opts.aux_deadline, ctrl_rx.recv()).await {
+                Ok(Ok(Some(frame)))
+                    if matches!(decode(&frame), Ok(Frame::Control(Control::VerifiedAck))) => {}
+                other => log::debug!("verified receipt was not acknowledged: {other:?}"),
+            }
+            return Ok(saved);
         }
 
         let mut incoming: Option<(Result<Option<Bytes>, TransportError>, Arrival)> = None;
