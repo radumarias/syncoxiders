@@ -1506,8 +1506,7 @@ fn pill(ui: &mut Ui, tc: &Tc, text: &str, accent: bool) {
         .corner_radius(CornerRadius::same(20))
         .inner_margin(egui::Margin::symmetric(10, 5))
         .show(ui, |ui| {
-            // Keep badge text on one line; the compact badge set below leaves
-            // enough room for both badges even on narrow phone screens.
+            // Keep badge text on one line even when a row wraps on a phone.
             ui.add(
                 egui::Label::new(
                     RichText::new(text)
@@ -1743,38 +1742,63 @@ impl P2PTransfer {
         });
         ui.add_space(if compact { 20.0 } else { 30.0 });
 
-        ui.horizontal_wrapped(|ui| {
-            pill(ui, &tc, "DTLS / QUIC ENCRYPTED", true);
-            pill(ui, &tc, "BLAKE3 VERIFIED", false);
-            if !compact {
-                // The first two badges already fill a phone-width row; the account
-                // detail is also explained in "How Oxfer works".
+        let badge_width = ui.available_width();
+        if badge_width < 310.0 {
+            ui.vertical(|ui| {
+                pill(ui, &tc, "DTLS / QUIC ENCRYPTED", true);
+                pill(ui, &tc, "BLAKE3 VERIFIED", false);
                 pill(ui, &tc, "NO ACCOUNT", false);
-            }
-        });
+            });
+        } else if badge_width < 420.0 {
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    pill(ui, &tc, "DTLS / QUIC ENCRYPTED", true);
+                    pill(ui, &tc, "BLAKE3 VERIFIED", false);
+                });
+                pill(ui, &tc, "NO ACCOUNT", false);
+            });
+        } else {
+            ui.horizontal(|ui| {
+                pill(ui, &tc, "DTLS / QUIC ENCRYPTED", true);
+                pill(ui, &tc, "BLAKE3 VERIFIED", false);
+                pill(ui, &tc, "NO ACCOUNT", false);
+            });
+        }
         ui.add_space(if compact { 16.0 } else { 22.0 });
 
         let (mut pick, mut receive) = (false, false);
         if compact {
-            pick = home_action(
-                ui,
-                &tc,
-                "TX",
-                "Send a file",
-                "Choose a file, hash it locally, then share one private capability link.",
-                "Choose file",
-                true,
-            );
-            ui.add_space(12.0);
-            receive = home_action(
-                ui,
-                &tc,
-                "RX",
-                "Receive a file",
-                "Open a link and save bytes streamed directly from the sender.",
-                "Open a transfer link",
-                false,
-            );
+            // Two full-height stacked cards can put Receive below the viewport
+            // (especially with large system text). Keep both actions together.
+            card(&tc).show(ui, |ui| {
+                ui.label(
+                    RichText::new("Transfer a file")
+                        .color(tc.on_surface)
+                        .size(21.0)
+                        .strong(),
+                );
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("Choose a file to send, or open a link to receive.")
+                            .color(tc.on_surface_var)
+                            .size(14.0),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let button_width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                    pick = ui
+                        .add_sized([button_width, 48.0], primary_button(&tc, "Send file"))
+                        .clicked();
+                    receive = ui
+                        .add_sized(
+                            [button_width, 48.0],
+                            outline_button("Receive file", tc.secondary),
+                        )
+                        .clicked();
+                });
+            });
         } else {
             ui.columns(2, |cols| {
                 pick = home_action(
@@ -1882,7 +1906,7 @@ impl P2PTransfer {
             ui.add_space(12.0);
             if self.diagnostics_running.load(Ordering::Acquire) {
                 ui.spinner();
-                ui.label("Testing relay WebSockets and iroh registration (up to 36 seconds)…");
+                ui.label("Testing relay WebSockets and iroh registration (up to 60 seconds if the default fails)…");
             } else if ui.button("Run checks again").clicked() {
                 self.run_diagnostics();
             }

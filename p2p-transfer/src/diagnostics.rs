@@ -27,11 +27,12 @@ pub async fn collect() -> String {
                 .unwrap_or_default();
             format!("{scheme}://{host}{port}/relay")
         }
-        RelayChoice::N0 => [
+        RelayChoice::N0 | RelayChoice::N0WithoutTrailingDots => [
             "wss://euc1-1.relay.n0.iroh.link/relay",
             "wss://use1-1.relay.n0.iroh.link/relay",
             "wss://usw1-1.relay.n0.iroh.link/relay",
             "wss://aps1-1.relay.n0.iroh.link/relay",
+            "wss://euc1-1.relay.n0.iroh.link./relay",
         ]
         .join(","),
         RelayChoice::None => String::new(),
@@ -43,6 +44,7 @@ pub async fn collect() -> String {
     // Unlike an unauthenticated WebSocket handshake, this exercises the same
     // iroh endpoint startup and relay registration as a real share. Never put
     // the generated ticket/key in the report.
+    let compare_default = relay == RelayChoice::N0;
     let endpoint = match DiagnosticNode::bind(relay).await {
         Ok(node) => {
             let online = node.ticket().await.is_ok();
@@ -55,8 +57,28 @@ pub async fn collect() -> String {
         }
         Err(_) => "endpoint could not start",
     };
+    // An iOS failure behind an otherwise successful WebSocket open can come
+    // from the trailing DNS dot in iroh's preset, or from later relay
+    // negotiation. Keep the n0 lookup preset identical and change only its
+    // relay DNS names to distinguish those cases without changing transfers.
+    let alternate = if compare_default && endpoint != "registered with relay" {
+        match DiagnosticNode::bind(RelayChoice::N0WithoutTrailingDots).await {
+            Ok(node) => {
+                let online = node.ticket().await.is_ok();
+                node.shutdown().await;
+                if online {
+                    "registered with relay"
+                } else {
+                    "could not register with relay within 15 seconds"
+                }
+            }
+            Err(_) => "endpoint could not start",
+        }
+    } else {
+        "not run (default relay succeeded or a custom relay is configured)"
+    };
     format!(
-        "Oxfer {}\n{checks}\nIroh endpoint: {endpoint}",
+        "Oxfer {}\n{checks}\nIroh endpoint: {endpoint}\nIroh endpoint (same preset, DNS dots removed): {alternate}",
         crate::BUILD_LABEL
     )
 }
