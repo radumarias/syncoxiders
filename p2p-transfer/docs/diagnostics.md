@@ -33,3 +33,33 @@ peer ping tests an iroh connection and a bidirectional stream over a
 diagnostics-only protocol, **not** a real file transfer, file picker, storage
 sink, WebRTC ICE negotiation, or the original sender's share. A failed peer
 ping may need additional browser console/network evidence.
+
+## Slow WebRTC transfers
+
+While a file transfer is active, both browsers write a `WebRTC perf` line to
+**Terminal Output** every five seconds. Copy several lines from each side after
+the transfer has been running for at least ten seconds, plus the sender's
+`serving file … frame limit` line and any `sender waited`, `frame send`, `source
+read`, `receiver sink write`, or `receiver control credit send` lines. These
+statistics are local; they are not sent to a diagnostics server. They contain
+candidate *types*, not ICE addresses, share links, file names or capabilities.
+Review the copied output before sharing, since the terminal also contains
+other log messages.
+
+`pairTx`/`pairRx` are selected-ICE-pair bytes per second, if the browser
+exposes them; `queuedTx` counts bytes accepted by the browser's data-channel
+send queue, while `deliveredRx` counts data-channel messages delivered to the
+page. Neither is proof of a saved file. `buffered` is the current send-queue
+size; `drainWait` is time spent awaiting WebRTC backpressure during the
+sampling interval. `rtt` and `availableUp` are browser estimates and may be
+unavailable (`-`). `unknown` means the browser did not identify the selected
+ICE candidate pair; it must not be assumed to mean direct.
+
+For an A/B test of SCTP message size, open the **sender's app page** with
+`?dcframe=64` before selecting a file, then generate a fresh share link for
+the receiver. Valid diagnostic caps are 16, 32, 64, 128, or 256 KiB; the
+browser's smaller negotiated limit always wins. With no query parameter,
+the existing browser-advertised size applies. Compare identical files,
+receivers, networks, and save modes, and check `maxFrameTx` to confirm the
+actual frame size. The public parameter belongs on the sender's page, **not**
+in the receiver's private transfer link.
