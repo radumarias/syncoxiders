@@ -1,6 +1,6 @@
 // Match the browser's visible chrome to the egui theme selected in the app.
 export function setBrowserTheme(theme, dark) {
-    const colors = theme === "telegram"
+    const colors = theme === "clean"
         ? (dark ? { header: "#1d2835", background: "#0e1621" }
             : { header: "#f8fafc", background: "#e5ebf1" })
         : (dark ? { header: "#231b17", background: "#100d0c" }

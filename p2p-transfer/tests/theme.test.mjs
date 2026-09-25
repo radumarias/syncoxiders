@@ -22,10 +22,10 @@ test("both theme choices update browser chrome in light and dark mode", () => {
         body: { style: { backgroundColor: null } },
     };
     for (const [theme, dark, header, background] of [
-        ["classic", false, "#fffdfb", "#faf6f2"],
-        ["classic", true, "#231b17", "#100d0c"],
-        ["telegram", false, "#f8fafc", "#e5ebf1"],
-        ["telegram", true, "#1d2835", "#0e1621"],
+        ["rusty", false, "#fffdfb", "#faf6f2"],
+        ["rusty", true, "#231b17", "#100d0c"],
+        ["clean", false, "#f8fafc", "#e5ebf1"],
+        ["clean", true, "#1d2835", "#0e1621"],
     ]) {
         setBrowserTheme(theme, dark);
         assert.deepEqual(metas.map(meta => meta.content), [header, header]);
