@@ -3366,7 +3366,6 @@ impl P2PTransfer {
                 .auto_shrink([false, false])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
                     ui.label(
                         RichText::new(format!("Build {}", crate::BUILD_LABEL))
                             .color(tc.secondary)
@@ -3499,8 +3498,11 @@ impl eframe::App for P2PTransfer {
             .show(ui, |ui| {
                 let content_width = ui.available_width().min(1040.0);
                 ui.vertical_centered(|ui| {
-                    ui.set_width(content_width);
-                    self.show_terminal(ui, &tc);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(content_width, ui.available_height()),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| self.show_terminal(ui, &tc),
+                    );
                 });
             });
 
