@@ -66,8 +66,8 @@ enum Theme {
 #[cfg(target_arch = "wasm32")]
 const BROWSER_THEME_KEY: &str = "oxfer.theme.v1";
 
-// Keep right-side header and footer controls inside the shared content column.
-const CONTROL_RIGHT_INSET: f32 = 16.0;
+// Keep header and footer controls clear of the shared content column's edges.
+const CONTROL_EDGE_INSET: f32 = 16.0;
 
 impl Theme {
     #[cfg(target_arch = "wasm32")]
@@ -3193,7 +3193,7 @@ impl P2PTransfer {
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(CONTROL_RIGHT_INSET);
+                ui.add_space(CONTROL_EDGE_INSET);
                 let dark = ui.visuals().dark_mode;
                 if !compact
                     && ui
@@ -3315,6 +3315,7 @@ impl P2PTransfer {
         let narrow_controls = ui.available_width() < 340.0;
         ui.horizontal(|ui| {
             ui.set_height(50.0);
+            ui.add_space(CONTROL_EDGE_INSET);
             let chevron = if self.show_terminal_view {
                 "▼"
             } else {
@@ -3342,7 +3343,7 @@ impl P2PTransfer {
             ui.add_space(12.0);
             #[cfg(target_arch = "wasm32")]
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(CONTROL_RIGHT_INSET);
+                ui.add_space(CONTROL_EDGE_INSET);
                 let diagnostics = ui
                     .add_enabled_ui(!self.is_preparing_share(), |ui| {
                         ui.add_sized([72.0, 44.0], outline_button("Diags", tc.outline))
@@ -3353,6 +3354,7 @@ impl P2PTransfer {
                     self.open_diagnostics();
                 }
                 if !compact && !self.show_terminal_view {
+                    ui.add_space(12.0);
                     if let Ok(logs) = logging::terminal_buffer().lock() {
                         let msg = logs
                             .back()
