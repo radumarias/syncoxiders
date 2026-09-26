@@ -4222,6 +4222,7 @@ dependencies = [
  "egui",
  "env_logger",
  "getrandom 0.4.3",
+ "image",
  "iroh",
  "iroh-tickets",
  "js-sys",

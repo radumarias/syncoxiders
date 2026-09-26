@@ -395,6 +395,8 @@ pub struct P2PTransfer {
     #[serde(skip)]
     link_copied: bool,
     #[serde(skip)]
+    header_icon: Option<egui::TextureHandle>,
+    #[serde(skip)]
     last_dark_mode: Option<bool>,
     #[serde(skip)]
     last_theme: Option<Theme>,
@@ -450,6 +452,7 @@ impl Default for P2PTransfer {
             sharing: Arc::new(AtomicBool::new(false)),
             show_terminal_view: false,
             link_copied: false,
+            header_icon: None,
             last_dark_mode: None,
             last_theme: None,
             #[cfg(target_arch = "wasm32")]
@@ -3112,27 +3115,31 @@ impl P2PTransfer {
         });
     }
 
+    fn header_icon(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
+        self.header_icon.get_or_insert_with(|| {
+            let icon = image::load_from_memory_with_format(
+                include_bytes!("../assets/icon-256.png"),
+                image::ImageFormat::Png,
+            )
+            .expect("bundled Oxfer icon must be a valid PNG")
+            .into_rgba8();
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [icon.width() as usize, icon.height() as usize],
+                icon.as_raw(),
+            );
+            ctx.load_texture("oxfer-header-icon", image, egui::TextureOptions::LINEAR)
+        })
+    }
+
     fn show_header(&mut self, ui: &mut Ui, ctx: &egui::Context, tc: &Tc) {
         let compact = ui.available_width() < 680.0;
         ui.set_height(64.0);
         ui.horizontal_centered(|ui| {
-            if tc.theme == Theme::Clean {
-                egui::Frame::new()
-                    .fill(tc.primary)
-                    .corner_radius(CornerRadius::same(19))
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.label(RichText::new("↗").color(tc.on_primary).strong().size(17.0));
-                    });
-            } else {
-                ui.label(
-                    RichText::new("OX")
-                        .color(tc.primary)
-                        .monospace()
-                        .strong()
-                        .size(13.0),
-                );
-            }
+            let icon_size = if compact { 36.0 } else { 42.0 };
+            ui.add(
+                egui::Image::from_texture(self.header_icon(ctx))
+                    .fit_to_exact_size(egui::vec2(icon_size, icon_size)),
+            );
             ui.label(
                 RichText::new(if tc.theme == Theme::Clean && !compact {
                     "Oxfer Files"
