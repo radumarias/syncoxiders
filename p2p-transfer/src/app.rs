@@ -1612,7 +1612,7 @@ impl P2PTransfer {
             Phase::Transferring => "Transfer in progress…",
             Phase::Switching => "Trying another connection…",
             Phase::Verifying => "Checking the file…",
-            Phase::Complete { .. } => "Complete",
+            Phase::Complete { .. } => "Transfer complete and checked",
             Phase::Failed => "Failed",
             Phase::Cancelled => "Cancelled",
         }
@@ -2017,6 +2017,20 @@ impl P2PTransfer {
         matches!(&self.mode, Mode::Send { preparing } if !preparing.is_empty())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn open_new_receive_link(&mut self) {
+        if self.is_preparing_share() {
+            return;
+        }
+        self.set_receive(
+            FragmentParams::default(),
+            Some(String::new()),
+            None,
+            None,
+            false,
+        );
+    }
+
     /// Home and diagnostics do not revoke a share. Preserve its status and return path.
     fn show_active_share_overview(&mut self, ui: &mut Ui, tc: &Tc) {
         if !self.sharing.load(Ordering::Acquire) {
@@ -2059,6 +2073,24 @@ impl P2PTransfer {
     }
 
     fn show_home(&mut self, ui: &mut Ui) {
+        const STEPS: [(HomeIcon, &str, &str); 3] = [
+            (
+                HomeIcon::File,
+                "1. Pick a file",
+                "Choose a photo, video, or document.",
+            ),
+            (
+                HomeIcon::Link,
+                "2. Send the link",
+                "Send it to the person you want to share with.",
+            ),
+            (
+                HomeIcon::Device,
+                "3. They save it",
+                "They open your link and choose where to save it.",
+            ),
+        ];
+
         let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let compact = compact(ui);
         self.show_active_share_overview(ui, &tc);
@@ -2073,7 +2105,7 @@ impl P2PTransfer {
                 ui.add_space(12.0);
                 ui.add(
                     egui::Label::new(
-                        RichText::new("Send a file straight to someone else.")
+                        RichText::new("Send files without cloud storage.")
                             .color(tc.on_surface)
                             .size(if compact { 26.0 } else { 34.0 })
                             .strong(),
@@ -2144,52 +2176,17 @@ impl P2PTransfer {
         );
         ui.add_space(10.0);
         if compact {
-            home_story_step(
-                ui,
-                &tc,
-                HomeIcon::File,
-                "1. Pick a file",
-                "Choose a photo, video, or document.",
-            );
-            ui.add_space(8.0);
-            home_story_step(
-                ui,
-                &tc,
-                HomeIcon::Link,
-                "2. Send the link",
-                "Send it to the person you want to share with.",
-            );
-            ui.add_space(8.0);
-            home_story_step(
-                ui,
-                &tc,
-                HomeIcon::Device,
-                "3. They save it",
-                "They open your link and choose where to save it.",
-            );
+            for (index, (icon, title, body)) in STEPS.into_iter().enumerate() {
+                if index > 0 {
+                    ui.add_space(8.0);
+                }
+                home_story_step(ui, &tc, icon, title, body);
+            }
         } else {
-            ui.columns(3, |cols| {
-                home_story_step(
-                    &mut cols[0],
-                    &tc,
-                    HomeIcon::File,
-                    "1. Pick a file",
-                    "Choose a photo, video, or document.",
-                );
-                home_story_step(
-                    &mut cols[1],
-                    &tc,
-                    HomeIcon::Link,
-                    "2. Send the link",
-                    "Send it to the person you want to share with.",
-                );
-                home_story_step(
-                    &mut cols[2],
-                    &tc,
-                    HomeIcon::Device,
-                    "3. They save it",
-                    "They open your link and choose where to save it.",
-                );
+            ui.columns(STEPS.len(), |cols| {
+                for (column, (icon, title, body)) in STEPS.into_iter().enumerate() {
+                    home_story_step(&mut cols[column], &tc, icon, title, body);
+                }
             });
         }
 
@@ -2560,13 +2557,9 @@ impl P2PTransfer {
                             .size(12.0),
                     );
                     ui.label(
-                        RichText::new(if matches!(&p.phase, Phase::Complete { .. }) {
-                            "File delivered and checked"
-                        } else {
-                            Self::phase_text(&p.phase)
-                        })
-                        .color(tc.outline)
-                        .size(12.0),
+                        RichText::new(Self::phase_text(&p.phase))
+                            .color(tc.outline)
+                            .size(12.0),
                     );
                     ui.label(
                         RichText::new(Self::path_badge(&p.phase, p.path))
@@ -2747,11 +2740,7 @@ impl P2PTransfer {
             if let Some(p) = &progress {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(
-                        RichText::new(if matches!(&p.phase, Phase::Complete { .. }) {
-                            "File received and checked"
-                        } else {
-                            Self::phase_text(&p.phase)
-                        })
+                        RichText::new(Self::phase_text(&p.phase))
                             .color(tc.on_surface)
                             .size(15.0)
                             .strong(),
@@ -3250,10 +3239,10 @@ impl P2PTransfer {
                 {
                     self.pick_file();
                 }
+                let preparing = self.is_preparing_share();
                 if !at_home {
                     // Dropping Mode::Send also drops in-flight hashing tasks. Do not let Home
                     // silently abort file preparation while the endpoint remains live.
-                    let preparing = self.is_preparing_share();
                     let home = ui
                         .add_enabled_ui(!preparing, |ui| {
                             ui.add_sized(
@@ -3291,8 +3280,12 @@ impl P2PTransfer {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     ui.menu_button("File", |ui| {
-                        if ui.button("Open transfer link").clicked() {
-                            self.set_receive(FragmentParams::default(), None, None, None, false);
+                        if ui
+                            .add_enabled(!preparing, Button::new("Open transfer link"))
+                            .on_disabled_hover_text("Wait for files to finish preparing")
+                            .clicked()
+                        {
+                            self.open_new_receive_link();
                             ui.close();
                         }
                         if ui.button("Quit").clicked() {
@@ -3797,6 +3790,10 @@ mod tests {
             P2PTransfer::phase_text(&Phase::Signaling),
             "Finding a connection…",
         );
+        assert_eq!(
+            P2PTransfer::phase_text(&Phase::Complete { saved: Vec::new() }),
+            "Transfer complete and checked",
+        );
     }
 
     #[test]
@@ -3827,6 +3824,43 @@ mod tests {
         assert_eq!(r.input, link);
         assert!(r.error.is_some());
         assert!(!r.opening);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn local_test_open_new_receive_link_clears_previous_input() {
+        let mut app = P2PTransfer::default();
+        app.set_receive(
+            FragmentParams::default(),
+            Some("previous private link".into()),
+            None,
+            None,
+            false,
+        );
+        app.open_new_receive_link();
+        let Mode::Receive(r) = &app.mode else {
+            panic!("expected receive panel");
+        };
+        assert!(r.input.is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn local_test_open_new_receive_link_keeps_preparing_share() {
+        let mut app = P2PTransfer::default();
+        let (_, progress) = watch::channel(0.0);
+        app.mode = Mode::Send {
+            preparing: vec![PrepareHandle {
+                name: "file".into(),
+                progress,
+                _task: AbortOnDropHandle::new(task::spawn(async {
+                    std::future::pending::<()>().await;
+                })),
+            }],
+        };
+
+        app.open_new_receive_link();
+        assert!(matches!(&app.mode, Mode::Send { preparing } if preparing.len() == 1));
     }
 
     #[test]
