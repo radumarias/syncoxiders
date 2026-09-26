@@ -1552,6 +1552,7 @@ async fn local_test_engine_roundtrip_in_memory() {
     let big = filler(3 * 1024 * 1024);
     let files = Arc::new(vec![
         shared_file("big.bin", &big),
+        shared_file("small.bin", b"second file"),
         shared_file("empty.bin", &[]),
     ]);
     let manifest: Vec<FileMeta> = files.iter().map(|f| f.meta.clone()).collect();
@@ -1585,20 +1586,32 @@ async fn local_test_engine_roundtrip_in_memory() {
 
     sent.expect("the sender session ended cleanly");
     let saved = received.expect("the receiver session completed");
-    assert_eq!(saved.len(), 2);
+    assert_eq!(saved.len(), 3);
     assert_eq!(saved[0].name, "big.bin");
     assert_eq!(saved[0].size, big.len() as u64);
+    assert_eq!(saved[1].name, "small.bin");
     // The empty file is a real manifest entry and must round-trip like any other.
-    assert_eq!(saved[1].name, "empty.bin");
-    assert_eq!(saved[1].size, 0);
+    assert_eq!(saved[2].name, "empty.bin");
+    assert_eq!(saved[2].size, 0);
 
     let progress = receiver_watch.borrow().clone();
     match &progress.phase {
-        Phase::Complete { saved } => assert_eq!(saved.len(), 2),
+        Phase::Complete { saved } => assert_eq!(saved.len(), 3),
         other => panic!("expected Complete, got {other:?}"),
     }
-    assert_eq!(progress.bytes_done, big.len() as u64);
+    assert_eq!(
+        progress.bytes_done,
+        big.len() as u64 + b"second file".len() as u64
+    );
     assert_eq!(progress.path, Path::Relayed);
+    assert_eq!(progress.file_average_bytes_per_sec.len(), 3);
+    assert!(
+        progress.file_average_bytes_per_sec[0].is_some_and(|rate| rate.is_finite() && rate > 0.0)
+    );
+    assert!(
+        progress.file_average_bytes_per_sec[1].is_some_and(|rate| rate.is_finite() && rate > 0.0)
+    );
+    assert_eq!(progress.file_average_bytes_per_sec[2], None);
     assert!(sender_close.lock().expect("close record").is_some());
 }
 
@@ -1751,6 +1764,7 @@ async fn local_test_receiver_reconnects_and_resumes_from_committed_offset() {
     let final_progress = watch.borrow().clone();
     assert!(matches!(final_progress.phase, Phase::Complete { .. }));
     assert_eq!(final_progress.bytes_done, data_len as u64);
+    assert!(final_progress.file_average_bytes_per_sec[0].is_some_and(|rate| rate > 0.0));
 }
 
 #[tokio::test]
@@ -1811,6 +1825,7 @@ async fn local_test_durable_resume_rehashes_prefix_and_requests_only_the_tail() 
     let saved = receiver.await.expect("receiver task").expect("resumed");
     assert_eq!(saved[0].size, data.len() as u64);
     assert_eq!(watch.borrow().bytes_done, data.len() as u64);
+    assert!(watch.borrow().file_average_bytes_per_sec[0].is_some_and(|rate| rate > 0.0));
 }
 
 #[tokio::test]
