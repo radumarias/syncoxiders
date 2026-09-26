@@ -3312,6 +3312,7 @@ impl P2PTransfer {
 
     fn show_terminal(&mut self, ui: &mut Ui, tc: &Tc) {
         let compact = ui.available_width() < 620.0;
+        let narrow_controls = ui.available_width() < 340.0;
         ui.horizontal(|ui| {
             ui.set_height(50.0);
             let chevron = if self.show_terminal_view {
@@ -3322,13 +3323,18 @@ impl P2PTransfer {
             if ui
                 .add(
                     Button::new(
-                        RichText::new(format!("{chevron} Terminal Output >_"))
-                            .color(tc.secondary)
-                            .monospace()
-                            .size(13.0),
+                        RichText::new(if narrow_controls {
+                            format!("{chevron} Logs >_")
+                        } else {
+                            format!("{chevron} Terminal Output >_")
+                        })
+                        .color(tc.secondary)
+                        .monospace()
+                        .size(13.0),
                     )
                     .fill(Color32::TRANSPARENT),
                 )
+                .on_hover_text("Terminal Output")
                 .clicked()
             {
                 self.show_terminal_view = !self.show_terminal_view;
