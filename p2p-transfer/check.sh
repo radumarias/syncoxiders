@@ -19,3 +19,4 @@ wasm-pack test --headless --firefox -- --test webrtc_wasm
 wasm-pack test --headless --firefox -- --test relay_wasm
 wasm-pack test --headless --firefox -- --test resume_wasm
 trunk build
+cmp assets/theme.js dist/assets/theme.js
