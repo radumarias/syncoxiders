@@ -63,6 +63,28 @@ enum Theme {
     Clean,
 }
 
+#[cfg(target_arch = "wasm32")]
+const BROWSER_THEME_KEY: &str = "oxfer.theme.v1";
+
+impl Theme {
+    #[cfg(target_arch = "wasm32")]
+    const fn storage_value(self) -> &'static str {
+        match self {
+            Self::Rusty => "rusty",
+            Self::Clean => "clean",
+        }
+    }
+
+    #[cfg(any(test, target_arch = "wasm32"))]
+    fn from_storage_value(value: &str) -> Option<Self> {
+        match value {
+            "rusty" => Some(Self::Rusty),
+            "clean" => Some(Self::Clean),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Tc {
     theme: Theme,
@@ -335,7 +357,7 @@ pub struct P2PTransfer {
     #[cfg(not(target_arch = "wasm32"))]
     save_directory: Option<std::path::PathBuf>,
 
-    /// A missing preference (including settings from before themes existed) uses Clean.
+    /// Native app setting and browser backup. The browser's immediate theme key wins on reload.
     theme: Theme,
     #[serde(skip)]
     mode: Mode,
@@ -483,6 +505,17 @@ impl P2PTransfer {
         #[cfg(target_arch = "wasm32")]
         {
             use wasm_bindgen::JsCast as _;
+
+            // eframe saves app settings periodically. A theme tap must survive even if
+            // mobile Safari kills this page before that next checkpoint.
+            if let Some(theme) = eframe::web::storage::local_storage_get(BROWSER_THEME_KEY)
+                .as_deref()
+                .and_then(Theme::from_storage_value)
+            {
+                app.theme = theme;
+            }
+            // Migrate any earlier eframe-saved choice into the immediate key.
+            eframe::web::storage::local_storage_set(BROWSER_THEME_KEY, app.theme.storage_value());
 
             let ctx = cc.egui_ctx.clone();
             let closure =
@@ -3315,6 +3348,11 @@ impl P2PTransfer {
                         .selectable_value(&mut self.theme, Theme::Clean, "Clean")
                         .clicked();
                     if rusty || clean {
+                        #[cfg(target_arch = "wasm32")]
+                        eframe::web::storage::local_storage_set(
+                            BROWSER_THEME_KEY,
+                            self.theme.storage_value(),
+                        );
                         self.last_theme = None;
                         ctx.request_repaint();
                         ui.close();
@@ -3637,6 +3675,9 @@ mod tests {
     #[test]
     fn local_test_theme_choice_is_independent_of_light_and_dark_mode() {
         assert_eq!(P2PTransfer::default().theme, Theme::Clean);
+        assert_eq!(Theme::from_storage_value("rusty"), Some(Theme::Rusty));
+        assert_eq!(Theme::from_storage_value("clean"), Some(Theme::Clean));
+        assert_eq!(Theme::from_storage_value("unknown"), None);
         let encoded = postcard::to_stdvec(&Theme::Clean).unwrap();
         let restored: Theme = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(restored, Theme::Clean);
