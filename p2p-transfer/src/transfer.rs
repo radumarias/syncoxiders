@@ -653,6 +653,10 @@ pub struct TransferProgress {
     pub bytes_done: u64,
     pub bytes_total: u64,
     pub bytes_per_sec: f64,
+    /// Receiver-only averages, indexed by manifest file. Includes reconnect waits, but not the
+    /// initial Save prompt, a previously checkpointed prefix, or final hash/destination work.
+    /// `None` means no new bytes were received.
+    pub file_average_bytes_per_sec: Vec<Option<f64>>,
     /// Complete-frame limit negotiated for the active transport. `None` on the control stream.
     pub frame_size: Option<usize>,
     /// RTT of the control connection's selected path, so the credit-window bound of §2.5 is
@@ -673,6 +677,7 @@ impl TransferProgress {
             bytes_done: 0,
             bytes_total: 0,
             bytes_per_sec: 0.0,
+            file_average_bytes_per_sec: Vec::new(),
             frame_size: None,
             rtt_ms: None,
             error: None,
@@ -1750,12 +1755,25 @@ enum Arrival {
 struct FileState {
     index: u32,
     expected: u64,
+    /// The offset at the start of this receive session, excluding an OPFS prefix.
+    initial_offset: u64,
+    /// Kept across transport fallback and reconnect, so stalls count in the average.
+    started_at: Instant,
     epoch_start: u64,
     granted: u64,
     consumed_since_grant: u64,
     last_grant_at: Instant,
     hasher: blake3::Hasher,
     active_rx: Arrival,
+}
+
+fn average_receive_rate(initial_offset: u64, final_offset: u64, elapsed: Duration) -> Option<f64> {
+    let bytes = final_offset.saturating_sub(initial_offset);
+    if bytes == 0 || elapsed.is_zero() {
+        return None;
+    }
+    let rate = bytes as f64 / elapsed.as_secs_f64();
+    rate.is_finite().then_some(rate)
 }
 
 /// Transport-generic receiver core (design §4.6.2).
@@ -2323,6 +2341,8 @@ async fn receive_loop<T: FrameTx, R: FrameRx, F: DcFactory>(
                 state.current = Some(FileState {
                     index,
                     expected: sink_offset,
+                    initial_offset: sink_offset,
+                    started_at: Instant::now(),
                     epoch_start: sink_offset,
                     granted: opts.initial_window,
                     consumed_since_grant: 0,
@@ -2685,6 +2705,11 @@ async fn handle_frame<T: FrameTx>(
                     actual: file.expected as usize,
                 }));
             }
+            let average = average_receive_rate(
+                file.initial_offset,
+                file.expected,
+                file.started_at.elapsed(),
+            );
             progress.send_modify(|p| p.phase = Phase::Verifying);
             let digest = crate::blob_store::BlobHash(*file.hasher.finalize().as_bytes());
             if digest != meta.hash {
@@ -2701,6 +2726,11 @@ async fn handle_frame<T: FrameTx>(
                 log::debug!("file {index} verified and saved to {}", saved.location);
                 state.saved.push(saved);
             }
+            progress.send_modify(|p| {
+                p.file_average_bytes_per_sec
+                    .resize(state.manifest.len(), None);
+                p.file_average_bytes_per_sec[index as usize] = average;
+            });
             state.current = None;
             state.next_file = index + 1;
             *inactivity_deadline = None;
@@ -3310,5 +3340,29 @@ impl DataChannel for MemDc {
     fn close(&self) {
         self.shared.open.send_replace(false);
         self.shared.state.send_replace(PcState::Closed);
+    }
+}
+
+#[cfg(test)]
+mod average_rate_tests {
+    use super::*;
+
+    #[test]
+    fn local_test_average_receive_rate_uses_new_bytes_only() {
+        let saved_prefix = 3 * 1024 * 1024;
+        let downloaded_this_session = 1024 * 1024;
+        assert_eq!(
+            average_receive_rate(
+                saved_prefix,
+                saved_prefix + downloaded_this_session,
+                Duration::from_secs(2),
+            ),
+            Some(512.0 * 1024.0),
+        );
+        assert_eq!(
+            average_receive_rate(saved_prefix, saved_prefix, Duration::from_secs(2)),
+            None
+        );
+        assert_eq!(average_receive_rate(0, 1, Duration::ZERO), None);
     }
 }

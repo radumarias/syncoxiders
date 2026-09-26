@@ -203,6 +203,8 @@ pub struct ReceivedFile {
     pub location: String,
     pub when: String,
     pub path: TransferPath,
+    /// Newly received bytes per second in this session; absent for an empty/already saved file.
+    pub average_bytes_per_sec: Option<f64>,
 }
 
 /// A picked file waiting for `logic()` to turn it into a [`PrepareHandle`].
@@ -1476,12 +1478,19 @@ impl P2PTransfer {
             Phase::Complete { saved } => {
                 let when = Self::timestamp();
                 if let Ok(mut files) = self.received_files.lock() {
-                    files.extend(saved.into_iter().map(|f| ReceivedFile {
-                        name: f.name,
-                        size: f.size,
-                        location: f.location,
-                        when: when.clone(),
-                        path,
+                    files.extend(saved.into_iter().enumerate().map(|(index, f)| {
+                        ReceivedFile {
+                            name: f.name,
+                            size: f.size,
+                            location: f.location,
+                            when: when.clone(),
+                            path,
+                            average_bytes_per_sec: progress
+                                .file_average_bytes_per_sec
+                                .get(index)
+                                .copied()
+                                .flatten(),
+                        }
                     }));
                 }
                 // The URL was scrubbed as soon as it was accepted; after success, do not put the
@@ -3110,6 +3119,18 @@ impl P2PTransfer {
                         .color(tc.on_surface_var)
                         .size(11.0),
                 );
+                if let Some(rate) = f.average_bytes_per_sec {
+                    let speed = if rate < 1.0 {
+                        format!("{rate:.2} B/s")
+                    } else {
+                        format!("{}/s", Self::format_size(rate as u64))
+                    };
+                    ui.label(
+                        RichText::new(format!("Avg download (this session): {speed}"))
+                            .color(tc.on_surface_var)
+                            .size(12.0),
+                    );
+                }
                 pill(ui, &tc, Self::transfer_path_text(f.path), true);
             }
         });
