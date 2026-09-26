@@ -1810,66 +1810,33 @@ fn file_attachment(ui: &mut Ui, tc: &Tc, name: &str, detail: &str, outgoing: boo
         });
 }
 
-fn home_action(
-    ui: &mut Ui,
-    tc: &Tc,
-    code: &str,
-    title: &str,
-    description: &str,
-    button: &str,
-    primary: bool,
-) -> bool {
-    let mut clicked = false;
-    card(tc).show(ui, |ui| {
-        ui.set_min_height(if tc.theme == Theme::Rusty {
-            164.0
-        } else {
-            168.0
-        });
-        ui.horizontal(|ui| {
-            if tc.theme == Theme::Rusty {
-                pill(ui, tc, code, primary);
-            } else {
+fn home_story_step(ui: &mut Ui, tc: &Tc, icon: &str, title: &str, body: &str) {
+    egui::Frame::new()
+        .fill(tc.surface_low)
+        .stroke(Stroke::new(1.0, tc.outline_var))
+        .corner_radius(CornerRadius::same(16))
+        .inner_margin(egui::Margin::same(14))
+        .show(ui, |ui| {
+            ui.set_min_height(110.0);
+            ui.horizontal(|ui| {
                 egui::Frame::new()
-                    .fill(if primary { tc.primary } else { tc.surface_high })
-                    .corner_radius(CornerRadius::same(20))
+                    .fill(tc.surface_high)
+                    .corner_radius(CornerRadius::same(12))
                     .inner_margin(egui::Margin::same(10))
                     .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(code)
-                                .color(if primary { tc.on_primary } else { tc.secondary })
-                                .strong()
-                                .size(18.0),
-                        );
+                        ui.label(RichText::new(icon).color(tc.secondary).size(21.0).strong());
                     });
-            }
-            ui.label(
-                RichText::new(title)
-                    .color(tc.on_surface)
-                    .size(21.0)
-                    .strong(),
-            );
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(title)
+                            .color(tc.on_surface)
+                            .size(16.0)
+                            .strong(),
+                    );
+                    ui.add(egui::Label::new(RichText::new(body).color(tc.on_surface_var)).wrap());
+                });
+            });
         });
-        ui.add_space(6.0);
-        ui.add(
-            egui::Label::new(
-                RichText::new(description)
-                    .color(tc.on_surface_var)
-                    .size(14.0),
-            )
-            .wrap(),
-        );
-        ui.add_space(14.0);
-        let width = ui.available_width();
-        clicked = if primary {
-            ui.add_sized([width, 48.0], primary_button(tc, button))
-                .clicked()
-        } else {
-            ui.add_sized([width, 48.0], outline_button(button, tc.secondary))
-                .clicked()
-        };
-    });
-    clicked
 }
 
 fn process_step(ui: &mut Ui, tc: &Tc, number: &str, title: &str, body: &str) {
@@ -1936,13 +1903,13 @@ fn show_how_it_works(ui: &mut Ui, tc: &Tc) {
         .inner_margin(egui::Margin::same(if compact { 14 } else { 18 }))
         .show(ui, |ui| {
             egui::CollapsingHeader::new(
-                RichText::new("How Oxfer works")
+                RichText::new("Technical details")
                     .color(tc.on_surface)
                     .size(if compact { 20.0 } else { 22.0 })
                     .strong(),
             )
-            .id_salt("how_oxfer_works")
-            .default_open(false)
+            .id_salt("oxfer_technical_details")
+            .default_open(true)
             .show(ui, |ui| {
                 ui.add_space(4.0);
                 ui.add(
@@ -2056,144 +2023,7 @@ impl P2PTransfer {
         };
     }
 
-    fn show_home_rusty(&mut self, ui: &mut Ui) {
-        let tc = Tc::of(Theme::Rusty, ui.visuals().dark_mode);
-        let compact = compact(ui);
-        self.show_active_share_overview(ui, &tc);
-        ui.add_space(if compact { 8.0 } else { 22.0 });
-        ui.vertical_centered(|ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.with_layout(
-                    egui::Layout::left_to_right(egui::Align::Center)
-                        .with_main_align(egui::Align::Center),
-                    |ui| {
-                        pill(ui, &tc, "RUST-POWERED", false);
-                        pill(ui, &tc, "PRIVATE BY DESIGN", true);
-                    },
-                );
-            });
-            ui.add_space(12.0);
-            ui.add(
-                egui::Label::new(
-                    RichText::new("Your files. Their device. No cloud in between.")
-                        .color(tc.on_surface)
-                        .size(if compact { 27.0 } else { 36.0 })
-                        .strong(),
-                )
-                .wrap(),
-            );
-            ui.add_space(8.0);
-            ui.add(
-                egui::Label::new(
-                    RichText::new(
-                        "Oxfer opens an encrypted peer-to-peer path and streams every byte \
-                         directly to the receiver.",
-                    )
-                    .color(tc.on_surface_var)
-                    .size(if compact { 15.0 } else { 17.0 }),
-                )
-                .wrap(),
-            );
-        });
-        ui.add_space(if compact { 20.0 } else { 30.0 });
-
-        let badge_width = ui.available_width();
-        if badge_width < 310.0 {
-            ui.vertical(|ui| {
-                pill(ui, &tc, "DTLS / QUIC ENCRYPTED", true);
-                pill(ui, &tc, "BLAKE3 VERIFIED", false);
-                pill(ui, &tc, "NO ACCOUNT", false);
-            });
-        } else if badge_width < 420.0 {
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    pill(ui, &tc, "DTLS / QUIC ENCRYPTED", true);
-                    pill(ui, &tc, "BLAKE3 VERIFIED", false);
-                });
-                pill(ui, &tc, "NO ACCOUNT", false);
-            });
-        } else {
-            ui.horizontal(|ui| {
-                pill(ui, &tc, "DTLS / QUIC ENCRYPTED", true);
-                pill(ui, &tc, "BLAKE3 VERIFIED", false);
-                pill(ui, &tc, "NO ACCOUNT", false);
-            });
-        }
-        ui.add_space(if compact { 16.0 } else { 22.0 });
-
-        let (mut pick, mut receive) = (false, false);
-        if compact {
-            card(&tc).show(ui, |ui| {
-                ui.label(
-                    RichText::new("Transfer a file")
-                        .color(tc.on_surface)
-                        .size(21.0)
-                        .strong(),
-                );
-                ui.add(
-                    egui::Label::new(
-                        RichText::new("Choose a file to send, or open a link to receive.")
-                            .color(tc.on_surface_var)
-                            .size(14.0),
-                    )
-                    .wrap(),
-                );
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let button_width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-                    pick = ui
-                        .add_sized([button_width, 48.0], primary_button(&tc, "Send file"))
-                        .clicked();
-                    receive = ui
-                        .add_sized(
-                            [button_width, 48.0],
-                            outline_button("Receive file", tc.secondary),
-                        )
-                        .clicked();
-                });
-            });
-        } else {
-            ui.columns(2, |cols| {
-                pick = home_action(
-                    &mut cols[0],
-                    &tc,
-                    "TX",
-                    "Send a file",
-                    "Choose a file, hash it locally, then share one private capability link.",
-                    "Choose file",
-                    true,
-                );
-                receive = home_action(
-                    &mut cols[1],
-                    &tc,
-                    "RX",
-                    "Receive a file",
-                    "Open a link and save bytes streamed directly from the sender.",
-                    "Open a transfer link",
-                    false,
-                );
-            });
-        }
-
-        show_how_it_works(ui, &tc);
-        #[cfg(target_arch = "wasm32")]
-        if ui.button("Network diagnostics").clicked() {
-            self.open_diagnostics();
-        }
-
-        if pick {
-            self.pick_file();
-        }
-        if receive {
-            self.set_receive(FragmentParams::default(), None, None, None, false);
-        }
-    }
-
     fn show_home(&mut self, ui: &mut Ui) {
-        if self.theme == Theme::Rusty {
-            self.show_home_rusty(ui);
-            return;
-        }
         let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let compact = compact(ui);
         self.show_active_share_overview(ui, &tc);
@@ -2204,120 +2034,128 @@ impl P2PTransfer {
             .corner_radius(CornerRadius::same(20))
             .inner_margin(egui::Margin::same(if compact { 16 } else { 24 }))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    egui::Frame::new()
-                        .fill(tc.primary)
-                        .corner_radius(CornerRadius::same(24))
-                        .inner_margin(egui::Margin::same(12))
-                        .show(ui, |ui| {
-                            ui.label(RichText::new("↗").color(tc.on_primary).size(23.0));
-                        });
-                    ui.vertical(|ui| {
-                        ui.label(
-                            RichText::new("Your private file space")
-                                .color(tc.on_surface)
-                                .size(if compact { 20.0 } else { 25.0 })
-                                .strong(),
-                        );
-                        ui.label(
-                            RichText::new("Share a file directly with another device.")
-                                .color(tc.on_surface_var)
-                                .size(13.0),
-                        );
-                    });
-                });
+                pill(ui, &tc, "PRIVATE FILE SHARING", true);
                 ui.add_space(12.0);
                 ui.add(
                     egui::Label::new(
-                        RichText::new(
-                            "No account or cloud storage. Oxfer streams encrypted bytes between \
-                             devices and verifies each file before reporting success.",
-                        )
-                        .color(tc.on_surface_var)
-                        .size(if compact { 13.0 } else { 15.0 }),
-                    )
-                    .wrap(),
-                );
-            });
-        ui.add_space(if compact { 14.0 } else { 20.0 });
-
-        // Show all three assurances at every width; a chat-like horizontal row
-        // must not silently clip the final badge on narrow phones.
-        ui.horizontal_wrapped(|ui| {
-            pill(ui, &tc, "ENCRYPTED", true);
-            pill(ui, &tc, "BLAKE3 VERIFIED", false);
-            pill(ui, &tc, "NO ACCOUNT", false);
-        });
-        ui.add_space(if compact { 12.0 } else { 18.0 });
-
-        let (mut pick, mut receive) = (false, false);
-        if compact {
-            // Two full-height stacked cards can put Receive below the viewport
-            // (especially with large system text). Keep both actions together.
-            card(&tc).show(ui, |ui| {
-                ui.label(
-                    RichText::new("Start a file transfer")
-                        .color(tc.on_surface)
-                        .size(21.0)
-                        .strong(),
-                );
-                ui.add(
-                    egui::Label::new(
-                        RichText::new("Choose a file to send, or open a link to receive.")
-                            .color(tc.on_surface_var)
-                            .size(14.0),
+                        RichText::new("Send files privately. No cloud storage.")
+                            .color(tc.on_surface)
+                            .size(if compact { 26.0 } else { 34.0 })
+                            .strong(),
                     )
                     .wrap(),
                 );
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    let button_width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-                    pick = ui
-                        .add_sized([button_width, 48.0], primary_button(&tc, "Send file"))
-                        .clicked();
-                    receive = ui
-                        .add_sized(
-                            [button_width, 48.0],
-                            outline_button("Receive file", tc.secondary),
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(
+                            "Choose a file, send its private link, and the other person opens it. \
+                             No account needed.",
                         )
-                        .clicked();
-                });
+                        .color(tc.on_surface_var)
+                        .size(if compact { 15.0 } else { 17.0 }),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(12.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(
+                            "Your file is encrypted in transit. It is not uploaded to Oxfer's \
+                             servers or stored in the cloud. If a direct connection is unavailable, \
+                             a relay forwards encrypted data, not the readable file.",
+                        )
+                        .color(tc.on_surface)
+                        .size(if compact { 14.0 } else { 16.0 }),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(18.0);
+                let width = if compact {
+                    ui.available_width()
+                } else {
+                    ui.available_width().min(280.0)
+                };
+                if ui
+                    .add_sized([width, 52.0], primary_button(&tc, "Send files"))
+                    .clicked()
+                {
+                    self.pick_file();
+                }
+                ui.add_space(12.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new({
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                "Receiving a file? Open the link the sender gave you. \
+                                 Then choose where to save it. No account or setup needed."
+                            }
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                "Receiving a file? Use File → Open transfer link to paste the \
+                                 link the sender gave you. No account needed."
+                            }
+                        })
+                        .color(tc.on_surface_var)
+                        .size(14.0),
+                    )
+                    .wrap(),
+                );
             });
+        ui.add_space(if compact { 16.0 } else { 24.0 });
+        ui.label(
+            RichText::new("From your device to theirs")
+                .color(tc.on_surface)
+                .size(21.0)
+                .strong(),
+        );
+        ui.add_space(10.0);
+        if compact {
+            home_story_step(ui, &tc, "▤", "1. Choose", "Pick a file on your device.");
+            ui.add_space(8.0);
+            home_story_step(
+                ui,
+                &tc,
+                "◇",
+                "2. Share",
+                "Send the private link to someone you trust.",
+            );
+            ui.add_space(8.0);
+            home_story_step(
+                ui,
+                &tc,
+                "↘",
+                "3. Receive",
+                "They open the link and save the file.",
+            );
         } else {
-            ui.columns(2, |cols| {
-                pick = home_action(
+            ui.columns(3, |cols| {
+                home_story_step(
                     &mut cols[0],
                     &tc,
-                    "↑",
-                    "Send a file",
-                    "Choose a file, hash it locally, then share one private capability link.",
-                    "Choose file",
-                    true,
+                    "▤",
+                    "1. Choose",
+                    "Pick a file on your device.",
                 );
-                receive = home_action(
+                home_story_step(
                     &mut cols[1],
                     &tc,
-                    "↓",
-                    "Receive a file",
-                    "Open a link and save bytes streamed directly from the sender.",
-                    "Open a transfer link",
-                    false,
+                    "◇",
+                    "2. Share",
+                    "Send the private link to someone you trust.",
+                );
+                home_story_step(
+                    &mut cols[2],
+                    &tc,
+                    "↘",
+                    "3. Receive",
+                    "They open the link and save the file.",
                 );
             });
         }
 
         show_how_it_works(ui, &tc);
-        #[cfg(target_arch = "wasm32")]
-        if ui.button("Network diagnostics").clicked() {
-            self.open_diagnostics();
-        }
-
-        if pick {
-            self.pick_file();
-        }
-        if receive {
-            self.set_receive(FragmentParams::default(), None, None, None, false);
-        }
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -3373,6 +3211,7 @@ impl P2PTransfer {
                     }
                 });
                 if !compact
+                    && !at_home
                     && !matches!(self.mode, Mode::Receive(_))
                     && ui.add(primary_button(tc, "Choose File")).clicked()
                 {
@@ -3419,6 +3258,10 @@ impl P2PTransfer {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     ui.menu_button("File", |ui| {
+                        if ui.button("Open transfer link").clicked() {
+                            self.set_receive(FragmentParams::default(), None, None, None, false);
+                            ui.close();
+                        }
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
