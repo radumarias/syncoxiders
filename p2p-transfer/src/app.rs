@@ -355,6 +355,29 @@ impl LocalCopies {
     }
 }
 
+struct HeaderLogos {
+    light: egui::TextureHandle,
+    dark: egui::TextureHandle,
+}
+
+fn bundled_png_texture(
+    ctx: &egui::Context,
+    name: &'static str,
+    bytes: &'static [u8],
+) -> egui::TextureHandle {
+    let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+        .expect("bundled Oxfer logo must be a valid PNG")
+        .into_rgba8();
+    ctx.load_texture(
+        name,
+        egui::ColorImage::from_rgba_unmultiplied(
+            [image.width() as usize, image.height() as usize],
+            image.as_raw(),
+        ),
+        egui::TextureOptions::LINEAR,
+    )
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(default)]
 pub struct P2PTransfer {
@@ -397,7 +420,7 @@ pub struct P2PTransfer {
     #[serde(skip)]
     link_copied: bool,
     #[serde(skip)]
-    header_icon: Option<egui::TextureHandle>,
+    header_logos: Option<HeaderLogos>,
     #[serde(skip)]
     last_dark_mode: Option<bool>,
     #[serde(skip)]
@@ -454,7 +477,7 @@ impl Default for P2PTransfer {
             sharing: Arc::new(AtomicBool::new(false)),
             show_terminal_view: false,
             link_copied: false,
-            header_icon: None,
+            header_logos: None,
             last_dark_mode: None,
             last_theme: None,
             #[cfg(target_arch = "wasm32")]
@@ -3136,19 +3159,19 @@ impl P2PTransfer {
         });
     }
 
-    fn header_icon(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
-        self.header_icon.get_or_insert_with(|| {
-            let icon = image::load_from_memory_with_format(
-                include_bytes!("../assets/icon-256.png"),
-                image::ImageFormat::Png,
-            )
-            .expect("bundled Oxfer icon must be a valid PNG")
-            .into_rgba8();
-            let image = egui::ColorImage::from_rgba_unmultiplied(
-                [icon.width() as usize, icon.height() as usize],
-                icon.as_raw(),
-            );
-            ctx.load_texture("oxfer-header-icon", image, egui::TextureOptions::LINEAR)
+    fn header_logos(&mut self, ctx: &egui::Context) -> &HeaderLogos {
+        // PNGs are 256px-tall rasters of `assets/oxfer-wordmark-{light,dark}.svg`.
+        self.header_logos.get_or_insert_with(|| HeaderLogos {
+            light: bundled_png_texture(
+                ctx,
+                "oxfer-wordmark-light",
+                include_bytes!("../assets/oxfer-wordmark-light.png"),
+            ),
+            dark: bundled_png_texture(
+                ctx,
+                "oxfer-wordmark-dark",
+                include_bytes!("../assets/oxfer-wordmark-dark.png"),
+            ),
         })
     }
 
@@ -3156,29 +3179,19 @@ impl P2PTransfer {
         let compact = ui.available_width() < 680.0;
         ui.set_height(64.0);
         ui.horizontal_centered(|ui| {
-            let icon_size = if compact { 36.0 } else { 42.0 };
-            ui.add(
-                egui::Image::from_texture(self.header_icon(ctx))
-                    .fit_to_exact_size(egui::vec2(icon_size, icon_size)),
-            );
-            ui.label(
-                RichText::new(if tc.theme == Theme::Clean && !compact {
-                    "Oxfer Files"
-                } else {
-                    "Oxfer"
-                })
-                .color(tc.on_surface)
-                .strong()
-                .size(if compact {
-                    if tc.theme == Theme::Clean {
-                        18.0
-                    } else {
-                        21.0
-                    }
-                } else {
-                    23.0
-                }),
-            );
+            {
+                let dark = ui.visuals().dark_mode;
+                let logos = self.header_logos(ctx);
+                let logo = if dark { &logos.dark } else { &logos.light };
+                let height = if compact { 20.0 } else { 32.0 };
+                let max_width = if compact { 120.0 } else { 220.0 };
+                let width = (height * logo.aspect_ratio()).min(max_width);
+                ui.add(
+                    egui::Image::from_texture(logo)
+                        .fit_to_exact_size(egui::vec2(width, width / logo.aspect_ratio()))
+                        .alt_text("Oxfer"),
+                );
+            }
             if !compact
                 && ui
                     .add(
@@ -3678,6 +3691,7 @@ mod tests {
                     },
                     |ui| {
                         ui.set_width(width - 28.0);
+                        P2PTransfer::apply_theme(&ctx, ui, theme, false);
                         let tc = Tc::of(theme, false);
                         app.show_header(ui, &ctx, &tc);
                         measured = Some(ui.min_rect());
@@ -3691,6 +3705,33 @@ mod tests {
                     rect.max.x - width
                 );
             }
+        }
+    }
+
+    #[test]
+    fn local_test_bundled_wordmarks_are_wide_rgba_pngs() {
+        for (label, bytes) in [
+            (
+                "light",
+                include_bytes!("../assets/oxfer-wordmark-light.png").as_slice(),
+            ),
+            (
+                "dark",
+                include_bytes!("../assets/oxfer-wordmark-dark.png").as_slice(),
+            ),
+        ] {
+            let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+                .unwrap_or_else(|error| panic!("{label} wordmark must decode: {error}"))
+                .into_rgba8();
+            assert!(
+                image.width() > image.height() * 5,
+                "{label} is not a wordmark"
+            );
+            assert_eq!(
+                image.height(),
+                256,
+                "{label} should be rasterized at 256px tall"
+            );
         }
     }
 

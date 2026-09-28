@@ -12,6 +12,8 @@
 
     <link data-trunk rel="copy-file" href="assets/favicon.ico">
     <link data-trunk rel="copy-file" href="assets/oxfer-mark.svg" data-target-path="assets">
+    <link data-trunk rel="copy-file" href="assets/oxfer-wordmark-light.svg" data-target-path="assets">
+    <link data-trunk rel="copy-file" href="assets/oxfer-wordmark-dark.svg" data-target-path="assets">
     <link rel="icon" type="image/svg+xml" href="assets/oxfer-mark.svg">
     <link rel="alternate icon" href="favicon.ico">
 
@@ -85,6 +87,27 @@
             text-align: center;
         }
 
+        .brand-logo {
+            display: block;
+            height: 40px;
+            width: auto;
+            margin: 0 auto 18px;
+        }
+
+        .brand-logo-dark {
+            display: none;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .brand-logo-light {
+                display: none;
+            }
+
+            .brand-logo-dark {
+                display: block;
+            }
+        }
+
         .lds-dual-ring {
             display: inline-block;
             width: 24px;
@@ -118,6 +141,8 @@
 <body>
     <canvas id="the_canvas_id"></canvas>
     <div class="centered" id="loading_text">
+        <img class="brand-logo brand-logo-light" src="assets/oxfer-wordmark-light.svg" alt="Oxfer" width="256" height="40">
+        <img class="brand-logo brand-logo-dark" src="assets/oxfer-wordmark-dark.svg" alt="Oxfer" width="256" height="40">
         <p style="font-size:16px">
             Loading…
         </p>
