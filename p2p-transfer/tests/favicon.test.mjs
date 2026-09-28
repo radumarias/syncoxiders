@@ -7,6 +7,20 @@ const read = path => readFile(new URL(path, import.meta.url), "utf8");
 const source = await read("../assets/favicon.js");
 
 for (const page of ["index.html", "theme.html"]) {
+    test(`${page} advertises only the theme-aware tab icon`, async () => {
+        const html = await read(`../${page}`);
+        const icons = [...html.matchAll(/<link\b[^>]*>/g)]
+            .map(([link]) => link)
+            .filter(link => {
+                const rel = link.match(/\brel="([^"]+)"/)?.[1] ?? "";
+                return rel.split(/\s+/).includes("icon");
+            });
+        assert.equal(icons.length, 1, "a competing ICO can override the themed SVG");
+        assert.match(icons[0], /\bid="favicon"/);
+        // Do not publish the obsolete pale-tile icon for implicit /favicon.ico requests.
+        assert.doesNotMatch(html, /favicon\.ico/);
+    });
+
     test(`${page} selects the favicon on load and when the browser preference changes`, async () => {
         const html = await read(`../${page}`);
         const link = html.match(/<link id="favicon"[^>]+>/)[0];
