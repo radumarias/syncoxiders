@@ -15,9 +15,12 @@ node --test tests/diagnostics.test.mjs
 node --test tests/webrtc_stats.test.mjs
 node --test tests/wake_lock.test.mjs
 node --test tests/theme.test.mjs
+node --test tests/favicon.test.mjs
 wasm-pack test --headless --firefox -- --test webrtc_wasm
 wasm-pack test --headless --firefox -- --test relay_wasm
 wasm-pack test --headless --firefox -- --test resume_wasm
 trunk build
 cmp assets/theme.js dist/assets/theme.js
-cmp assets/oxfer-favicon.svg dist/assets/oxfer-favicon.svg
+cmp assets/favicon.js dist/assets/favicon.js
+cmp assets/oxfer-favicon-light.svg dist/assets/oxfer-favicon-light.svg
+cmp assets/oxfer-favicon-dark.svg dist/assets/oxfer-favicon-dark.svg

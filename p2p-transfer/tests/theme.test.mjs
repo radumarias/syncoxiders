@@ -24,8 +24,8 @@ test("both theme choices update browser chrome in light and dark mode", () => {
     for (const [theme, dark, header, background] of [
         ["rusty", false, "#fffdfb", "#faf6f2"],
         ["rusty", true, "#231b17", "#100d0c"],
-        ["clean", false, "#f8fafc", "#e5ebf1"],
-        ["clean", true, "#1d2835", "#0e1621"],
+        ["clean", false, "#f4f5f7", "#e4e4e4"],
+        ["clean", true, "#23263a", "#151724"],
     ]) {
         setBrowserTheme(theme, dark);
         assert.deepEqual(metas.map(meta => meta.content), [header, header]);

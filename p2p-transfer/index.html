@@ -12,14 +12,18 @@
 
     <link data-trunk rel="copy-file" href="theme.html">
     <link data-trunk rel="copy-file" href="assets/favicon.ico">
-    <link data-trunk rel="copy-file" href="assets/oxfer-favicon.svg" data-target-path="assets">
+    <link data-trunk rel="copy-file" href="assets/oxfer-favicon-light.svg" data-target-path="assets">
+    <link data-trunk rel="copy-file" href="assets/oxfer-favicon-dark.svg" data-target-path="assets">
+    <link data-trunk rel="copy-file" href="assets/favicon.js" data-target-path="assets">
     <link data-trunk rel="copy-file" href="assets/oxfer-ox.svg" data-target-path="assets">
     <link data-trunk rel="copy-file" href="assets/oxfer-mark.svg" data-target-path="assets">
     <link data-trunk rel="copy-file" href="assets/oxfer-wordmark-light.svg" data-target-path="assets">
     <link data-trunk rel="copy-file" href="assets/oxfer-wordmark-dark.svg" data-target-path="assets">
     <link rel="alternate icon" href="favicon.ico">
-    <!-- The SVG follows the browser color scheme, independently of the app theme. -->
-    <link rel="icon" type="image/svg+xml" sizes="any" href="assets/oxfer-favicon.svg">
+    <link id="favicon" rel="icon" type="image/svg+xml" sizes="any"
+        href="assets/oxfer-favicon-light.svg"
+        data-light="assets/oxfer-favicon-light.svg" data-dark="assets/oxfer-favicon-dark.svg">
+    <script defer src="assets/favicon.js"></script>
 
 
     <link data-trunk rel="copy-file" href="assets/sw.js"/>
