@@ -3183,8 +3183,8 @@ impl P2PTransfer {
                 let dark = ui.visuals().dark_mode;
                 let logos = self.header_logos(ctx);
                 let logo = if dark { &logos.dark } else { &logos.light };
-                let height = if compact { 20.0 } else { 32.0 };
-                let max_width = if compact { 120.0 } else { 220.0 };
+                let height = if compact { 20.0 } else { 22.0 };
+                let max_width = if compact { 120.0 } else { 148.0 };
                 let width = (height * logo.aspect_ratio()).min(max_width);
                 ui.add(
                     egui::Image::from_texture(logo)

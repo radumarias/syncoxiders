@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oxfer — theme brief for designers</title>
+<style>
+  :root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #182b3c; background: #f8fafc; }
+  body { max-width: 920px; margin: 32px auto 80px; padding: 0 24px; line-height: 1.45; }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  h2 { font-size: 20px; margin: 36px 0 12px; }
+  h3 { font-size: 16px; margin: 24px 0 8px; }
+  p, li { color: #455b6d; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; background: #e5ebf1; padding: 1px 5px; border-radius: 4px; color: #182b3c; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 12px 0 20px; }
+  th, td { border: 1px solid #c9d8e3; padding: 8px 10px; text-align: left; vertical-align: middle; }
+  th { background: #e5ebf1; color: #182b3c; }
+  .swatch { width: 42px; height: 28px; border-radius: 6px; border: 1px solid #c9d8e3; display: inline-block; vertical-align: middle; margin-right: 8px; }
+  .hex { font-family: ui-monospace, Menlo, monospace; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 700px) { .pair { grid-template-columns: 1fr; } }
+  .card { border: 1px solid #c9d8e3; border-radius: 16px; padding: 16px; background: #fff; }
+  .note { background: #deebf6; border-radius: 12px; padding: 12px 16px; }
+  kbd { font-family: ui-monospace, Menlo, monospace; background: #fff; border: 1px solid #c9d8e3; border-radius: 4px; padding: 0 5px; }
+</style>
+</head>
+<body>
+<h1>Oxfer theme brief</h1>
+<p><strong>Live lab:</strong> designers should use <a href="/theme.html">/theme.html</a> (color pickers, preview, JSON/zip export). This page is the static spec behind it.</p>
+<p>Hand this to a designer proposing a new in-app theme. A theme is a named palette (like today’s <strong>Clean</strong> and <strong>Rusty</strong>) with a <strong>light</strong> and <strong>dark</strong> mode. Clean is the default.</p>
+
+<div class="note">
+  <strong>What to return:</strong> a theme name, the 13 tokens below filled in for both light and dark, a corner-radius choice, browser chrome colors, and one mock of the home screen plus one of the send/receive header. Keep token <em>names</em> — the app maps UI to these slots, not to raw hex.
+</div>
+
+<h2>Product</h2>
+<ul>
+  <li><strong>Oxfer</strong> — peer-to-peer file transfer. No cloud. Browser and desktop, same UI.</li>
+  <li>Rendered in <strong>egui</strong> (immediate-mode), not CSS. Themes are color + radius tokens, not stylesheets.</li>
+  <li>Users pick a theme (Clean / Rusty / proposed) and independently toggle light/dark.</li>
+  <li>Live app: <a href="https://oxfer.app">oxfer.app</a></li>
+</ul>
+
+<h2>Default theme — Clean</h2>
+<p>Cool blue-gray “file messenger”. Surfaces step from page background up to raised chips. Primary is the action blue; secondary is a lighter/darker sibling used for accents, copied-state, and status pills.</p>
+
+<div class="pair">
+  <div class="card">
+    <h3>Light</h3>
+    <table>
+      <tr><th>Token</th><th>Hex</th><th>Role</th></tr>
+      <tr><td>bg</td><td><span class="swatch" style="background:#e5ebf1"></span><span class="hex">#e5ebf1</span></td><td>Page / panel fill</td></tr>
+      <tr><td>surface_lowest</td><td><span class="swatch" style="background:#f5f8fb"></span><span class="hex">#f5f8fb</span></td><td>Terminal, deepest wells</td></tr>
+      <tr><td>surface_low</td><td><span class="swatch" style="background:#ffffff"></span><span class="hex">#ffffff</span></td><td>Cards, faint widget fill</td></tr>
+      <tr><td>surface</td><td><span class="swatch" style="background:#f8fafc"></span><span class="hex">#f8fafc</span></td><td>Header, idle controls, browser theme-color</td></tr>
+      <tr><td>surface_high</td><td><span class="swatch" style="background:#deebf6"></span><span class="hex">#deebf6</span></td><td>Hover, quiet pills</td></tr>
+      <tr><td>primary</td><td><span class="swatch" style="background:#2077c1"></span><span class="hex">#2077c1</span></td><td>Primary buttons, active stroke, selection</td></tr>
+      <tr><td>on_primary</td><td><span class="swatch" style="background:#ffffff;border-color:#c9d8e3"></span><span class="hex">#ffffff</span></td><td>Text on primary</td></tr>
+      <tr><td>secondary</td><td><span class="swatch" style="background:#1b6bb4"></span><span class="hex">#1b6bb4</span></td><td>Accents, copied, status pills, info control</td></tr>
+      <tr><td>on_surface</td><td><span class="swatch" style="background:#182b3c"></span><span class="hex">#182b3c</span></td><td>Default text, wordmark on light</td></tr>
+      <tr><td>on_surface_var</td><td><span class="swatch" style="background:#455b6d"></span><span class="hex">#455b6d</span></td><td>Secondary text, captions</td></tr>
+      <tr><td>outline</td><td><span class="swatch" style="background:#45627a"></span><span class="hex">#45627a</span></td><td>Outline buttons, strong strokes</td></tr>
+      <tr><td>outline_var</td><td><span class="swatch" style="background:#c9d8e3"></span><span class="hex">#c9d8e3</span></td><td>Card/header hairlines, idle widget stroke</td></tr>
+      <tr><td>error</td><td><span class="swatch" style="background:#a72c30"></span><span class="hex">#a72c30</span></td><td>Warnings, failures, link caution</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3>Dark</h3>
+    <table>
+      <tr><th>Token</th><th>Hex</th><th>Role</th></tr>
+      <tr><td>bg</td><td><span class="swatch" style="background:#0e1621"></span><span class="hex">#0e1621</span></td><td>Page / panel fill, loading screen</td></tr>
+      <tr><td>surface_lowest</td><td><span class="swatch" style="background:#0b121c"></span><span class="hex">#0b121c</span></td><td>Terminal, deepest wells</td></tr>
+      <tr><td>surface_low</td><td><span class="swatch" style="background:#17212b"></span><span class="hex">#17212b</span></td><td>Cards</td></tr>
+      <tr><td>surface</td><td><span class="swatch" style="background:#1d2835"></span><span class="hex">#1d2835</span></td><td>Header, idle controls, browser theme-color</td></tr>
+      <tr><td>surface_high</td><td><span class="swatch" style="background:#243343"></span><span class="hex">#243343</span></td><td>Hover, quiet pills</td></tr>
+      <tr><td>primary</td><td><span class="swatch" style="background:#50a2e9"></span><span class="hex">#50a2e9</span></td><td>Primary buttons, spinner, selection</td></tr>
+      <tr><td>on_primary</td><td><span class="swatch" style="background:#08192b"></span><span class="hex">#08192b</span></td><td>Text on primary</td></tr>
+      <tr><td>secondary</td><td><span class="swatch" style="background:#71c6ff"></span><span class="hex">#71c6ff</span></td><td>Accents, copied, status pills</td></tr>
+      <tr><td>on_surface</td><td><span class="swatch" style="background:#eff6fb"></span><span class="hex">#eff6fb</span></td><td>Default text, wordmark on dark</td></tr>
+      <tr><td>on_surface_var</td><td><span class="swatch" style="background:#b7c9d9"></span><span class="hex">#b7c9d9</span></td><td>Secondary text</td></tr>
+      <tr><td>outline</td><td><span class="swatch" style="background:#97b1c6"></span><span class="hex">#97b1c6</span></td><td>Outline buttons, strong strokes</td></tr>
+      <tr><td>outline_var</td><td><span class="swatch" style="background:#374b5e"></span><span class="hex">#374b5e</span></td><td>Hairlines</td></tr>
+      <tr><td>error</td><td><span class="swatch" style="background:#ffa8a7"></span><span class="hex">#ffa8a7</span></td><td>Warnings, failures</td></tr>
+    </table>
+  </div>
+</div>
+
+<h3>Derived (do not invent new slots — specify if you want different alphas)</h3>
+<ul>
+  <li>Selection fill = <code>primary</code> at <strong>24% opacity</strong> (60/255).</li>
+  <li>Accent pill fill = <code>secondary</code> at <strong>7% opacity</strong> (18/255).</li>
+  <li>Active widget stroke = <code>primary</code>; hover stroke = <code>outline</code>; idle stroke = <code>outline_var</code>.</li>
+</ul>
+
+<h3>Contrast (WCAG, current Clean)</h3>
+<table>
+  <tr><th>Pair</th><th>Light</th><th>Dark</th></tr>
+  <tr><td>on_surface on bg</td><td>12.1 : 1</td><td>16.7 : 1</td></tr>
+  <tr><td>on_surface on surface</td><td>13.9 : 1</td><td>13.7 : 1</td></tr>
+  <tr><td>on_surface_var on surface</td><td>6.8 : 1</td><td>8.8 : 1</td></tr>
+  <tr><td>on_primary on primary</td><td>4.7 : 1</td><td>6.5 : 1</td></tr>
+  <tr><td>error on surface</td><td>6.6 : 1</td><td>8.1 : 1</td></tr>
+</table>
+<p>Target at least <strong>4.5 : 1</strong> for body text and <strong>3 : 1</strong> for large/button text. Light primary-on-white is the tightest pair today.</p>
+
+<h2>Existing alternate — Rusty</h2>
+<p>Warm rust + teal. Same 13 tokens. Shown so a new theme is a sibling of Clean, not a one-off restyle of it.</p>
+<div class="pair">
+  <div class="card">
+    <h3>Rusty light</h3>
+    <table>
+      <tr><td>bg</td><td><span class="swatch" style="background:#faf6f2"></span><span class="hex">#faf6f2</span></td></tr>
+      <tr><td>surface_lowest</td><td><span class="swatch" style="background:#fffdfb"></span><span class="hex">#fffdfb</span></td></tr>
+      <tr><td>surface_low</td><td><span class="swatch" style="background:#f4ebe4"></span><span class="hex">#f4ebe4</span></td></tr>
+      <tr><td>surface</td><td><span class="swatch" style="background:#edded4"></span><span class="hex">#edded4</span></td></tr>
+      <tr><td>surface_high</td><td><span class="swatch" style="background:#e2cabb"></span><span class="hex">#e2cabb</span></td></tr>
+      <tr><td>primary</td><td><span class="swatch" style="background:#b04216"></span><span class="hex">#b04216</span></td></tr>
+      <tr><td>on_primary</td><td><span class="swatch" style="background:#fff9f5"></span><span class="hex">#fff9f5</span></td></tr>
+      <tr><td>secondary</td><td><span class="swatch" style="background:#007158"></span><span class="hex">#007158</span></td></tr>
+      <tr><td>on_surface</td><td><span class="swatch" style="background:#301c14"></span><span class="hex">#301c14</span></td></tr>
+      <tr><td>on_surface_var</td><td><span class="swatch" style="background:#5e4337"></span><span class="hex">#5e4337</span></td></tr>
+      <tr><td>outline</td><td><span class="swatch" style="background:#846352"></span><span class="hex">#846352</span></td></tr>
+      <tr><td>outline_var</td><td><span class="swatch" style="background:#d3bbad"></span><span class="hex">#d3bbad</span></td></tr>
+      <tr><td>error</td><td><span class="swatch" style="background:#b12e1e"></span><span class="hex">#b12e1e</span></td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3>Rusty dark</h3>
+    <table>
+      <tr><td>bg</td><td><span class="swatch" style="background:#100d0c"></span><span class="hex">#100d0c</span></td></tr>
+      <tr><td>surface_lowest</td><td><span class="swatch" style="background:#0a0807"></span><span class="hex">#0a0807</span></td></tr>
+      <tr><td>surface_low</td><td><span class="swatch" style="background:#1c1613"></span><span class="hex">#1c1613</span></td></tr>
+      <tr><td>surface</td><td><span class="swatch" style="background:#231b17"></span><span class="hex">#231b17</span></td></tr>
+      <tr><td>surface_high</td><td><span class="swatch" style="background:#36271f"></span><span class="hex">#36271f</span></td></tr>
+      <tr><td>primary</td><td><span class="swatch" style="background:#ef7038"></span><span class="hex">#ef7038</span></td></tr>
+      <tr><td>on_primary</td><td><span class="swatch" style="background:#220f07"></span><span class="hex">#220f07</span></td></tr>
+      <tr><td>secondary</td><td><span class="swatch" style="background:#44dab5"></span><span class="hex">#44dab5</span></td></tr>
+      <tr><td>on_surface</td><td><span class="swatch" style="background:#f7ebe2"></span><span class="hex">#f7ebe2</span></td></tr>
+      <tr><td>on_surface_var</td><td><span class="swatch" style="background:#d5beb0"></span><span class="hex">#d5beb0</span></td></tr>
+      <tr><td>outline</td><td><span class="swatch" style="background:#a88978"></span><span class="hex">#a88978</span></td></tr>
+      <tr><td>outline_var</td><td><span class="swatch" style="background:#51392e"></span><span class="hex">#51392e</span></td></tr>
+      <tr><td>error</td><td><span class="swatch" style="background:#ffb5a4"></span><span class="hex">#ffb5a4</span></td></tr>
+    </table>
+  </div>
+</div>
+
+<h2>Shape, type, space (shared unless you propose changing them)</h2>
+<table>
+  <tr><th>Token</th><th>Clean</th><th>Rusty</th></tr>
+  <tr><td>Control / primary button radius</td><td>18</td><td>10</td></tr>
+  <tr><td>Card radius</td><td>20</td><td>16</td></tr>
+  <tr><td>Outline button radius</td><td>10</td><td>10</td></tr>
+  <tr><td>Pill radius</td><td>20</td><td>20</td></tr>
+  <tr><td>Favicon / mark radius</td><td colspan="2">22% of square (224 / 1024)</td></tr>
+</table>
+<table>
+  <tr><th>Measure</th><th>Value</th></tr>
+  <tr><td>Header height</td><td>64</td></tr>
+  <tr><td>Footer / terminal bar</td><td>50</td></tr>
+  <tr><td>Min control height</td><td>44 (buttons 46)</td></tr>
+  <tr><td>Button padding</td><td>18 × 11</td></tr>
+  <tr><td>Item spacing</td><td>10</td></tr>
+  <tr><td>Card inner margin</td><td>22</td></tr>
+  <tr><td>Header/footer edge inset</td><td>16</td></tr>
+  <tr><td>Hairline</td><td>1</td></tr>
+  <tr><td>Content max width</td><td>1040</td></tr>
+  <tr><td>Compact header</td><td>width &lt; 680</td></tr>
+  <tr><td>Compact body</td><td>width &lt; 620</td></tr>
+  <tr><td>Narrow footer</td><td>width &lt; 340</td></tr>
+</table>
+<table>
+  <tr><th>Type</th><th>Size</th></tr>
+  <tr><td>Home headline</td><td>34 desktop / 26 compact</td></tr>
+  <tr><td>Section title</td><td>21</td></tr>
+  <tr><td>Card title</td><td>16–17</td></tr>
+  <tr><td>Primary button</td><td>15 strong</td></tr>
+  <tr><td>Outline button</td><td>14 strong</td></tr>
+  <tr><td>Body / supporting</td><td>13–14, on_surface_var</td></tr>
+  <tr><td>Meta, links, logs</td><td>11–12 monospace</td></tr>
+  <tr><td>Wordmark (OXFER logo)</td><td>20 compact / 22 desktop tall</td></tr>
+  <tr><td>Font</td><td>egui default proportional + monospace (loading splash uses Ubuntu Light)</td></tr>
+</table>
+
+<h2>Logo and chrome (mostly outside the theme)</h2>
+<ul>
+  <li>Wordmark is a black/white SVG pair, not recolored per theme. Light mode uses the black cut, dark mode the white cut.</li>
+  <li>Favicon OX sits on <code>surface</code> with <code>on_surface</code> letters (Clean values today).</li>
+  <li>Browser <code>theme-color</code> / body = header <code>surface</code> and page <code>bg</code>.</li>
+  <li>Loading spinner = dark primary <code>#50a2e9</code>; loading label = light primary <code>#2077c1</code>. A new theme should name replacements.</li>
+</ul>
+
+<h2>Screens to mock</h2>
+<ol>
+  <li><strong>Home</strong> — wordmark header, READY pill, Theme + Light/Dark, headline, two story cards, primary “Send files”.</li>
+  <li><strong>Send</strong> — file chips, “Copy link” primary, outline Home, warning in <code>error</code>.</li>
+  <li>Optional: receive waiting + compact (~360px) header so controls still fit.</li>
+</ol>
+
+<h2>Fill in — proposed theme</h2>
+<p>Copy this table twice (light and dark). Keep token names.</p>
+<table>
+  <tr><th>Field</th><th>Your value</th></tr>
+  <tr><td>Theme name</td><td></td></tr>
+  <tr><td>One-line intent (e.g. “cool messenger”, “warm workshop”)</td><td></td></tr>
+  <tr><td>bg</td><td></td></tr>
+  <tr><td>surface_lowest</td><td></td></tr>
+  <tr><td>surface_low</td><td></td></tr>
+  <tr><td>surface</td><td></td></tr>
+  <tr><td>surface_high</td><td></td></tr>
+  <tr><td>primary</td><td></td></tr>
+  <tr><td>on_primary</td><td></td></tr>
+  <tr><td>secondary</td><td></td></tr>
+  <tr><td>on_surface</td><td></td></tr>
+  <tr><td>on_surface_var</td><td></td></tr>
+  <tr><td>outline</td><td></td></tr>
+  <tr><td>outline_var</td><td></td></tr>
+  <tr><td>error</td><td></td></tr>
+  <tr><td>Control radius (Clean=18, Rusty=10)</td><td></td></tr>
+  <tr><td>Card radius (Clean=20, Rusty=16)</td><td></td></tr>
+  <tr><td>theme-color (header)</td><td>usually = surface</td></tr>
+  <tr><td>Loading spinner / label</td><td></td></tr>
+</table>
+<p>Also: contrast checks for on_surface vs bg/surface, on_primary vs primary, error vs surface. Flag any token you want to add rather than silently introducing a 14th color in a mock.</p>
+</body>
+</html>

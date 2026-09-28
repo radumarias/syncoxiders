@@ -3,7 +3,7 @@
   "short_name": "Oxfer",
   "icons": [
     {
-      "src": "./assets/oxfer-mark.svg",
+      "src": "./assets/oxfer-ox.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"

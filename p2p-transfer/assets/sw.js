@@ -5,7 +5,7 @@
 // cache-first shell would shadow every later `trunk serve`/`trunk build`
 // forever. See CLAUDE.md and design §4.10.1.
 const cacheName = 'oxfer-v3';
-const shellSuffixes = ['/', '/index.html', '/p2p-transfer.js', '/p2p-transfer_bg.wasm'];
+const shellSuffixes = ['/', '/index.html', '/p2p-transfer.js', '/p2p-transfer_bg.wasm', '/theme.html'];
 
 /* Take over immediately; activate() clears stale caches before this worker
    starts controlling pages. */

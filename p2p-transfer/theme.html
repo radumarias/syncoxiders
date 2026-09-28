@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oxfer theme lab</title>
+<link rel="icon" type="image/svg+xml" href="assets/oxfer-ox.svg">
+<style>
+  :root {
+    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    color: #182b3c;
+    --lab-bg: #e5ebf1;
+    --lab-card: #ffffff;
+    --lab-line: #c9d8e3;
+    --lab-muted: #455b6d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--lab-bg); }
+  header.lab-bar {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    padding: 14px 20px; background: #f8fafc; border-bottom: 1px solid var(--lab-line);
+    position: sticky; top: 0; z-index: 5;
+  }
+  header.lab-bar h1 { font-size: 18px; margin: 0 12px 0 0; }
+  header.lab-bar p { margin: 0; color: var(--lab-muted); font-size: 13px; flex: 1; min-width: 180px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  button, .file-btn {
+    font: 600 13px/1 Inter, ui-sans-serif, system-ui, sans-serif;
+    border-radius: 10px; padding: 10px 14px; cursor: pointer; border: 1px solid #45627a;
+    background: #fff; color: #182b3c;
+  }
+  button.primary { background: #2077c1; color: #fff; border-color: #2077c1; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .layout { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 0; min-height: calc(100vh - 62px); }
+  @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+  .editor { background: #f8fafc; border-right: 1px solid var(--lab-line); padding: 18px 18px 48px; overflow: auto; }
+  .preview-pane { padding: 18px; overflow: auto; }
+  label.field { display: block; font-size: 12px; font-weight: 650; margin: 12px 0 6px; }
+  input[type=text], input[type=number] {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--lab-line); border-radius: 8px; font: 14px ui-monospace, Menlo, monospace;
+  }
+  textarea { width: 100%; min-height: 56px; padding: 8px 10px; border: 1px solid var(--lab-line); border-radius: 8px; font: 14px Inter, sans-serif; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .mode-tabs { display: flex; gap: 6px; margin: 16px 0 8px; }
+  .mode-tabs button[aria-pressed=true] { background: #2077c1; color: #fff; border-color: #2077c1; }
+  .token {
+    display: grid; grid-template-columns: 1fr 36px 108px; gap: 8px; align-items: center;
+    margin: 6px 0;
+  }
+  .token span { font-size: 12px; color: var(--lab-muted); }
+  .token input[type=color] { width: 36px; height: 28px; padding: 0; border: 1px solid var(--lab-line); border-radius: 6px; background: none; }
+  .token input[type=text] { font-size: 12px; padding: 6px 8px; }
+  .hint { font-size: 12px; color: var(--lab-muted); margin: 8px 0; }
+  .contrast { font-size: 12px; margin: 4px 0; }
+  .ok { color: #1b6bb4; }
+  .bad { color: #a72c30; font-weight: 650; }
+  .preview-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .preview-toolbar button[aria-pressed=true] { background: #182b3c; color: #fff; border-color: #182b3c; }
+  .stage {
+    --bg: #e5ebf1; --surface-lowest: #f5f8fb; --surface-low: #fff; --surface: #f8fafc;
+    --surface-high: #deebf6; --primary: #2077c1; --on-primary: #fff; --secondary: #1b6bb4;
+    --on-surface: #182b3c; --on-surface-var: #455b6d; --outline: #45627a; --outline-var: #c9d8e3;
+    --error: #a72c30; --r-control: 18px; --r-card: 20px; --r-outline: 10px;
+    background: var(--bg); color: var(--on-surface); border: 1px solid var(--outline-var);
+    border-radius: 16px; overflow: hidden; max-width: 1040px;
+  }
+  .stage.compact { max-width: 390px; }
+  .app-header {
+    height: 64px; display: flex; align-items: center; gap: 8px; padding: 0 16px 0 20px;
+    background: var(--surface); border-bottom: 1px solid var(--outline-var);
+  }
+  .app-header img { height: 22px; width: auto; }
+  .stage.compact .app-header img { height: 20px; }
+  .grow { flex: 1; }
+  .pill {
+    font: 700 11px/1 ui-monospace, Menlo, monospace; letter-spacing: .02em;
+    border: 1px solid var(--secondary); color: var(--secondary);
+    background: color-mix(in srgb, var(--secondary) 7%, transparent);
+    border-radius: 20px; padding: 6px 10px; white-space: nowrap;
+  }
+  .btn {
+    font: 700 14px/1 Inter, sans-serif; min-height: 44px; padding: 11px 18px; border-radius: var(--r-outline);
+    border: 1px solid var(--outline); background: transparent; color: var(--outline); cursor: default;
+  }
+  .btn.primary {
+    background: var(--primary); color: var(--on-primary); border-color: var(--primary);
+    border-radius: var(--r-control); font-size: 15px; min-height: 46px;
+  }
+  .btn.copied { background: var(--secondary); border-color: var(--secondary); color: var(--on-primary); }
+  .body { padding: 20px; }
+  .hero, .card {
+    background: var(--surface-low); border: 1px solid var(--outline-var);
+    border-radius: var(--r-card); padding: 22px;
+  }
+  .hero h2 { margin: 12px 0 8px; font-size: 34px; line-height: 1.15; }
+  .stage.compact .hero h2 { font-size: 26px; }
+  .muted { color: var(--on-surface-var); }
+  .steps { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 16px; }
+  .stage.compact .steps { grid-template-columns: 1fr; }
+  .step { background: var(--surface-low); border: 1px solid var(--outline-var); border-radius: 16px; padding: 14px; }
+  .step h3 { margin: 0 0 6px; font-size: 16px; }
+  .file {
+    display: flex; gap: 12px; align-items: center; background: var(--surface);
+    border: 1px solid var(--outline-var); border-radius: 16px; padding: 12px;
+  }
+  .file .glyph {
+    width: 36px; height: 36px; border-radius: 18px; background: var(--surface-high);
+    color: var(--secondary); display: grid; place-items: center; font-weight: 800;
+  }
+  .warn { color: var(--error); font-size: 13px; margin-top: 12px; }
+  .linkbox {
+    font: 12px ui-monospace, Menlo, monospace; background: var(--surface-lowest);
+    border: 1px solid var(--outline-var); border-radius: 8px; padding: 10px; word-break: break-all;
+  }
+  .footer {
+    height: 50px; display: flex; align-items: center; padding: 0 16px;
+    background: var(--surface-lowest); border-top: 1px solid var(--outline-var);
+    color: var(--secondary); font: 13px ui-monospace, Menlo, monospace;
+  }
+  .status { font-size: 13px; color: var(--lab-muted); min-height: 1.2em; }
+</style>
+</head>
+<body>
+<header class="lab-bar">
+  <h1>Oxfer theme lab</h1>
+  <p>Pick colors, preview the app, export a bundle to hand back for implementation.</p>
+  <div class="actions">
+    <button type="button" id="load-clean">Start from Clean</button>
+    <button type="button" id="load-rusty">Start from Rusty</button>
+    <label class="file-btn">Import JSON<input id="import" type="file" accept=".json,application/json" hidden></label>
+    <button type="button" class="primary" id="export-json">Export JSON</button>
+    <button type="button" class="primary" id="export-zip">Export zip</button>
+  </div>
+</header>
+<div class="layout">
+  <aside class="editor">
+    <label class="field" for="name">Theme name</label>
+    <input id="name" type="text" placeholder="e.g. Forest" autocomplete="off">
+    <label class="field" for="intent">Intent</label>
+    <textarea id="intent" placeholder="One line: cool messenger, warm workshop, high-contrast night…"></textarea>
+    <label class="field" for="author">Your name (optional)</label>
+    <input id="author" type="text" autocomplete="name">
+    <div class="row">
+      <div>
+        <label class="field" for="r-control">Control radius</label>
+        <input id="r-control" type="number" min="0" max="32" value="18">
+      </div>
+      <div>
+        <label class="field" for="r-card">Card radius</label>
+        <input id="r-card" type="number" min="0" max="32" value="20">
+      </div>
+    </div>
+    <div class="mode-tabs">
+      <button type="button" id="edit-light" aria-pressed="true">Edit light</button>
+      <button type="button" id="edit-dark" aria-pressed="false">Edit dark</button>
+    </div>
+    <p class="hint">These 13 token names are the app API. Change values, not names.</p>
+    <div id="tokens"></div>
+    <h3 style="margin:20px 0 6px;font-size:14px">Contrast</h3>
+    <div id="contrast"></div>
+    <p class="status" id="status"></p>
+  </aside>
+  <main class="preview-pane">
+    <div class="preview-toolbar">
+      <button type="button" id="prev-light" aria-pressed="true">Preview light</button>
+      <button type="button" id="prev-dark" aria-pressed="false">Preview dark</button>
+      <button type="button" id="prev-home" aria-pressed="true">Home</button>
+      <button type="button" id="prev-send" aria-pressed="false">Send</button>
+      <button type="button" id="prev-wide" aria-pressed="true">Desktop</button>
+      <button type="button" id="prev-compact" aria-pressed="false">Mobile</button>
+    </div>
+    <div class="stage" id="stage"></div>
+  </main>
+</div>
+<script>
+const TOKENS = [
+  ["bg", "Page / panel"],
+  ["surface_lowest", "Terminal well"],
+  ["surface_low", "Cards"],
+  ["surface", "Header, chrome"],
+  ["surface_high", "Hover, quiet pills"],
+  ["primary", "Main buttons"],
+  ["on_primary", "Text on primary"],
+  ["secondary", "Accents, copied, status"],
+  ["on_surface", "Body text"],
+  ["on_surface_var", "Captions"],
+  ["outline", "Outline buttons"],
+  ["outline_var", "Hairlines"],
+  ["error", "Warnings"],
+];
+
+const CLEAN = {
+  light: {
+    bg: "#e5ebf1", surface_lowest: "#f5f8fb", surface_low: "#ffffff", surface: "#f8fafc",
+    surface_high: "#deebf6", primary: "#2077c1", on_primary: "#ffffff", secondary: "#1b6bb4",
+    on_surface: "#182b3c", on_surface_var: "#455b6d", outline: "#45627a", outline_var: "#c9d8e3",
+    error: "#a72c30",
+  },
+  dark: {
+    bg: "#0e1621", surface_lowest: "#0b121c", surface_low: "#17212b", surface: "#1d2835",
+    surface_high: "#243343", primary: "#50a2e9", on_primary: "#08192b", secondary: "#71c6ff",
+    on_surface: "#eff6fb", on_surface_var: "#b7c9d9", outline: "#97b1c6", outline_var: "#374b5e",
+    error: "#ffa8a7",
+  },
+  control_radius: 18, card_radius: 20,
+};
+const RUSTY = {
+  light: {
+    bg: "#faf6f2", surface_lowest: "#fffdfb", surface_low: "#f4ebe4", surface: "#edded4",
+    surface_high: "#e2cabb", primary: "#b04216", on_primary: "#fff9f5", secondary: "#007158",
+    on_surface: "#301c14", on_surface_var: "#5e4337", outline: "#846352", outline_var: "#d3bbad",
+    error: "#b12e1e",
+  },
+  dark: {
+    bg: "#100d0c", surface_lowest: "#0a0807", surface_low: "#1c1613", surface: "#231b17",
+    surface_high: "#36271f", primary: "#ef7038", on_primary: "#220f07", secondary: "#44dab5",
+    on_surface: "#f7ebe2", on_surface_var: "#d5beb0", outline: "#a88978", outline_var: "#51392e",
+    error: "#ffb5a4",
+  },
+  control_radius: 10, card_radius: 16,
+};
+
+const state = {
+  name: "",
+  intent: "",
+  author: "",
+  control_radius: 18,
+  card_radius: 20,
+  light: { ...CLEAN.light },
+  dark: { ...CLEAN.dark },
+  edit: "light",
+  previewDark: false,
+  screen: "home",
+  compact: false,
+};
+
+function hexOk(v) {
+  return /^#[0-9a-fA-F]{6}$/.test(v);
+}
+function lum(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const srgb = [n >> 16, (n >> 8) & 255, n & 255].map((c) => {
+    const x = c / 255;
+    return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
+}
+function contrast(a, b) {
+  if (!hexOk(a) || !hexOk(b)) return 0;
+  const L1 = lum(a), L2 = lum(b);
+  const hi = Math.max(L1, L2), lo = Math.min(L1, L2);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+function slug() {
+  return (state.name || "untitled").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "untitled";
+}
+
+function bundle() {
+  return {
+    format: "oxfer-theme",
+    version: 1,
+    name: state.name.trim() || "Untitled",
+    slug: slug(),
+    intent: state.intent.trim(),
+    author: state.author.trim(),
+    control_radius: Number(state.control_radius) || 18,
+    card_radius: Number(state.card_radius) || 20,
+    outline_button_radius: 10,
+    loading: {
+      spinner: state.dark.primary,
+      label: state.light.primary,
+    },
+    light: { ...state.light },
+    dark: { ...state.dark },
+  };
+}
+
+function applyPreset(preset, name) {
+  state.light = { ...preset.light };
+  state.dark = { ...preset.dark };
+  state.control_radius = preset.control_radius;
+  state.card_radius = preset.card_radius;
+  if (!state.name) state.name = name;
+  document.getElementById("name").value = state.name;
+  document.getElementById("r-control").value = state.control_radius;
+  document.getElementById("r-card").value = state.card_radius;
+  renderTokens();
+  renderAll();
+}
+
+function renderTokens() {
+  const root = document.getElementById("tokens");
+  const pal = state[state.edit];
+  root.innerHTML = TOKENS.map(([key, role]) => `
+    <div class="token" data-key="${key}">
+      <span title="${role}">${key}</span>
+      <input type="color" value="${hexOk(pal[key]) ? pal[key] : "#000000"}" aria-label="${key} picker">
+      <input type="text" value="${pal[key]}" spellcheck="false" aria-label="${key} hex">
+    </div>`).join("");
+  root.querySelectorAll(".token").forEach((row) => {
+    const key = row.dataset.key;
+    const picker = row.querySelector('input[type=color]');
+    const text = row.querySelector('input[type=text]');
+    picker.addEventListener("input", () => {
+      pal[key] = picker.value;
+      text.value = picker.value;
+      renderAll();
+    });
+    text.addEventListener("input", () => {
+      let v = text.value.trim();
+      if (v && v[0] !== "#") v = "#" + v;
+      pal[key] = v;
+      if (hexOk(v)) picker.value = v;
+      renderAll();
+    });
+  });
+}
+
+function renderContrast() {
+  const pal = state[state.edit];
+  const pairs = [
+    ["on_surface on bg", pal.on_surface, pal.bg, 4.5],
+    ["on_surface on surface", pal.on_surface, pal.surface, 4.5],
+    ["on_surface_var on surface", pal.on_surface_var, pal.surface, 4.5],
+    ["on_primary on primary", pal.on_primary, pal.primary, 3],
+    ["error on surface", pal.error, pal.surface, 4.5],
+  ];
+  document.getElementById("contrast").innerHTML = pairs.map(([label, a, b, min]) => {
+    const c = contrast(a, b);
+    const ok = c >= min;
+    return `<div class="contrast ${ok ? "ok" : "bad"}">${label}: ${c ? c.toFixed(2) : "—"} : 1 ${ok ? "" : "(need " + min + ")"}</div>`;
+  }).join("");
+}
+
+function renderPreview() {
+  const pal = state.previewDark ? state.dark : state.light;
+  const stage = document.getElementById("stage");
+  stage.classList.toggle("compact", state.compact);
+  const map = {
+    "--bg": pal.bg, "--surface-lowest": pal.surface_lowest, "--surface-low": pal.surface_low,
+    "--surface": pal.surface, "--surface-high": pal.surface_high, "--primary": pal.primary,
+    "--on-primary": pal.on_primary, "--secondary": pal.secondary, "--on-surface": pal.on_surface,
+    "--on-surface-var": pal.on_surface_var, "--outline": pal.outline, "--outline-var": pal.outline_var,
+    "--error": pal.error, "--r-control": state.control_radius + "px", "--r-card": state.card_radius + "px",
+  };
+  Object.entries(map).forEach(([k, v]) => stage.style.setProperty(k, v));
+  const mark = state.previewDark ? "assets/oxfer-wordmark-dark.svg" : "assets/oxfer-wordmark-light.svg";
+  const header = `
+    <div class="app-header">
+      <img src="${mark}" alt="Oxfer">
+      ${state.compact ? "" : '<span class="pill">READY</span>'}
+      <span class="grow"></span>
+      ${state.compact ? "" : `<button class="btn" type="button">${state.previewDark ? "Light mode" : "Dark mode"}</button>`}
+      <button class="btn" type="button">Theme</button>
+    </div>`;
+  const home = `
+    <div class="body">
+      <div class="hero">
+        <span class="pill">NO ACCOUNT NEEDED</span>
+        <h2>Send files without cloud storage.</h2>
+        <p class="muted">Pick a file, send them a link, and they save it on their device.</p>
+        <p>Your file is encrypted while it travels. Oxfer doesn't store a copy on a server or in the cloud.</p>
+        <button class="btn primary" type="button">Send files</button>
+      </div>
+      <p style="font-weight:700;font-size:21px;margin:20px 0 10px">From your device to theirs</p>
+      <div class="steps">
+        <div class="step"><h3>1. Pick a file</h3><p class="muted">Choose a photo, video, or document.</p></div>
+        <div class="step"><h3>2. Send the link</h3><p class="muted">Send it to the person you want to share with.</p></div>
+        <div class="step"><h3>3. They save it</h3><p class="muted">They open your link and choose where to save it.</p></div>
+      </div>
+    </div>`;
+  const send = `
+    <div class="body">
+      <div class="card">
+        <p style="font-weight:700;font-size:21px;margin:0 0 12px">Send a file</p>
+        <div class="file"><div class="glyph">↑</div><div><strong>holiday-reel.mp4</strong><div class="muted">248 MB</div></div></div>
+        <p class="muted" style="margin:12px 0 6px">Send this link</p>
+        <div class="linkbox">https://oxfer.app/#ticket&cap=example</div>
+        <div style="margin-top:12px"><button class="btn primary" type="button">Copy link</button></div>
+        <p class="warn">Anyone with this link can download your files while you're sharing. Send it only to people you trust.</p>
+      </div>
+    </div>`;
+  stage.innerHTML = header + (state.screen === "home" ? home : send) + `<div class="footer">▲ Terminal Output &gt;_</div>`;
+}
+
+function renderAll() {
+  renderContrast();
+  renderPreview();
+}
+
+function setPressed(id, on) {
+  document.getElementById(id).setAttribute("aria-pressed", on ? "true" : "false");
+}
+
+function download(name, blob) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function crc32(data) {
+  let c = ~0;
+  for (let i = 0; i < data.length; i++) {
+    c ^= data[i];
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+  }
+  return ~c >>> 0;
+}
+function u16(n) { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, n, true); return b; }
+function u32(n) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n, true); return b; }
+function zipStore(files) {
+  const enc = new TextEncoder();
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const file of files) {
+    const name = enc.encode(file.name);
+    const data = typeof file.data === "string" ? enc.encode(file.data) : file.data;
+    const crc = crc32(data);
+    const local = new Uint8Array(30 + name.length + data.length);
+    local.set([0x50,0x4b,0x03,0x04, 0x14,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,0x00,0x00], 0);
+    local.set(u32(crc), 14);
+    local.set(u32(data.length), 18);
+    local.set(u32(data.length), 22);
+    local.set(u16(name.length), 26);
+    local.set(name, 30);
+    local.set(data, 30 + name.length);
+    const central = new Uint8Array(46 + name.length);
+    central.set([0x50,0x4b,0x01,0x02, 0x14,0x00, 0x14,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,0x00,0x00], 0);
+    central.set(u32(crc), 16);
+    central.set(u32(data.length), 20);
+    central.set(u32(data.length), 24);
+    central.set(u16(name.length), 28);
+    central.set(u32(offset), 42);
+    central.set(name, 46);
+    locals.push(local);
+    centrals.push(central);
+    offset += local.length;
+  }
+  const cd = centrals.reduce((n, p) => n + p.length, 0);
+  const eocd = new Uint8Array(22);
+  eocd.set([0x50,0x4b,0x05,0x06], 0);
+  eocd.set(u16(files.length), 8);
+  eocd.set(u16(files.length), 10);
+  eocd.set(u32(cd), 12);
+  eocd.set(u32(offset), 16);
+  const out = new Uint8Array(offset + cd + 22);
+  let i = 0;
+  for (const p of locals) { out.set(p, i); i += p.length; }
+  for (const p of centrals) { out.set(p, i); i += p.length; }
+  out.set(eocd, i);
+  return out;
+}
+
+function applyBundle(data) {
+  if (data.format !== "oxfer-theme") throw new Error("Not an oxfer-theme file");
+  state.name = data.name || "";
+  state.intent = data.intent || "";
+  state.author = data.author || "";
+  state.control_radius = data.control_radius ?? 18;
+  state.card_radius = data.card_radius ?? 20;
+  state.light = { ...CLEAN.light, ...(data.light || {}) };
+  state.dark = { ...CLEAN.dark, ...(data.dark || {}) };
+  document.getElementById("name").value = state.name;
+  document.getElementById("intent").value = state.intent;
+  document.getElementById("author").value = state.author;
+  document.getElementById("r-control").value = state.control_radius;
+  document.getElementById("r-card").value = state.card_radius;
+  renderTokens();
+  renderAll();
+}
+
+document.getElementById("name").addEventListener("input", (e) => { state.name = e.target.value; });
+document.getElementById("intent").addEventListener("input", (e) => { state.intent = e.target.value; });
+document.getElementById("author").addEventListener("input", (e) => { state.author = e.target.value; });
+document.getElementById("r-control").addEventListener("input", (e) => { state.control_radius = e.target.value; renderAll(); });
+document.getElementById("r-card").addEventListener("input", (e) => { state.card_radius = e.target.value; renderAll(); });
+document.getElementById("edit-light").onclick = () => { state.edit = "light"; setPressed("edit-light", true); setPressed("edit-dark", false); renderTokens(); renderAll(); };
+document.getElementById("edit-dark").onclick = () => { state.edit = "dark"; setPressed("edit-light", false); setPressed("edit-dark", true); renderTokens(); renderAll(); };
+document.getElementById("prev-light").onclick = () => { state.previewDark = false; setPressed("prev-light", true); setPressed("prev-dark", false); renderAll(); };
+document.getElementById("prev-dark").onclick = () => { state.previewDark = true; setPressed("prev-light", false); setPressed("prev-dark", true); renderAll(); };
+document.getElementById("prev-home").onclick = () => { state.screen = "home"; setPressed("prev-home", true); setPressed("prev-send", false); renderAll(); };
+document.getElementById("prev-send").onclick = () => { state.screen = "send"; setPressed("prev-home", false); setPressed("prev-send", true); renderAll(); };
+document.getElementById("prev-wide").onclick = () => { state.compact = false; setPressed("prev-wide", true); setPressed("prev-compact", false); renderAll(); };
+document.getElementById("prev-compact").onclick = () => { state.compact = true; setPressed("prev-wide", false); setPressed("prev-compact", true); renderAll(); };
+document.getElementById("load-clean").onclick = () => applyPreset(CLEAN, state.name);
+document.getElementById("load-rusty").onclick = () => applyPreset(RUSTY, state.name || "Rusty");
+document.getElementById("export-json").onclick = () => {
+  const json = JSON.stringify(bundle(), null, 2);
+  download(`oxfer-theme-${slug()}.json`, new Blob([json], { type: "application/json" }));
+  document.getElementById("status").textContent = "Downloaded JSON. Send that file back to add the theme.";
+};
+document.getElementById("export-zip").onclick = () => {
+  const json = JSON.stringify(bundle(), null, 2);
+  const readme = `Oxfer theme bundle
+==================
+Theme: ${bundle().name}
+Slug: ${slug()}
+
+Give this zip (or just oxfer-theme.json) back in the Oxfer thread and ask to add the theme.
+The JSON is the source of truth; it uses format "oxfer-theme" version 1.
+`;
+  const bytes = zipStore([
+    { name: "oxfer-theme.json", data: json },
+    { name: "README.txt", data: readme },
+  ]);
+  download(`oxfer-theme-${slug()}.zip`, new Blob([bytes], { type: "application/zip" }));
+  document.getElementById("status").textContent = "Downloaded zip. Send it back to add the theme.";
+};
+document.getElementById("import").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    applyBundle(JSON.parse(await file.text()));
+    document.getElementById("status").textContent = "Imported " + file.name;
+  } catch (err) {
+    document.getElementById("status").textContent = "Import failed: " + err.message;
+  }
+  e.target.value = "";
+});
+
+renderTokens();
+renderAll();
+</script>
+</body>
+</html>
