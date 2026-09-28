@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -140 424 424">
   <title>Oxfer</title>
   <style>
-    path { fill: #1d2835; }
+    path { fill: #151724; }
     @media (prefers-color-scheme: dark) {
-      path { fill: #f8fafc; }
+      path { fill: #f5f6f8; }
     }
   </style>
   <!-- OX from the wordmark, centered on a transparent square for browser tabs. -->
