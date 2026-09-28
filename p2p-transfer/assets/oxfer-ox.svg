@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
   <title id="title">Oxfer</title>
   <style>
-    .bg { fill: #f8fafc; }
-    .ox { fill: #182b3c; }
+    .bg { fill: #f4f5f7; }
+    .ox { fill: #151724; }
     @media (prefers-color-scheme: dark) {
-      .bg { fill: #1d2835; }
-      .ox { fill: #eff6fb; }
+      .bg { fill: #151724; }
+      .ox { fill: #f5f6f8; }
     }
   </style>
   <rect class="bg" width="1024" height="1024" rx="224"/>

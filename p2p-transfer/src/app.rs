@@ -110,38 +110,38 @@ impl Tc {
     const fn clean_dark() -> Self {
         Self {
             theme: Theme::Clean,
-            bg: Color32::from_rgb(14, 22, 33), // #0e1621
-            surface_lowest: Color32::from_rgb(11, 18, 28), // #0b121c
-            surface_low: Color32::from_rgb(23, 33, 43), // #17212b
-            surface: Color32::from_rgb(29, 40, 53), // #1d2835
-            surface_high: Color32::from_rgb(36, 51, 67), // #243343
-            primary: Color32::from_rgb(80, 162, 233), // #50a2e9
-            on_primary: Color32::from_rgb(8, 25, 43), // #08192b
-            secondary: Color32::from_rgb(113, 198, 255), // #71c6ff
-            on_surface: Color32::from_rgb(239, 246, 251), // #eff6fb
-            on_surface_var: Color32::from_rgb(183, 201, 217), // #b7c9d9
-            outline: Color32::from_rgb(151, 177, 198), // #97b1c6
-            outline_var: Color32::from_rgb(55, 75, 94), // #374b5e
-            error: Color32::from_rgb(255, 168, 167), // #ffa8a7
+            bg: Color32::from_rgb(21, 23, 36), // #151724
+            surface_lowest: Color32::from_rgb(14, 16, 24), // #0e1018
+            surface_low: Color32::from_rgb(28, 31, 46), // #1c1f2e
+            surface: Color32::from_rgb(35, 38, 58), // #23263a
+            surface_high: Color32::from_rgb(46, 50, 80), // #2e3250
+            primary: Color32::from_rgb(26, 136, 254), // #1a88fe
+            on_primary: Color32::from_rgb(6, 16, 28), // #06101c
+            secondary: Color32::from_rgb(4, 242, 162), // #04f2a2
+            on_surface: Color32::from_rgb(245, 246, 248), // #f5f6f8
+            on_surface_var: Color32::from_rgb(177, 178, 184), // #b1b2b8
+            outline: Color32::from_rgb(154, 160, 176), // #9aa0b0
+            outline_var: Color32::from_rgb(58, 62, 82), // #3a3e52
+            error: Color32::from_rgb(255, 139, 154), // #ff8b9a
         }
     }
 
     const fn clean_light() -> Self {
         Self {
             theme: Theme::Clean,
-            bg: Color32::from_rgb(229, 235, 241), // #e5ebf1
-            surface_lowest: Color32::from_rgb(245, 248, 251), // #f5f8fb
+            bg: Color32::from_rgb(228, 228, 228), // #e4e4e4
+            surface_lowest: Color32::from_rgb(254, 254, 254), // #fefefe
             surface_low: Color32::from_rgb(255, 255, 255), // #ffffff
-            surface: Color32::from_rgb(248, 250, 252), // #f8fafc
-            surface_high: Color32::from_rgb(222, 235, 246), // #deebf6
-            primary: Color32::from_rgb(32, 119, 193), // #2077c1
+            surface: Color32::from_rgb(244, 245, 247), // #f4f5f7
+            surface_high: Color32::from_rgb(220, 232, 252), // #dce8fc
+            primary: Color32::from_rgb(22, 116, 216), // #1674d8
             on_primary: Color32::from_rgb(255, 255, 255), // #ffffff
-            secondary: Color32::from_rgb(27, 107, 180), // #1b6bb4
-            on_surface: Color32::from_rgb(24, 43, 60), // #182b3c
-            on_surface_var: Color32::from_rgb(69, 91, 109), // #455b6d
-            outline: Color32::from_rgb(69, 98, 122), // #45627a
-            outline_var: Color32::from_rgb(201, 216, 227), // #c9d8e3
-            error: Color32::from_rgb(167, 44, 48), // #a72c30
+            secondary: Color32::from_rgb(0, 121, 81), // #007951
+            on_surface: Color32::from_rgb(21, 23, 36), // #151724
+            on_surface_var: Color32::from_rgb(92, 96, 112), // #5c6070
+            outline: Color32::from_rgb(78, 82, 96), // #4e5260
+            outline_var: Color32::from_rgb(197, 198, 203), // #c5c6cb
+            error: Color32::from_rgb(196, 55, 74), // #c4374a
         }
     }
 
