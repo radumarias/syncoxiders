@@ -21,8 +21,13 @@ from the workspace root may select the user's stable toolchain instead.
 - `trunk serve` — browser build at `http://127.0.0.1:8080`.
 - `trunk build` — static `dist/`.
 - `bash build-web.sh` — release Trunk build plus cf Build Output packaging.
-- `npx --yes cf@1.0.0-beta.5 deploy --prebuilt` — upload the packaged Worker.
+- `npx cf deploy --prebuilt` — upload the packaged Worker (`cf` from `package.json`).
 - Pushes to `main` that touch this crate deploy via `.github/workflows/oxfer-web.yml`.
+
+Cloudflare: this crate has no Wrangler config. Use `cf` (`cf --help`,
+`cf cli search …`). Do not fall back to Wrangler. `cf deploy` without
+`--prebuilt` is for Vite/Wrangler bundling and is wrong here; Trunk output is
+packaged first. Details: [`docs/cloudflare-workers.md`](docs/cloudflare-workers.md).
 - `./check.sh` — required gate: native and wasm checks, fmt, clippy with
   `-D warnings` on both targets, tests, doctests, OPFS worker fault tests,
   real Firefox WebRTC and persistence tests, and `trunk build`. It requires

@@ -18,6 +18,17 @@ test("cloudflare.config.ts matches the packaged Worker identity", async () => {
     assert.doesNotMatch(source, /wrangler\.(jsonc?|toml)/);
 });
 
+test("the crate has no Wrangler config; Cloudflare hosting is cf-only", async () => {
+    const { readdir } = await import("node:fs/promises");
+    const names = await readdir(new URL("..", import.meta.url));
+    assert.equal(names.some(name => /^wrangler\.(jsonc?|toml)$/.test(name)), false);
+    const pkg = JSON.parse(await read("../package.json"));
+    assert.equal(pkg.devDependencies.cf, "1.0.0-beta.5");
+    assert.equal(pkg.scripts.deploy, "cf deploy --prebuilt");
+    assert.equal("wrangler" in (pkg.dependencies ?? {}), false);
+    assert.equal("wrangler" in (pkg.devDependencies ?? {}), false);
+});
+
 test("package-cf-output copies Trunk dist into an assets-only cf Build Output", async () => {
     const dir = await mkdtemp(join(tmpdir(), "oxfer-cf-"));
     try {

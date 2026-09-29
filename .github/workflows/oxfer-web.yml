@@ -27,9 +27,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: p2p-transfer/package-lock.json
+
+      - name: Install cf CLI
+        run: npm ci
 
       - name: Build browser app
-        run: bash build-web.sh
+        run: npm run build
 
       - name: Deploy with cf
         env:
@@ -42,7 +47,7 @@ jobs:
             echo "Token: Cloudflare dashboard → Account API tokens → Create token → Edit Cloudflare Workers." >&2
             exit 1
           fi
-          npx --yes cf@1.0.0-beta.5 deploy --prebuilt
+          npx cf deploy --prebuilt
 
       - name: Verify production
         run: |

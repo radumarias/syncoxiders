@@ -4,23 +4,29 @@ The browser app is an assets-only Cloudflare Worker. Trunk still builds the
 Rust/WASM client; Cloudflare only hosts the static files. File transfers stay
 peer-to-peer in the browser.
 
-`cf pages deploy` cannot upload this project: that command is for legacy Pages
-and refuses Direct Upload projects such as the previous `oxfer` Pages site.
-Use `cf deploy --prebuilt` instead.
+Use the **`cf` CLI** for this crate. There is no `wrangler.jsonc` /
+`wrangler.toml`. Do not introduce one, and do not fall back to Wrangler if a
+`cf` command fails: run `cf --help` or `cf cli search <what you want to do>`.
+
+`cf deploy` without `--prebuilt` expects a Vite or Wrangler bundle. This app is
+built with Trunk, so the production path is always: package Trunk `dist/` into
+cf's Build Output, then `cf deploy --prebuilt`.
 
 ## Local production deploy
 
 From `p2p-transfer/`:
 
 ```sh
-bash build-web.sh
-npx --yes cf@1.0.0-beta.5 deploy --prebuilt
-node verify-deployment.mjs https://oxfer.<account>.workers.dev/
+npm ci
+npm run build
+npm run deploy
+node verify-deployment.mjs https://oxfer.42dev.workers.dev/
 ```
 
-`build-web.sh` runs Trunk, then `package-cf-output.mjs` copies `dist/` into the
-cf Build Output tree at `.cloudflare/output/v0/workers/default/assets/`. That
-tree is gitignored. `--prebuilt` uploads it without invoking Vite or Wrangler.
+`npm run build` is `bash build-web.sh`: Trunk, then `package-cf-output.mjs`
+copies `dist/` into `.cloudflare/output/v0/workers/default/assets/`. That tree
+is gitignored. `npm run deploy` is `cf deploy --prebuilt` using the `cf`
+version in `package.json`.
 
 `package-cf-output.mjs` includes `oxfer.app` and `www.oxfer.app` by default so a
 later `cf deploy --prebuilt` cannot drop those custom domains. Use
@@ -63,8 +69,8 @@ node verify-deployment.mjs https://www.oxfer.app/
 ## Automatic deploys from `main`
 
 [`.github/workflows/oxfer-web.yml`](../../.github/workflows/oxfer-web.yml) runs
-`bash build-web.sh` and `npx cf@1.0.0-beta.5 deploy --prebuilt` on each push to
-`main` that touches this crate, the workspace lockfile, or the workflow itself.
+`npm ci`, `npm run build`, and `npx cf deploy --prebuilt` on each push to `main`
+that touches this crate, the workspace lockfile, or the workflow itself.
 Cloudflare Workers Builds cannot watch this repository yet: the account is not
 connected to GitHub (`This project is disconnected from your Git account`).
 
@@ -79,9 +85,11 @@ One-time GitHub Actions secrets:
 After the secrets exist, **Actions → oxfer-web → Run workflow** deploys the
 current `main` without waiting for another commit.
 
-`cf` is currently open beta; pin `cf@1.0.0-beta.5` until its Build Output format
-stabilizes.
+`cf` is currently open beta. Pin the version in `package.json` (and the npm
+lockfile) until its Build Output format stabilizes.
 
-References: [Migrate from Pages to Workers](https://developers.cloudflare.com/workers/static-assets/migration-guides/migrate-from-pages/),
-[static-asset billing](https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/),
-[cf CLI](https://blog.cloudflare.com/cloudflare-cf-cli-launch/).
+Account operations use the same CLI, for example `cf workers get oxfer` or
+`cf cli search "custom domains"`.
+
+References: [cf CLI](https://blog.cloudflare.com/cloudflare-cf-cli-launch/),
+[static-asset billing](https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/).
