@@ -61,9 +61,9 @@ We use [Trunk](https://trunkrs.dev/) to build for web target.
 
 ### Web Deploy
 
-For automatic production deployment of this browser app from `main`, follow
-the [Cloudflare Pages setup](docs/cloudflare-pages.md). Pages runs
-`bash build-pages.sh` from `p2p-transfer` and publishes `dist`.
+For production deployment of this browser app, follow the
+[Cloudflare Workers setup](docs/cloudflare-workers.md). From this directory run
+`bash build-web.sh`, then `npx --yes cf@1.0.0-beta.5 deploy --prebuilt`.
 
 For other static hosts, run `trunk build --release --locked` from this directory
 and upload `dist`. The repository's Jekyll GitHub Pages workflow deploys the

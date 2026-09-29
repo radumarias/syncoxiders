@@ -1,0 +1,16 @@
+{
+  "name": "oxfer-web",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "bash build-web.sh",
+    "deploy": "cf deploy --prebuilt",
+    "verify": "node verify-deployment.mjs"
+  },
+  "devDependencies": {
+    "cf": "1.0.0-beta.5"
+  }
+}

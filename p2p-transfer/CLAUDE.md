@@ -20,6 +20,8 @@ from the workspace root may select the user's stable toolchain instead.
 - `cargo run --release` — native desktop app.
 - `trunk serve` — browser build at `http://127.0.0.1:8080`.
 - `trunk build` — static `dist/`.
+- `bash build-web.sh` — release Trunk build plus cf Build Output packaging.
+- `npx --yes cf@1.0.0-beta.5 deploy --prebuilt` — upload the packaged Worker.
 - `./check.sh` — required gate: native and wasm checks, fmt, clippy with
   `-D warnings` on both targets, tests, doctests, OPFS worker fault tests,
   real Firefox WebRTC and persistence tests, and `trunk build`. It requires

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cloudflare Pages (Linux x86_64). Run with bash; no global Trunk install needed.
+# Cloudflare static assets (Linux x86_64). No global Trunk install needed.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -19,7 +19,7 @@ fi
 # Resolve the crate's rust-toolchain, not the workspace root's default toolchain.
 rustup target add wasm32-unknown-unknown
 
-# Use the prebuilt musl binary to avoid compiling Trunk during each Pages build.
+# Use the prebuilt musl binary to avoid compiling Trunk during each web build.
 trunk_version=0.21.14
 trunk_archive=trunk-x86_64-unknown-linux-musl.tar.gz
 trunk_sha256=a67f4054b249fe9acc5fabc25de1aebf19783aca3ad6ff64bf34d7da44d0ea20
@@ -31,12 +31,13 @@ tar -xzf "$tools/$trunk_archive" -C "$tools" trunk
 
 "$tools/trunk" build --release --locked --public-url /
 
-# Pages limits each uploaded asset to 25 MiB, including the WebAssembly binary.
+# Cloudflare limits each static asset to 25 MiB, including the WebAssembly binary.
 oversized="$(find dist -type f -size +26214400c -print)"
 if [[ -n "$oversized" ]]; then
-    printf 'Assets exceed the Cloudflare Pages 25 MiB limit:\n%s\n' "$oversized" >&2
+    printf 'Assets exceed the Cloudflare 25 MiB limit:\n%s\n' "$oversized" >&2
     exit 1
 fi
 test -s dist/index.html
 test -s dist/sw.js
 cmp assets/_headers dist/_headers
+node package-cf-output.mjs

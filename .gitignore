@@ -1,3 +1,6 @@
 target/
 Gemfile.lock
 .idea/
+node_modules/
+.cloudflare/
+.wrangler/

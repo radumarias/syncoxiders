@@ -4,6 +4,11 @@
 # trunk output folder
 dist
 
+# Cloudflare cf CLI local state
+.cloudflare/
+.wrangler/
+node_modules/
+
 # Rust compile target directories:
 target
 target_ra
