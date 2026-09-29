@@ -43,6 +43,7 @@ jobs:
             exit 1
           fi
           npx --yes cf@1.0.0-beta.5 deploy --prebuilt
+          npx --yes cf@1.0.0-beta.5 cache purge --zone oxfer.app --force --body '{"hosts":["oxfer.app","www.oxfer.app"]}'
 
       - name: Verify production
         run: |
