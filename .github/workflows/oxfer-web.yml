@@ -48,3 +48,4 @@ jobs:
         run: |
           node verify-deployment.mjs https://oxfer.42dev.workers.dev/
           node verify-deployment.mjs https://www.oxfer.app/
+          node verify-deployment.mjs https://oxfer.app/

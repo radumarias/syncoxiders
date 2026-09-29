@@ -18,6 +18,8 @@ const checks = [
     ["/assets/favicon.js", "assets/favicon.js", "javascript"],
     ["/assets/oxfer-favicon-light.svg", "assets/oxfer-favicon-light.svg", "image/svg+xml"],
     ["/assets/oxfer-favicon-dark.svg", "assets/oxfer-favicon-dark.svg", "image/svg+xml"],
+    ["/assets/oxfer-wordmark-light.svg", "assets/oxfer-wordmark-light.svg", "image/svg+xml"],
+    ["/assets/oxfer-wordmark-dark.svg", "assets/oxfer-wordmark-dark.svg", "image/svg+xml"],
 ];
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 for (const [path, file, mime] of checks) {
