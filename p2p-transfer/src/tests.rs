@@ -24,8 +24,8 @@ use crate::file_io::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::file_io::{FsSink, FsSource};
 use crate::node::{
-    n0_relays_without_trailing_dots, without_trailing_relay_dots, DiagnosticNode, Node, Peers,
-    RelayChoice, SinkPref,
+    n0_relays_without_trailing_dots, parse_relay_list, relay_probe_urls,
+    without_trailing_relay_dots, DiagnosticNode, Node, NodeError, Peers, RelayChoice, SinkPref,
 };
 use crate::protocol::{
     cap_eq, cap_from_hex, cap_to_hex, decode, encode_chunk, encode_control, max_payload,
@@ -116,6 +116,247 @@ fn local_test_old_tickets_keep_peer_and_ip_when_normalizing_relay() {
         .endpoint_addr()
         .relay_urls()
         .any(|url| { url.host_str() == Some("euc1-1.relay.n0.iroh.link.") }));
+}
+
+// ---------------------------------------------------------------------------------------
+// Relay selection (`P2P_RELAY_URL`) and diagnostics probe URLs
+// ---------------------------------------------------------------------------------------
+
+fn relay_url(url: &str) -> iroh::RelayUrl {
+    url.parse().unwrap()
+}
+
+#[test]
+fn local_test_relay_setting_unset_or_blank_selects_n0() {
+    // Native builds use the dotted n0 preset; the browser variant is covered by relay_wasm.
+    assert_eq!(RelayChoice::from_setting(None), RelayChoice::N0);
+    assert_eq!(RelayChoice::from_setting(Some("")), RelayChoice::N0);
+    assert_eq!(RelayChoice::from_setting(Some("  \t\n ")), RelayChoice::N0);
+}
+
+#[test]
+fn local_test_relay_setting_single_url() {
+    assert_eq!(
+        RelayChoice::from_setting(Some("https://relay.oxfer.app")),
+        RelayChoice::Custom(vec![relay_url("https://relay.oxfer.app")])
+    );
+    assert_eq!(
+        RelayChoice::from_setting(Some("  https://relay.oxfer.app/  ")),
+        RelayChoice::Custom(vec![relay_url("https://relay.oxfer.app")])
+    );
+}
+
+#[test]
+fn local_test_relay_setting_several_urls_with_spaces_keep_order() {
+    assert_eq!(
+        RelayChoice::from_setting(Some(
+            " https://relay.example.test ,https://relay2.example.test:8443,  http://127.0.0.1:3340 "
+        )),
+        RelayChoice::Custom(vec![
+            relay_url("https://relay.example.test"),
+            relay_url("https://relay2.example.test:8443"),
+            relay_url("http://127.0.0.1:3340"),
+        ])
+    );
+    // A repeated relay is one relay map entry, and one probe.
+    assert_eq!(
+        RelayChoice::from_setting(Some(
+            "https://relay.example.test, https://relay.example.test/"
+        )),
+        RelayChoice::Custom(vec![relay_url("https://relay.example.test")])
+    );
+}
+
+#[test]
+fn local_test_relay_setting_rejects_empty_entries() {
+    for setting in [
+        "https://relay.example.test,",
+        "https://relay.example.test, ",
+        ",https://relay.example.test",
+        "https://relay.example.test,,https://relay2.example.test",
+        ",",
+    ] {
+        assert_eq!(
+            RelayChoice::from_setting(Some(setting)),
+            RelayChoice::N0,
+            "{setting:?} must fall back to n0 as a whole"
+        );
+    }
+}
+
+#[test]
+fn local_test_relay_setting_rejects_invalid_urls() {
+    for setting in [
+        "not a url",
+        "relay.oxfer.app",
+        "https://relay.example.test, relay2.example.test",
+        "https://relay.example.test:99999",
+        "https://",
+        "wss://relay.example.test",
+        "ftp://relay.example.test",
+        "https://relay.example.test, mailto:abuse@oxfer.app",
+    ] {
+        assert_eq!(
+            RelayChoice::from_setting(Some(setting)),
+            RelayChoice::N0,
+            "{setting:?} must fall back to n0 as a whole"
+        );
+    }
+}
+
+#[test]
+fn local_test_relay_setting_warning_names_the_entry_without_echoing_it() {
+    let cases = [
+        ("https://relay.example.test, ", "entry 2 is empty"),
+        (
+            "https://relay.example.test, https://u:s3cret@relay2.example.test:99999",
+            "entry 2 is not a valid URL",
+        ),
+        (
+            "wss://u:s3cret@relay.example.test",
+            "entry 1 uses the wss scheme",
+        ),
+    ];
+    for (setting, expected) in cases {
+        let reason = parse_relay_list(setting).unwrap_err();
+        assert!(reason.starts_with(expected), "{reason}");
+        for secret in ["s3cret", "relay.example.test", "relay2"] {
+            assert!(!reason.contains(secret), "{reason} echoes {secret:?}");
+        }
+    }
+}
+
+#[test]
+fn local_test_relay_probe_urls_n0_and_none() {
+    let n0 = relay_probe_urls(&RelayChoice::N0);
+    assert_eq!(
+        n0,
+        [
+            "wss://euc1-1.relay.n0.iroh.link/relay",
+            "wss://use1-1.relay.n0.iroh.link/relay",
+            "wss://usw1-1.relay.n0.iroh.link/relay",
+            "wss://aps1-1.relay.n0.iroh.link/relay",
+            "wss://euc1-1.relay.n0.iroh.link./relay",
+        ]
+    );
+    assert_eq!(relay_probe_urls(&RelayChoice::N0WithoutTrailingDots), n0);
+    // Every production relay of the pinned iroh version is probed without its DNS dot, so an
+    // iroh upgrade that moves the relays fails here instead of probing stale hosts.
+    for host in [
+        iroh::defaults::prod::NA_EAST_RELAY_HOSTNAME,
+        iroh::defaults::prod::NA_WEST_RELAY_HOSTNAME,
+        iroh::defaults::prod::EU_RELAY_HOSTNAME,
+        iroh::defaults::prod::AP_RELAY_HOSTNAME,
+    ] {
+        let probe = format!("wss://{}/relay", host.trim_end_matches('.'));
+        assert!(n0.contains(&probe), "{probe} is not probed");
+    }
+    assert!(relay_probe_urls(&RelayChoice::None).is_empty());
+}
+
+#[test]
+fn local_test_relay_probe_urls_custom_single() {
+    let relay = RelayChoice::from_setting(Some("https://relay.oxfer.app"));
+    assert_eq!(relay_probe_urls(&relay), ["wss://relay.oxfer.app/relay"]);
+    // The scheme's default port is implied, as the WebSocket scheme shares it.
+    let relay = RelayChoice::Custom(vec![relay_url("https://relay.oxfer.app:443")]);
+    assert_eq!(relay_probe_urls(&relay), ["wss://relay.oxfer.app/relay"]);
+}
+
+#[test]
+fn local_test_relay_probe_urls_custom_multiple() {
+    let relay = RelayChoice::from_setting(Some(
+        "https://relay.example.test, https://relay2.example.test:8443, http://127.0.0.1:3340, \
+         https://[::1]:8443",
+    ));
+    assert_eq!(
+        relay_probe_urls(&relay),
+        [
+            "wss://relay.example.test/relay",
+            "wss://relay2.example.test:8443/relay",
+            "ws://127.0.0.1:3340/relay",
+            "wss://[::1]:8443/relay",
+        ]
+    );
+    // Two relay URLs that differ only in their path are one WebSocket endpoint.
+    let relay = RelayChoice::Custom(vec![
+        relay_url("https://relay.example.test/a"),
+        relay_url("https://relay.example.test/b"),
+    ]);
+    assert_eq!(relay_probe_urls(&relay), ["wss://relay.example.test/relay"]);
+}
+
+#[test]
+fn local_test_relay_probe_urls_never_carry_credentials_path_or_query() {
+    let relay = RelayChoice::from_setting(Some(
+        "https://probe-user:s3cret-token@relay.example.test:8443/private-path?auth=hunter2#frag, \
+         http://only-user@relay2.example.test/",
+    ));
+    let RelayChoice::Custom(urls) = &relay else {
+        panic!("credentials are valid URL syntax and must not reject the setting: {relay:?}");
+    };
+    assert_eq!(urls.len(), 2);
+    let probes = relay_probe_urls(&relay);
+    assert_eq!(
+        probes,
+        [
+            "wss://relay.example.test:8443/relay",
+            "ws://relay2.example.test/relay"
+        ]
+    );
+    for probe in &probes {
+        for secret in [
+            "probe-user",
+            "s3cret-token",
+            "only-user",
+            "@",
+            "private-path",
+            "auth",
+            "hunter2",
+            "frag",
+            "?",
+            "#",
+        ] {
+            assert!(!probe.contains(secret), "{probe} leaks {secret:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn local_test_empty_custom_relay_list_is_refused_before_binding() {
+    let files = Arc::new(Mutex::new(Vec::new()));
+    let node = Node::bind(files, RelayChoice::Custom(Vec::new())).await;
+    assert!(matches!(node, Err(NodeError::Relay(_))));
+    let diagnostic = DiagnosticNode::bind(RelayChoice::Custom(Vec::new())).await;
+    assert!(matches!(diagnostic, Err(NodeError::Relay(_))));
+}
+
+#[test]
+fn local_test_fragment_dev_flag_matches_parse_fragment() {
+    let ticket = test_ticket();
+    let link = Node::link("https://oxfer.app/", &ticket, &test_cap(3), true);
+    let with_ticket = link.split_once('#').unwrap().1.to_string();
+    for (fragment, dev) in [
+        ("#dev", true),
+        ("dev", true),
+        ("#dev&relay", true),
+        ("#relay&dev", true),
+        ("#sink=sw&dev&win=8", true),
+        (with_ticket.as_str(), true),
+        ("", false),
+        ("#", false),
+        ("#devx", false),
+        ("#sink=dev", false),
+        ("#relay", false),
+        ("#diagnostics", false),
+    ] {
+        assert_eq!(Node::fragment_has_dev_flag(fragment), dev, "{fragment:?}");
+        assert_eq!(
+            Node::parse_fragment(fragment).dev,
+            dev,
+            "{fragment:?} disagrees with parse_fragment"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------------

@@ -5,7 +5,7 @@
 //! engine publishes on its progress watch.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use eframe::egui;
 use egui::{Button, Color32, CornerRadius, RichText, Stroke, Ui};
@@ -52,6 +52,146 @@ const MISSING_CAP: &str = "this link is missing its access code; ask the sender 
 const CAP_REJECTED: &str =
     "this link is not valid for these files. Ask the sender for a fresh link — the old one stops \
      working when they restart sharing.";
+/// A desktop ticket carries the endpoint's direct addresses as well as its relay, so the
+/// sender is told what the link reveals besides the capability (compliance plan B5).
+#[cfg(not(target_arch = "wasm32"))]
+const NATIVE_LINK_ADDRESSES: &str =
+    "This link also contains this device's IP addresses, so the recipient can connect directly.";
+
+// ── Legal and source links ───────────────────────────────────────────────────
+
+/// The public repository this app is built from.
+const SOURCE_URL: &str = "https://github.com/radumarias/syncoxiders";
+/// From this bottom-bar width up the links are shown inline; below it they share one menu.
+const FOOTER_INLINE_LINKS_MIN_WIDTH: f32 = 760.0;
+
+/// A page every screen links to from the bottom bar (compliance plan B6).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FooterLink {
+    Privacy,
+    Terms,
+    Abuse,
+    Source,
+}
+
+impl FooterLink {
+    /// In reading order.
+    const ALL: [Self; 4] = [Self::Privacy, Self::Terms, Self::Abuse, Self::Source];
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Privacy => "Privacy",
+            Self::Terms => "Terms",
+            Self::Abuse => "Abuse & safety",
+            Self::Source => "Source",
+        }
+    }
+
+    /// Where the link goes. The web app opens the legal pages of the origin it was served
+    /// from, so a preview deployment shows its own copy; the desktop app has no origin and
+    /// opens the public site. No form carries a query or fragment, so no share state leaves
+    /// the app.
+    const fn url(self, web: bool) -> &'static str {
+        match (self, web) {
+            (Self::Privacy, true) => "/privacy",
+            (Self::Privacy, false) => "https://oxfer.app/privacy",
+            (Self::Terms, true) => "/terms",
+            (Self::Terms, false) => "https://oxfer.app/terms",
+            (Self::Abuse, true) => "/abuse",
+            (Self::Abuse, false) => "https://oxfer.app/abuse",
+            (Self::Source, _) => SOURCE_URL,
+        }
+    }
+
+    /// This build's destination.
+    const fn target_url(self) -> &'static str {
+        self.url(cfg!(target_arch = "wasm32"))
+    }
+
+    /// Open the page in a new browser tab, or in the default browser from the desktop app.
+    fn open(self, ctx: &egui::Context) {
+        ctx.open_url(egui::OpenUrl::new_tab(self.target_url()));
+    }
+}
+
+// ── Relay disclosure ─────────────────────────────────────────────────────────
+
+/// Who runs the relay this build uses, for the "Technical details" copy (plan C6).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RelayOperator {
+    /// `P2P_RELAY_URL` named relays; the deployment operates them.
+    Oxfer,
+    /// The default: n0.computer's public relays and address lookup.
+    N0,
+    /// No relay at all (LAN and tests; never produced by `RelayChoice::from_env`).
+    Disabled,
+}
+
+impl RelayOperator {
+    fn of(relay: &RelayChoice) -> Self {
+        match relay {
+            RelayChoice::Custom(..) => Self::Oxfer,
+            RelayChoice::N0 | RelayChoice::N0WithoutTrailingDots => Self::N0,
+            RelayChoice::None => Self::Disabled,
+        }
+    }
+
+    /// This build's operator. `RelayChoice::from_env` parses and may warn, and the copy is
+    /// drawn every frame, so it is resolved once.
+    fn current() -> Self {
+        static CURRENT: OnceLock<RelayOperator> = OnceLock::new();
+        *CURRENT.get_or_init(|| Self::of(&RelayChoice::from_env()))
+    }
+
+    /// Body of "Technical details" step 03.
+    const fn peer_path(self) -> &'static str {
+        match self {
+            Self::Oxfer => {
+                "An authenticated iroh connection carries signaling, then browsers prefer a \
+                 direct WebRTC DataChannel protected by DTLS. If direct ICE fails, encrypted \
+                 QUIC traffic falls back through a relay operated by Oxfer without exposing \
+                 plaintext."
+            }
+            Self::N0 => {
+                "An authenticated iroh connection carries signaling, then browsers prefer a \
+                 direct WebRTC DataChannel protected by DTLS. If direct ICE fails, encrypted \
+                 QUIC traffic falls back through n0.computer's public iroh relays without \
+                 exposing plaintext."
+            }
+            Self::Disabled => {
+                "An authenticated iroh connection carries signaling, then browsers prefer a \
+                 direct WebRTC DataChannel protected by DTLS. This build has no relay, so \
+                 peers must reach each other directly."
+            }
+        }
+    }
+
+    /// Body of the "PRIVACY BOUNDARY" panel.
+    const fn privacy_boundary(self) -> &'static str {
+        match self {
+            Self::Oxfer => {
+                "Cloudflare serves the web app shell and answers STUN requests. The relay is \
+                 operated by Oxfer. These services can observe network addresses and timing, \
+                 and the relay also sees approximate traffic volume, but none of them sees file \
+                 contents or the capability fragment. Peers that connect directly learn each \
+                 other's network address."
+            }
+            Self::N0 => {
+                "Cloudflare serves the web app shell and answers STUN requests. n0.computer \
+                 runs the public relays and address lookup this build uses. These services can \
+                 observe network addresses and timing, and a relay also sees approximate \
+                 traffic volume, but none of them sees file contents or the capability \
+                 fragment. Peers that connect directly learn each other's network address."
+            }
+            Self::Disabled => {
+                "Cloudflare serves the web app shell and answers STUN requests, so it can \
+                 observe network addresses and timing, but not file contents or the \
+                 capability fragment. This build uses no relay. Peers that connect directly \
+                 learn each other's network address."
+            }
+        }
+    }
+}
 
 // ── File-messenger theme — shared colors for desktop and browser ────────────
 
@@ -63,14 +203,115 @@ enum Theme {
     Clean,
 }
 
+// ── Browser storage ──────────────────────────────────────────────────────────
+//
+// ePrivacy Directive art. 5(3): the browser build stores only what the user asked for. Its
+// one localStorage key is `BROWSER_THEME_KEY`, written when the user picks a theme (or once,
+// to carry over a theme they picked in an older build). eframe's own browser persistence is
+// off: `App::save` writes nothing and `persist_egui_memory` is false there, so the eframe
+// `app` key and `egui_memory_ron` are never written, and start-up removes the copies older
+// builds left. Native builds keep eframe's normal on-disk settings (theme and save folder).
+
+/// The browser's only localStorage key: the theme the user picked, as `rusty` or `clean`.
 #[cfg(target_arch = "wasm32")]
 const BROWSER_THEME_KEY: &str = "oxfer.theme.v1";
+
+/// localStorage keys older browser builds wrote through eframe: its `App::save` output
+/// (`eframe::APP_KEY`, holding the theme) and egui's memory. Removed at start-up.
+#[cfg(target_arch = "wasm32")]
+const LEGACY_BROWSER_KEYS: [&str; 2] = [eframe::APP_KEY, "egui_memory_ron"];
+
+/// The part of an older browser build's eframe `App::save` output this build still reads.
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct LegacyBrowserSettings {
+    theme: Theme,
+}
+
+/// The theme an older browser build saved under `eframe::APP_KEY`, if that value exists and
+/// parses. Other fields are ignored, and a value without `theme` means the default.
+#[cfg(any(test, target_arch = "wasm32"))]
+fn legacy_browser_theme(storage: &dyn eframe::Storage) -> Option<Theme> {
+    eframe::get_value::<LegacyBrowserSettings>(storage, eframe::APP_KEY)
+        .map(|settings| settings.theme)
+}
+
+/// What start-up does to `BROWSER_THEME_KEY`.
+#[cfg(any(test, target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ThemeKeyChange {
+    Leave,
+    Write(Theme),
+    Remove,
+}
+
+/// Decide the browser's start-up theme and what happens to its key.
+///
+/// - `stored`: the raw `BROWSER_THEME_KEY` value.
+/// - `legacy_theme`: the theme in an older build's eframe `app` value (see
+///   [`legacy_browser_theme`]).
+/// - `legacy_present`: whether any of `LEGACY_BROWSER_KEYS` exists.
+///
+/// Older builds saved their settings periodically whether or not the user chose anything,
+/// and the build before this one also wrote the theme key on every start. So a stored
+/// default theme cannot be told apart from no choice, while a non-default one was picked.
+/// Only a picked theme is carried over, and a default-valued theme key found next to legacy
+/// data is removed. Either way the user sees the same theme as before.
+#[cfg(any(test, target_arch = "wasm32"))]
+fn browser_theme_start(
+    stored: Option<&str>,
+    legacy_theme: Option<Theme>,
+    legacy_present: bool,
+) -> (Theme, ThemeKeyChange) {
+    match stored.and_then(Theme::from_storage_value) {
+        Some(theme) if legacy_present && theme == Theme::default() => {
+            (theme, ThemeKeyChange::Remove)
+        }
+        Some(theme) => (theme, ThemeKeyChange::Leave),
+        None => match legacy_theme {
+            Some(theme) if theme != Theme::default() => (theme, ThemeKeyChange::Write(theme)),
+            _ => (Theme::default(), ThemeKeyChange::Leave),
+        },
+    }
+}
+
+/// Start-up theme for the browser build: apply [`browser_theme_start`] to localStorage, then
+/// remove the legacy eframe keys. Missing or refused storage (private browsing, blocked site
+/// data) reads as empty, so nothing is written or removed and the default theme applies.
+/// Failed writes and removals are logged by eframe, never raised.
+#[cfg(target_arch = "wasm32")]
+fn restore_browser_theme(storage: Option<&dyn eframe::Storage>) -> Theme {
+    use eframe::web::storage::{local_storage_get, local_storage_remove, local_storage_set};
+
+    let legacy: Vec<&str> = LEGACY_BROWSER_KEYS
+        .into_iter()
+        .filter(|key| local_storage_get(key).is_some())
+        .collect();
+    let stored = local_storage_get(BROWSER_THEME_KEY);
+    let (theme, change) = browser_theme_start(
+        stored.as_deref(),
+        storage.and_then(legacy_browser_theme),
+        !legacy.is_empty(),
+    );
+    match change {
+        ThemeKeyChange::Leave => {}
+        ThemeKeyChange::Write(theme) => {
+            local_storage_set(BROWSER_THEME_KEY, theme.storage_value());
+        }
+        ThemeKeyChange::Remove => local_storage_remove(BROWSER_THEME_KEY),
+    }
+    for key in legacy {
+        local_storage_remove(key);
+    }
+    theme
+}
 
 // Keep header and footer controls clear of the shared content column's edges.
 const CONTROL_EDGE_INSET: f32 = 16.0;
 
 impl Theme {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(test, target_arch = "wasm32"))]
     const fn storage_value(self) -> &'static str {
         match self {
             Self::Rusty => "rusty",
@@ -385,7 +626,8 @@ pub struct P2PTransfer {
     #[cfg(not(target_arch = "wasm32"))]
     save_directory: Option<std::path::PathBuf>,
 
-    /// Native app setting and browser backup. The browser's immediate theme key wins on reload.
+    /// Native: saved by eframe with `save_directory`. Browser: only in `BROWSER_THEME_KEY`,
+    /// written when the user picks a theme; eframe saves nothing there.
     theme: Theme,
     #[serde(skip)]
     mode: Mode,
@@ -528,25 +770,21 @@ impl P2PTransfer {
         #[cfg(target_arch = "wasm32")]
         cc.egui_ctx
             .options_mut(|options| options.sync_window_theme = false);
+        // Native: eframe's saved settings. The browser saves none (see `BROWSER_THEME_KEY`).
+        #[cfg(not(target_arch = "wasm32"))]
         let mut app: Self = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, eframe::APP_KEY))
             .unwrap_or_default();
+        #[cfg(target_arch = "wasm32")]
+        let mut app = Self {
+            theme: restore_browser_theme(cc.storage),
+            ..Self::default()
+        };
         app.repaint = cc.egui_ctx.clone();
         #[cfg(target_arch = "wasm32")]
         {
             use wasm_bindgen::JsCast as _;
-
-            // eframe saves app settings periodically. A theme tap must survive even if
-            // mobile Safari kills this page before that next checkpoint.
-            if let Some(theme) = eframe::web::storage::local_storage_get(BROWSER_THEME_KEY)
-                .as_deref()
-                .and_then(Theme::from_storage_value)
-            {
-                app.theme = theme;
-            }
-            // Migrate any earlier eframe-saved choice into the immediate key.
-            eframe::web::storage::local_storage_set(BROWSER_THEME_KEY, app.theme.storage_value());
 
             let ctx = cc.egui_ctx.clone();
             let closure =
@@ -1766,8 +2004,101 @@ fn outline_button(label: &str, color: Color32) -> Button<'static> {
     .min_size(egui::vec2(0.0, 46.0))
 }
 
+/// Width of a bottom-bar button: "Diags" and "Legal" share the bar with the terminal toggle.
+const fn bar_button_width(narrow: bool) -> f32 {
+    if narrow {
+        60.0
+    } else {
+        72.0
+    }
+}
+
+/// An outline button sized for the 50px bottom bar, which fits nothing taller than 44px.
+fn bar_button(label: &str, tc: &Tc) -> Button<'static> {
+    outline_button(label, tc.outline).min_size(egui::vec2(0.0, 44.0))
+}
+
 fn compact(ui: &Ui) -> bool {
     ui.available_width() < 620.0
+}
+
+/// Privacy, Terms, Abuse & safety and Source, for a right-to-left bottom-bar layout: inline
+/// buttons when there is room, otherwise one "Legal" menu that opens upwards.
+fn show_footer_links(ui: &mut Ui, tc: &Tc, inline: bool, menu_width: f32) {
+    if inline {
+        ui.scope(|ui| {
+            ui.spacing_mut().button_padding = egui::vec2(8.0, 6.0);
+            ui.spacing_mut().item_spacing.x = 4.0;
+            // Right to left: add the last link first so they read in order.
+            for link in FooterLink::ALL.into_iter().rev() {
+                let response = ui
+                    .add(
+                        Button::new(
+                            RichText::new(link.label())
+                                .color(tc.on_surface_var)
+                                .size(13.0),
+                        )
+                        .fill(Color32::TRANSPARENT)
+                        .frame_when_inactive(false),
+                    )
+                    .on_hover_text(link.target_url());
+                if response.clicked() {
+                    link.open(ui.ctx());
+                }
+            }
+        });
+        return;
+    }
+    let menu = ui.add_sized([menu_width, 44.0], bar_button("Legal", tc));
+    egui::Popup::menu(&menu)
+        .align(egui::RectAlign::TOP_END)
+        .show(|ui| {
+            for link in FooterLink::ALL {
+                if ui
+                    .button(link.label())
+                    .on_hover_text(link.target_url())
+                    .clicked()
+                {
+                    link.open(ui.ctx());
+                    ui.close();
+                }
+            }
+        });
+}
+
+/// The visible text of the receive screens' reporting link.
+const REPORT_ABUSE_LABEL: &str = "Report abuse";
+
+/// A reporting link wherever received files are listed, so reporting is easy to find at the
+/// moment a recipient sees what they were sent (Ofcom ICU D1/D2). It opens the Abuse & safety
+/// page exactly as the bottom bar does and carries nothing about the transfer: no share link,
+/// capability or file name.
+fn show_report_abuse(ui: &mut Ui, tc: &Tc) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            RichText::new("Received something illegal or harmful?")
+                .color(tc.on_surface_var)
+                .size(12.0),
+        );
+        // For the link only (this row has its own `Ui`, and the prompt is already laid out).
+        // egui gives a selectable link the Label role, so screen readers would not announce
+        // it as a link. Unwrapped, it moves whole to the next row on a narrow screen.
+        ui.style_mut().interaction.selectable_labels = false;
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        let link = FooterLink::Abuse;
+        if ui
+            .add(egui::Link::new(
+                RichText::new(REPORT_ABUSE_LABEL)
+                    .color(tc.primary)
+                    .underline()
+                    .size(13.0),
+            ))
+            .on_hover_text(link.target_url())
+            .clicked()
+        {
+            link.open(ui.ctx());
+        }
+    });
 }
 
 fn pill(ui: &mut Ui, tc: &Tc, text: &str, accent: bool) {
@@ -1937,12 +2268,14 @@ fn process_step(ui: &mut Ui, tc: &Tc, number: &str, title: &str, body: &str) {
 }
 
 fn show_how_it_works(ui: &mut Ui, tc: &Tc) {
-    const STEPS: [(&str, &str, &str); 4] = [
+    // The relay sentences depend on which relays this build was compiled for (plan C6).
+    let relay = RelayOperator::current();
+    let steps: [(&str, &str, &str); 4] = [
         (
             "01",
             "Hash on your device",
             "Oxfer reads the selected file in bounded slices and computes its BLAKE3 digest locally. \
-             The file is not uploaded to Cloudflare, an Oxfer server, or cloud storage.",
+             The file is not stored on Cloudflare, an Oxfer server, or cloud storage.",
         ),
         (
             "02",
@@ -1951,13 +2284,7 @@ fn show_how_it_works(ui: &mut Ui, tc: &Tc) {
              are not sent to the web host, but anyone holding the complete link can receive while \
              the sender keeps sharing.",
         ),
-        (
-            "03",
-            "Open an encrypted peer path",
-            "An authenticated iroh connection carries signaling, then browsers prefer a direct \
-             WebRTC DataChannel protected by DTLS. If direct ICE fails, encrypted QUIC traffic \
-             falls back through the iroh relay without exposing plaintext.",
-        ),
+        ("03", "Open an encrypted peer path", relay.peer_path()),
         (
             "04",
             "Stream, save, and verify",
@@ -1998,12 +2325,12 @@ fn show_how_it_works(ui: &mut Ui, tc: &Tc) {
                 ui.add_space(16.0);
 
                 if compact {
-                    for (number, title, body) in STEPS {
+                    for (number, title, body) in steps {
                         process_step(ui, tc, number, title, body);
                         ui.add_space(10.0);
                     }
                 } else {
-                    for pair in STEPS.chunks(2) {
+                    for pair in steps.chunks(2) {
                         ui.columns(2, |cols| {
                             for (column, (number, title, body)) in pair.iter().enumerate() {
                                 process_step(&mut cols[column], tc, number, title, body);
@@ -2032,15 +2359,9 @@ fn show_how_it_works(ui: &mut Ui, tc: &Tc) {
                         ui.add_space(6.0);
                         ui.add(
                             egui::Label::new(
-                                RichText::new(
-                                    "Cloudflare serves only the app shell. STUN and relay \
-                                     infrastructure can observe network addresses, timing, and \
-                                     approximate traffic volume, but not file contents or the \
-                                     capability fragment. Direct peers may learn each other's \
-                                     network address through ICE.",
-                                )
-                                .color(tc.on_surface_var)
-                                .size(13.0),
+                                RichText::new(relay.privacy_boundary())
+                                    .color(tc.on_surface_var)
+                                    .size(13.0),
                             )
                             .wrap(),
                         );
@@ -2441,6 +2762,18 @@ impl P2PTransfer {
                                 .selectable(true),
                             );
                         });
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        ui.add_space(6.0);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(NATIVE_LINK_ADDRESSES)
+                                    .color(tc.on_surface_var)
+                                    .size(12.0),
+                            )
+                            .wrap(),
+                        );
+                    }
                     ui.add_space(8.0);
                     if compact {
                         let width = ui.available_width();
@@ -2839,6 +3172,7 @@ impl P2PTransfer {
                             ui.add_space(6.0);
                         }
                     }
+                    show_report_abuse(ui, &tc);
                     ui.add_space(12.0);
                     ui.label("Oxfer checks the file after it's saved.");
                     #[cfg(target_arch = "wasm32")]
@@ -3065,6 +3399,10 @@ impl P2PTransfer {
                     });
                 });
             }
+            if !entries.is_empty() {
+                ui.separator();
+                show_report_abuse(ui, &tc);
+            }
             if let Some(error) = &error {
                 ui.label(RichText::new(error).color(tc.error).size(13.0));
             }
@@ -3156,6 +3494,8 @@ impl P2PTransfer {
                 }
                 pill(ui, &tc, Self::transfer_path_text(f.path), true);
             }
+            ui.add_space(10.0);
+            show_report_abuse(ui, &tc);
         });
     }
 
@@ -3253,6 +3593,8 @@ impl P2PTransfer {
                         .selectable_value(&mut self.theme, Theme::Clean, "Clean")
                         .clicked();
                     if rusty || clean {
+                        // The user's own choice: the only write the browser build makes
+                        // (ePrivacy art. 5(3)). Written now, as eframe saves nothing there.
                         #[cfg(target_arch = "wasm32")]
                         eframe::web::storage::local_storage_set(
                             BROWSER_THEME_KEY,
@@ -3347,6 +3689,7 @@ impl P2PTransfer {
     fn show_terminal(&mut self, ui: &mut Ui, tc: &Tc) {
         let compact = ui.available_width() < 620.0;
         let narrow_controls = ui.available_width() < 340.0;
+        let inline_links = ui.available_width() >= FOOTER_INLINE_LINKS_MIN_WIDTH;
         ui.horizontal(|ui| {
             ui.set_height(50.0);
             ui.add_space(CONTROL_EDGE_INSET);
@@ -3375,18 +3718,26 @@ impl P2PTransfer {
                 self.show_terminal_view = !self.show_terminal_view;
             }
             ui.add_space(12.0);
-            #[cfg(target_arch = "wasm32")]
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(CONTROL_EDGE_INSET);
-                let diagnostics = ui
-                    .add_enabled_ui(!self.is_preparing_share(), |ui| {
-                        ui.add_sized([72.0, 44.0], outline_button("Diags", tc.outline))
-                    })
-                    .inner
-                    .on_disabled_hover_text("Wait for files to finish preparing");
-                if diagnostics.clicked() {
-                    self.open_diagnostics();
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let diagnostics = ui
+                        .add_enabled_ui(!self.is_preparing_share(), |ui| {
+                            ui.add_sized(
+                                [bar_button_width(narrow_controls), 44.0],
+                                bar_button("Diags", tc),
+                            )
+                        })
+                        .inner
+                        .on_disabled_hover_text("Wait for files to finish preparing");
+                    if diagnostics.clicked() {
+                        self.open_diagnostics();
+                    }
                 }
+                // Every screen keeps this bar, so the legal and source links are always
+                // one tap away (compliance plan B6).
+                show_footer_links(ui, tc, inline_links, bar_button_width(narrow_controls));
                 if !compact && !self.show_terminal_view {
                     ui.add_space(12.0);
                     if let Ok(logs) = logging::terminal_buffer().lock() {
@@ -3403,16 +3754,6 @@ impl P2PTransfer {
                     }
                 }
             });
-            #[cfg(not(target_arch = "wasm32"))]
-            if !compact && !self.show_terminal_view {
-                if let Ok(logs) = logging::terminal_buffer().lock() {
-                    let msg = logs
-                        .back()
-                        .cloned()
-                        .unwrap_or_else(|| "No logs yet…".into());
-                    ui.label(RichText::new(msg).color(tc.outline).monospace().size(12.0));
-                }
-            }
         });
 
         if self.show_terminal_view {
@@ -3460,8 +3801,22 @@ impl P2PTransfer {
 // ── eframe glue ──────────────────────────────────────────────────────────────
 
 impl eframe::App for P2PTransfer {
+    /// Native: the theme and save folder, in eframe's settings file.
+    #[cfg(not(target_arch = "wasm32"))]
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
+    }
+
+    /// Browser: nothing. eframe's storage there is localStorage, and under ePrivacy art. 5(3)
+    /// the browser build stores only what the user asked for: the theme key, written when
+    /// they pick one (see `BROWSER_THEME_KEY`).
+    #[cfg(target_arch = "wasm32")]
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {}
+
+    /// Native keeps eframe's default (window and widget state on disk). The browser would
+    /// write `egui_memory_ron` to localStorage, which the user never asked for.
+    fn persist_egui_memory(&self) -> bool {
+        cfg!(not(target_arch = "wasm32"))
     }
 
     /// Non-drawing per-frame work. Runs before `ui`, and may show nothing itself.
@@ -3614,24 +3969,133 @@ mod tests {
         }
     }
 
+    /// eframe settings held in memory: the browser's localStorage or the native file.
+    #[derive(Default)]
+    struct TestStorage(std::collections::HashMap<String, String>);
+
+    impl eframe::Storage for TestStorage {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_owned(), value);
+        }
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
+        fn flush(&mut self) {}
+    }
+
+    #[test]
+    fn local_test_browser_theme_key_is_written_only_for_a_picked_theme() {
+        use ThemeKeyChange::{Leave, Remove, Write};
+        let default = Theme::default();
+        assert_eq!(default, Theme::Clean);
+        for (stored, legacy_theme, legacy_present, expected) in [
+            // A first visit stores nothing.
+            (None, None, false, (default, Leave)),
+            // A theme the user picked in this build is used as is.
+            (Some("rusty"), None, false, (Theme::Rusty, Leave)),
+            (Some("clean"), None, false, (Theme::Clean, Leave)),
+            // A pick from an older build wins over its periodically saved settings.
+            (
+                Some("rusty"),
+                Some(Theme::Clean),
+                true,
+                (Theme::Rusty, Leave),
+            ),
+            // The build before this one wrote the key on every start, so a default value
+            // next to legacy data may not be a choice: drop it (same theme either way).
+            (
+                Some("clean"),
+                Some(Theme::Rusty),
+                true,
+                (Theme::Clean, Remove),
+            ),
+            (Some("clean"), None, true, (Theme::Clean, Remove)),
+            // Only a non-default legacy theme was certainly picked, so only that migrates.
+            (
+                None,
+                Some(Theme::Rusty),
+                true,
+                (Theme::Rusty, Write(Theme::Rusty)),
+            ),
+            (None, Some(Theme::Clean), true, (default, Leave)),
+            // egui memory alone, or unreadable app settings, carry no theme.
+            (None, None, true, (default, Leave)),
+            // An unknown value is ignored, not deleted.
+            (Some("neon"), None, false, (default, Leave)),
+            (
+                Some("neon"),
+                Some(Theme::Rusty),
+                true,
+                (Theme::Rusty, Write(Theme::Rusty)),
+            ),
+        ] {
+            assert_eq!(
+                browser_theme_start(stored, legacy_theme, legacy_present),
+                expected,
+                "stored={stored:?} legacy={legacy_theme:?} present={legacy_present}"
+            );
+        }
+        for theme in [Theme::Rusty, Theme::Clean] {
+            assert_eq!(
+                Theme::from_storage_value(theme.storage_value()),
+                Some(theme)
+            );
+        }
+    }
+
+    #[test]
+    fn local_test_legacy_browser_theme_reads_old_eframe_settings() {
+        let mut storage = TestStorage::default();
+        assert_eq!(legacy_browser_theme(&storage), None);
+        for (saved, expected) in [
+            // What older browser builds wrote: the wasm struct had only `theme`.
+            ("(theme:Rusty)", Some(Theme::Rusty)),
+            ("(theme:Clean)", Some(Theme::Clean)),
+            // Settings from before themes existed mean the default.
+            ("()", Some(Theme::Clean)),
+            // Fields this build no longer knows are ignored.
+            (
+                r#"(save_directory:Some("/tmp/x"),theme:Rusty)"#,
+                Some(Theme::Rusty),
+            ),
+            ("not ron", None),
+            ("(theme:Neon)", None),
+        ] {
+            eframe::Storage::set_string(&mut storage, eframe::APP_KEY, saved.to_owned());
+            assert_eq!(legacy_browser_theme(&storage), expected, "{saved}");
+        }
+        // A value eframe itself wrote for this app reads back.
+        let app = P2PTransfer {
+            theme: Theme::Rusty,
+            ..P2PTransfer::default()
+        };
+        eframe::set_value(&mut storage, eframe::APP_KEY, &app);
+        assert_eq!(legacy_browser_theme(&storage), Some(Theme::Rusty));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn local_test_native_keeps_eframe_persistence() {
+        let mut app = P2PTransfer {
+            theme: Theme::Rusty,
+            save_directory: Some(std::path::PathBuf::from("/tmp/oxfer-receives")),
+            ..P2PTransfer::default()
+        };
+        assert!(eframe::App::persist_egui_memory(&app));
+        let mut storage = TestStorage::default();
+        eframe::App::save(&mut app, &mut storage);
+        let restored: P2PTransfer = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
+        assert_eq!(restored.theme, Theme::Rusty);
+        assert_eq!(restored.save_directory, app.save_directory);
+        assert_eq!(storage.0.len(), 1, "{:?}", storage.0.keys());
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn local_test_theme_storage_restores_old_settings_and_new_choice() {
-        #[derive(Default)]
-        struct TestStorage(std::collections::HashMap<String, String>);
-        impl eframe::Storage for TestStorage {
-            fn get_string(&self, key: &str) -> Option<String> {
-                self.0.get(key).cloned()
-            }
-            fn set_string(&mut self, key: &str, value: String) {
-                self.0.insert(key.to_owned(), value);
-            }
-            fn remove_string(&mut self, key: &str) {
-                self.0.remove(key);
-            }
-            fn flush(&mut self) {}
-        }
-
         let mut storage = TestStorage::default();
         eframe::Storage::set_string(
             &mut storage,
@@ -4016,5 +4480,705 @@ mod tests {
         assert!(new_pending.load(Ordering::Acquire));
         drop(new_attempt);
         assert!(!new_pending.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn local_test_footer_links_open_legal_pages_and_source() {
+        let expected = [
+            (FooterLink::Privacy, "/privacy", "https://oxfer.app/privacy"),
+            (FooterLink::Terms, "/terms", "https://oxfer.app/terms"),
+            (FooterLink::Abuse, "/abuse", "https://oxfer.app/abuse"),
+            (
+                FooterLink::Source,
+                "https://github.com/radumarias/syncoxiders",
+                "https://github.com/radumarias/syncoxiders",
+            ),
+        ];
+        assert_eq!(
+            FooterLink::ALL.to_vec(),
+            expected.iter().map(|(link, ..)| *link).collect::<Vec<_>>()
+        );
+        for (link, web, native) in expected {
+            assert_eq!(link.url(true), web, "{link:?} on the web");
+            assert_eq!(link.url(false), native, "{link:?} in the desktop app");
+            for url in [link.url(true), link.url(false)] {
+                assert!(
+                    !url.contains('#') && !url.contains('?'),
+                    "{link:?} must not carry share state: {url}"
+                );
+            }
+        }
+        // The web app stays on the origin that served it; the desktop app has none.
+        for link in [FooterLink::Privacy, FooterLink::Terms, FooterLink::Abuse] {
+            assert!(link.url(true).starts_with('/') && !link.url(true).starts_with("//"));
+            assert_eq!(
+                link.url(false),
+                format!("https://oxfer.app{}", link.url(true))
+            );
+        }
+        assert_eq!(
+            FooterLink::Privacy.target_url(),
+            FooterLink::Privacy.url(cfg!(target_arch = "wasm32"))
+        );
+        let labels: Vec<&str> = FooterLink::ALL.iter().map(|link| link.label()).collect();
+        assert_eq!(labels, ["Privacy", "Terms", "Abuse & safety", "Source"]);
+    }
+
+    /// WCAG 2 contrast ratio of two opaque colours.
+    fn contrast_ratio(a: Color32, b: Color32) -> f32 {
+        fn luminance(color: Color32) -> f32 {
+            let channel = |value: u8| {
+                let value = f32::from(value) / 255.0;
+                if value <= 0.040_45 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
+        }
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[test]
+    fn local_test_footer_links_are_readable_in_every_theme() {
+        for theme in [Theme::Rusty, Theme::Clean] {
+            for dark in [false, true] {
+                let tc = Tc::of(theme, dark);
+                // Inline links and the "Legal" menu button sit on the bottom bar's fill.
+                for (what, color) in [("link", tc.on_surface_var), ("menu", tc.outline)] {
+                    let ratio = contrast_ratio(color, tc.surface_lowest);
+                    assert!(
+                        ratio >= 4.5,
+                        "{theme:?} dark={dark} {what} contrast {ratio:.2} is below WCAG AA"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn local_test_relay_copy_names_who_runs_the_relay() {
+        let custom = |urls: &[&str]| {
+            RelayChoice::Custom(
+                urls.iter()
+                    .map(|url| url.parse::<iroh::RelayUrl>().unwrap())
+                    .collect(),
+            )
+        };
+        for relay in [
+            custom(&["https://relay.example.test"]),
+            custom(&[
+                "https://relay.example.test",
+                "https://relay2.example.test:8443",
+            ]),
+            RelayChoice::from_setting(Some("https://relay.example.test")),
+        ] {
+            assert_eq!(RelayOperator::of(&relay), RelayOperator::Oxfer, "{relay:?}");
+        }
+        for relay in [
+            RelayChoice::N0,
+            RelayChoice::N0WithoutTrailingDots,
+            RelayChoice::from_setting(None),
+            RelayChoice::from_setting(Some("  ")),
+        ] {
+            assert_eq!(RelayOperator::of(&relay), RelayOperator::N0, "{relay:?}");
+        }
+        assert_eq!(
+            RelayOperator::of(&RelayChoice::None),
+            RelayOperator::Disabled
+        );
+        assert_eq!(
+            RelayOperator::current(),
+            RelayOperator::of(&RelayChoice::from_env())
+        );
+
+        for operator in [
+            RelayOperator::Oxfer,
+            RelayOperator::N0,
+            RelayOperator::Disabled,
+        ] {
+            let boundary = operator.privacy_boundary();
+            assert!(
+                boundary
+                    .starts_with("Cloudflare serves the web app shell and answers STUN requests"),
+                "{operator:?}: {boundary}"
+            );
+            assert!(boundary.contains("capability fragment"), "{operator:?}");
+            assert!(operator.peer_path().contains("DTLS"), "{operator:?}");
+        }
+        let oxfer = [
+            RelayOperator::Oxfer.peer_path(),
+            RelayOperator::Oxfer.privacy_boundary(),
+        ];
+        for text in oxfer {
+            assert!(text.contains("operated by Oxfer"), "{text}");
+            assert!(
+                !text.contains("n0"),
+                "a custom relay build must not credit n0: {text}"
+            );
+        }
+        for text in [
+            RelayOperator::N0.peer_path(),
+            RelayOperator::N0.privacy_boundary(),
+        ] {
+            assert!(text.contains("n0.computer"), "{text}");
+            assert!(
+                !text.contains("Oxfer"),
+                "n0's relays are not Oxfer's: {text}"
+            );
+        }
+        for text in [
+            RelayOperator::Disabled.peer_path(),
+            RelayOperator::Disabled.privacy_boundary(),
+        ] {
+            assert!(text.contains("no relay"), "{text}");
+            assert!(!text.contains("n0") && !text.contains("operated by Oxfer"));
+        }
+    }
+
+    /// Drives the whole app UI headlessly, frame by frame, reading widgets back from the
+    /// accessibility tree the way a screen reader or a tester's pointer would find them.
+    #[cfg(not(target_arch = "wasm32"))]
+    struct UiHarness {
+        ctx: egui::Context,
+        app: P2PTransfer,
+        frame: eframe::Frame,
+        size: egui::Vec2,
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[derive(Debug)]
+    struct Widget {
+        role: egui::accesskit::Role,
+        text: String,
+        rect: egui::Rect,
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl UiHarness {
+        fn new(app: P2PTransfer, width: f32, dark: bool) -> Self {
+            Self::sharing(&egui::Context::default(), app, width, dark)
+        }
+
+        /// A harness on an existing context, which keeps its fonts: building them dominates
+        /// a short test.
+        fn sharing(ctx: &egui::Context, app: P2PTransfer, width: f32, dark: bool) -> Self {
+            let ctx = ctx.clone();
+            ctx.enable_accesskit();
+            ctx.set_visuals(if dark {
+                egui::Visuals::dark()
+            } else {
+                egui::Visuals::light()
+            });
+            Self {
+                ctx,
+                app,
+                frame: eframe::Frame::_new_kittest(),
+                size: egui::vec2(width, 640.0),
+            }
+        }
+
+        /// Run one frame; return its widgets and the URLs it asked the platform to open.
+        fn step(&mut self, events: Vec<egui::Event>) -> (Vec<Widget>, Vec<egui::OpenUrl>) {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, self.size)),
+                events,
+                ..Default::default()
+            };
+            let (app, frame) = (&mut self.app, &mut self.frame);
+            let mut output = self.ctx.run_ui(input, |ui| eframe::App::ui(app, ui, frame));
+            let widgets = output
+                .platform_output
+                .accesskit_update
+                .take()
+                .expect("accesskit is enabled")
+                .nodes
+                .into_iter()
+                .filter_map(|(_, node)| {
+                    let text = node.label().or(node.value())?.to_owned();
+                    let bounds = node.bounds()?;
+                    Some(Widget {
+                        role: node.role(),
+                        text,
+                        rect: egui::Rect::from_min_max(
+                            egui::pos2(bounds.x0 as f32, bounds.y0 as f32),
+                            egui::pos2(bounds.x1 as f32, bounds.y1 as f32),
+                        ),
+                    })
+                })
+                .collect();
+            let opened = output
+                .platform_output
+                .commands
+                .drain(..)
+                .filter_map(|command| match command {
+                    egui::OutputCommand::OpenUrl(open) => Some(open),
+                    _ => None,
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            (widgets, opened)
+        }
+
+        fn click(&mut self, at: egui::Pos2) -> (Vec<Widget>, Vec<egui::OpenUrl>) {
+            let press = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            };
+            self.step(vec![egui::Event::PointerMoved(at), press(true)]);
+            self.step(vec![press(false)])
+        }
+
+        fn screen(&self) -> egui::Rect {
+            egui::Rect::from_min_size(egui::Pos2::ZERO, self.size)
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn find<'a>(
+        widgets: &'a [Widget],
+        role: egui::accesskit::Role,
+        text: &str,
+    ) -> Option<&'a Widget> {
+        widgets
+            .iter()
+            .find(|widget| widget.role == role && widget.text == text)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn every_screen() -> Vec<(&'static str, P2PTransfer)> {
+        let receive = Mode::Receive(Box::new(ReceiveState {
+            input: String::new(),
+            params: FragmentParams::default(),
+            handle: None,
+            error: None,
+            opening: false,
+            startup: Arc::default(),
+            save_pending: Arc::new(AtomicBool::new(false)),
+        }));
+        let sharing = P2PTransfer {
+            mode: Mode::Send {
+                preparing: Vec::new(),
+            },
+            ..P2PTransfer::default()
+        };
+        *sharing.link.lock().unwrap() = Some("https://oxfer.app/#ticket&cap=0".to_string());
+        vec![
+            ("home", P2PTransfer::default()),
+            ("send", sharing),
+            (
+                "receive",
+                P2PTransfer {
+                    mode: receive,
+                    ..P2PTransfer::default()
+                },
+            ),
+        ]
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn local_test_legal_links_are_reachable_from_every_screen() {
+        use egui::accesskit::Role;
+
+        // Light and dark share one layout, so each pairs with one terminal state.
+        let mut cases = Vec::new();
+        for width in [320.0, 360.0, 640.0, 900.0, 1040.0] {
+            for theme in [Theme::Rusty, Theme::Clean] {
+                for (dark, terminal_open) in [(false, false), (true, true)] {
+                    cases.push((width, theme, dark, terminal_open));
+                }
+            }
+        }
+        let ctx = egui::Context::default();
+        for (width, theme, dark, terminal_open) in cases {
+            for (screen, mut app) in every_screen() {
+                let case = format!(
+                    "{screen} at {width}px, {theme:?}, dark={dark}, terminal={terminal_open}"
+                );
+                app.theme = theme;
+                app.show_terminal_view = terminal_open;
+                let mut ui = UiHarness::sharing(&ctx, app, width, dark);
+                // The first frame applies the theme; lay out with it settled.
+                ui.step(Vec::new());
+                let (widgets, _) = ui.step(Vec::new());
+                let toggle = widgets
+                    .iter()
+                    .find(|w| w.role == Role::Button && w.text.contains(">_"))
+                    .unwrap_or_else(|| panic!("{case}: no terminal toggle"));
+                let labels: Vec<&str> = if width >= FOOTER_INLINE_LINKS_MIN_WIDTH {
+                    FooterLink::ALL.iter().map(|link| link.label()).collect()
+                } else {
+                    vec!["Legal"]
+                };
+                let controls: Vec<&Widget> = labels
+                    .iter()
+                    .map(|label| {
+                        find(&widgets, Role::Button, label)
+                            .unwrap_or_else(|| panic!("{case}: no {label} button"))
+                    })
+                    .collect();
+                for control in &controls {
+                    assert!(
+                        ui.screen().contains_rect(control.rect),
+                        "{case}: {control:?} is off screen"
+                    );
+                    assert!(
+                        !control.rect.intersects(toggle.rect),
+                        "{case}: {control:?} overlaps the terminal toggle"
+                    );
+                    // With the terminal closed the bottom bar is the last 50px.
+                    assert!(
+                        terminal_open || control.rect.min.y >= ui.size.y - 50.0,
+                        "{case}: {control:?} is not in the bottom bar"
+                    );
+                }
+                for pair in controls.windows(2) {
+                    assert!(
+                        pair[0].rect.max.x <= pair[1].rect.min.x,
+                        "{case}: links overlap or are out of order: {pair:?}"
+                    );
+                }
+                // The browser build adds its "Diags" button beside these; this native build
+                // must leave that much room after the toggle's 12px gap. The short toggle
+                // label marks the narrow bar, where both buttons shrink.
+                let diags = bar_button_width(toggle.text.contains("Logs")) + 10.0;
+                let spare = controls[0].rect.min.x - toggle.rect.max.x - 12.0;
+                assert!(
+                    spare >= diags,
+                    "{case}: only {spare}px left for the {diags}px Diags button"
+                );
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn local_test_legal_menu_opens_each_page_at_phone_width() {
+        use egui::accesskit::Role;
+
+        for link in FooterLink::ALL {
+            for dark in [false, true] {
+                let mut ui = UiHarness::new(P2PTransfer::default(), 360.0, dark);
+                ui.step(Vec::new());
+                let (widgets, _) = ui.step(Vec::new());
+                let legal = find(&widgets, Role::Button, "Legal")
+                    .expect("Legal menu")
+                    .rect;
+                ui.click(legal.center());
+                // The menu's first frame is an invisible sizing pass.
+                ui.step(Vec::new());
+                let (widgets, _) = ui.step(Vec::new());
+                let item = find(&widgets, Role::Button, link.label())
+                    .unwrap_or_else(|| panic!("{link:?} is missing from the open menu"))
+                    .rect;
+                assert!(
+                    ui.screen().contains_rect(item),
+                    "{link:?} menu item is off screen at 360px: {item:?}"
+                );
+                assert!(
+                    item.height() >= 24.0,
+                    "{link:?} menu item is too small to tap: {item:?}"
+                );
+                assert!(
+                    item.max.y <= legal.min.y,
+                    "the menu must open above the bar"
+                );
+                let (_, opened) = ui.click(item.center());
+                assert_eq!(
+                    opened,
+                    vec![egui::OpenUrl::new_tab(link.url(false))],
+                    "{link:?}"
+                );
+                // Choosing an entry closes the menu.
+                let (widgets, _) = ui.step(Vec::new());
+                assert!(find(&widgets, Role::Button, link.label()).is_none());
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn local_test_inline_legal_links_open_each_page_on_wide_screens() {
+        use egui::accesskit::Role;
+
+        for link in FooterLink::ALL {
+            let mut ui = UiHarness::new(P2PTransfer::default(), 1040.0, false);
+            ui.step(Vec::new());
+            let (widgets, _) = ui.step(Vec::new());
+            let rect = find(&widgets, Role::Button, link.label())
+                .unwrap_or_else(|| panic!("no inline {link:?} link"))
+                .rect;
+            let (_, opened) = ui.click(rect.center());
+            assert_eq!(opened, vec![egui::OpenUrl::new_tab(link.url(false))]);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn local_test_received_files_offer_a_report_abuse_link() {
+        use egui::accesskit::Role;
+
+        let ctx = egui::Context::default();
+        for (width, theme, dark) in [
+            (320.0, Theme::Clean, false),
+            (360.0, Theme::Rusty, true),
+            (640.0, Theme::Rusty, false),
+            (1040.0, Theme::Clean, true),
+        ] {
+            for received in [false, true] {
+                for (screen, mut app) in every_screen() {
+                    let case = format!(
+                        "{screen} at {width}px, {theme:?}, dark={dark}, received={received}"
+                    );
+                    app.theme = theme;
+                    if received {
+                        app.received_files.lock().unwrap().push(ReceivedFile {
+                            name: "holiday.jpg".to_owned(),
+                            size: 2048,
+                            location: "/tmp/holiday.jpg".to_owned(),
+                            when: "12:00".to_owned(),
+                            path: TransferPath::Direct,
+                            average_bytes_per_sec: None,
+                        });
+                    }
+                    let mut ui = UiHarness::sharing(&ctx, app, width, dark);
+                    // Tall enough that the received card is on screen below any panel.
+                    ui.size.y = 4000.0;
+                    ui.step(Vec::new());
+                    let (widgets, _) = ui.step(Vec::new());
+                    let link = find(&widgets, Role::Link, REPORT_ABUSE_LABEL);
+                    if !received {
+                        assert!(link.is_none(), "{case}: nothing received to report");
+                        continue;
+                    }
+                    let card = find(&widgets, Role::Label, "Received (1)")
+                        .unwrap_or_else(|| panic!("{case}: no received card"))
+                        .rect;
+                    let link = link
+                        .unwrap_or_else(|| panic!("{case}: no {REPORT_ABUSE_LABEL} link"))
+                        .rect;
+                    // Announced as a link (see `show_report_abuse`), one row high, on screen
+                    // and below the received card's title.
+                    assert!(link.height() < 24.0, "{case}: link text wrapped: {link:?}");
+                    assert!(link.max.y <= ui.size.y - 50.0, "{case}: {link:?}");
+                    if screen == "home" {
+                        // Home's technical details are already wider than a 320px screen;
+                        // the link must not add to that.
+                        let widest = widgets
+                            .iter()
+                            .filter(|w| w.text != REPORT_ABUSE_LABEL)
+                            .fold(width, |widest, w| widest.max(w.rect.max.x));
+                        assert!(link.max.x <= widest, "{case}: {link:?}");
+                    } else {
+                        assert!(ui.screen().contains_rect(link), "{case}: {link:?}");
+                    }
+                    assert!(link.min.y > card.max.y, "{case}: link above the card title");
+                    let (_, opened) = ui.click(link.center());
+                    assert_eq!(
+                        opened,
+                        vec![egui::OpenUrl::new_tab(FooterLink::Abuse.url(false))],
+                        "{case}"
+                    );
+                }
+            }
+        }
+        // The browser build opens its own origin's page, like the bottom bar.
+        assert_eq!(FooterLink::Abuse.url(true), "/abuse");
+        assert_eq!(FooterLink::Abuse.url(false), "https://oxfer.app/abuse");
+    }
+
+    /// Before saving: a real loopback receive waiting at the Save prompt.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn local_test_save_prompt_offers_a_report_abuse_link() {
+        use egui::accesskit::Role;
+
+        let dir = std::env::temp_dir().join(format!(
+            "oxfer-report-link-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("holiday.jpg");
+        let data = b"received bytes".to_vec();
+        std::fs::write(&path, &data).unwrap();
+        let files = Arc::new(Mutex::new(vec![SharedFile {
+            meta: FileMeta {
+                name: "holiday.jpg".to_owned(),
+                size: data.len() as u64,
+                hash: crate::blob_store::BlobHash::from_bytes(&data),
+            },
+            snapshot: file_io::snapshot_path(&path).unwrap(),
+            origin: FileOrigin::Path(path),
+        }]));
+        let sender = Node::bind(files, RelayChoice::None).await.unwrap();
+        let ticket = sender.ticket().await.unwrap();
+        let receiver = Node::bind(Arc::new(Mutex::new(Vec::new())), RelayChoice::None)
+            .await
+            .unwrap();
+        let mut handle = TransferHandle::start_receive(
+            Arc::new(receiver),
+            ticket,
+            ReceiveOptions {
+                cap: Some(sender.cap()),
+                ..ReceiveOptions::default()
+            },
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            while !matches!(handle.latest().phase, Phase::AwaitingSave { .. }) {
+                let phase = handle.latest().phase;
+                assert!(
+                    !phase.is_terminal(),
+                    "{phase:?}: {:?}",
+                    handle.latest().error
+                );
+                handle.progress.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("no Save prompt over loopback");
+
+        let save_pending = Arc::new(AtomicBool::new(false));
+        let app = P2PTransfer {
+            mode: Mode::Receive(Box::new(ReceiveState {
+                input: String::new(),
+                params: FragmentParams::default(),
+                handle: Some(handle),
+                error: None,
+                opening: false,
+                startup: Arc::default(),
+                save_pending: save_pending.clone(),
+            })),
+            ..P2PTransfer::default()
+        };
+        let mut ui = UiHarness::new(app, 360.0, false);
+        ui.size.y = 1600.0;
+        for (width, theme) in [
+            (320.0, Theme::Clean),
+            (360.0, Theme::Rusty),
+            (1040.0, Theme::Clean),
+        ] {
+            let case = format!("{width}px, {theme:?}");
+            ui.size.x = width;
+            ui.app.theme = theme;
+            ui.step(Vec::new());
+            let (widgets, _) = ui.step(Vec::new());
+            let file = find(&widgets, Role::Label, "holiday.jpg")
+                .unwrap_or_else(|| panic!("{case}: the manifest is not shown"))
+                .rect;
+            let save = find(&widgets, Role::Button, "Choose where to save")
+                .unwrap_or_else(|| panic!("{case}: no Save button"))
+                .rect;
+            let link = find(&widgets, Role::Link, REPORT_ABUSE_LABEL)
+                .unwrap_or_else(|| panic!("{case}: no {REPORT_ABUSE_LABEL} link"))
+                .rect;
+            assert!(ui.screen().contains_rect(link), "{case}: {link:?}");
+            assert!(link.height() < 24.0, "{case}: link text wrapped: {link:?}");
+            assert!(
+                file.max.y <= link.min.y && link.max.y <= save.min.y,
+                "{case}: the link belongs between the files and Save"
+            );
+            let (_, opened) = ui.click(link.center());
+            assert_eq!(
+                opened,
+                vec![egui::OpenUrl::new_tab(FooterLink::Abuse.url(false))],
+                "{case}"
+            );
+            assert!(
+                !save_pending.load(Ordering::Acquire),
+                "{case}: reporting must not start a save"
+            );
+        }
+        drop(ui);
+        sender.shutdown().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn local_test_native_share_link_discloses_ip_addresses() {
+        use egui::accesskit::Role;
+
+        assert!(NATIVE_LINK_ADDRESSES.contains("IP addresses"));
+        for width in [360.0, 1040.0] {
+            let (_, app) = every_screen()
+                .into_iter()
+                .find(|(screen, _)| *screen == "send")
+                .unwrap();
+            let mut ui = UiHarness::new(app, width, true);
+            ui.step(Vec::new());
+            let (widgets, _) = ui.step(Vec::new());
+            let link = widgets
+                .iter()
+                .find(|w| w.role == Role::Label && w.text.starts_with("https://oxfer.app/#"))
+                .expect("the share link is shown");
+            let note = find(&widgets, Role::Label, NATIVE_LINK_ADDRESSES)
+                .unwrap_or_else(|| panic!("no IP address note at {width}px"));
+            assert!(
+                note.rect.min.y >= link.rect.max.y,
+                "the note follows the link"
+            );
+            assert!(
+                note.rect.min.y - link.rect.max.y < 40.0,
+                "the note sits next to the link"
+            );
+        }
+        // Home and Receive have no link, so they show no note.
+        for (screen, app) in every_screen()
+            .into_iter()
+            .filter(|(screen, _)| *screen != "send")
+        {
+            let mut ui = UiHarness::new(app, 360.0, true);
+            ui.step(Vec::new());
+            let (widgets, _) = ui.step(Vec::new());
+            assert!(
+                find(&widgets, Role::Label, NATIVE_LINK_ADDRESSES).is_none(),
+                "{screen}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_test_technical_details_show_this_builds_relay_copy() {
+        let operator = RelayOperator::current();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1040.0, 2000.0),
+                )),
+                ..Default::default()
+            },
+            |ui| show_how_it_works(ui, &Tc::of(Theme::Clean, true)),
+        );
+        let texts: Vec<String> = output
+            .platform_output
+            .accesskit_update
+            .take()
+            .expect("accesskit is enabled")
+            .nodes
+            .into_iter()
+            .filter_map(|(_, node)| node.value().map(str::to_owned))
+            .collect();
+        output.drop_without_applying_deltas();
+        for expected in [operator.peer_path(), operator.privacy_boundary()] {
+            assert!(
+                texts.iter().any(|text| text == expected),
+                "missing {expected:?}"
+            );
+        }
+        assert!(
+            !texts
+                .iter()
+                .any(|text| text.contains("through the iroh relay")),
+            "step 03 must say who runs the relay"
+        );
     }
 }
