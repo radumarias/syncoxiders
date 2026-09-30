@@ -7,9 +7,18 @@ wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test]
 fn browser_test_default_relay_names_do_not_include_dns_trailing_dots() {
-    // Deployments with an explicit custom relay intentionally retain that
-    // choice; the n0 fallback in browser builds must use the normalized map.
-    if option_env!("P2P_RELAY_URL").is_none() {
+    // The browser's n0 fallback must use the normalized map. CI passes an empty
+    // P2P_RELAY_URL when the repository variable is unset, which also means n0.
+    assert_eq!(
+        RelayChoice::from_setting(None),
+        RelayChoice::N0WithoutTrailingDots
+    );
+    assert_eq!(
+        RelayChoice::from_setting(Some(" ")),
+        RelayChoice::N0WithoutTrailingDots
+    );
+    // Deployments with an explicit custom relay list intentionally retain that choice.
+    if option_env!("P2P_RELAY_URL").is_none_or(|setting| setting.trim().is_empty()) {
         assert_eq!(RelayChoice::from_env(), RelayChoice::N0WithoutTrailingDots);
     }
 }
