@@ -1,0 +1,588 @@
+/*
+ * Shared stylesheet for the static legal pages: privacy.html, terms.html and
+ * abuse.html (served at /privacy, /terms and /abuse).
+ *
+ * Colours follow the app's Clean theme (src/app.rs `Tc::clean_light` and
+ * `Tc::clean_dark`). The pages load no fonts, scripts or other external
+ * resources, so they work under the site's Content-Security-Policy.
+ */
+
+:root {
+    color-scheme: light dark;
+
+    --bg: #eceef1;
+    --paper: #ffffff;
+    --surface: #f4f5f7;
+    --surface-high: #dce8fc;
+    --text: #151724;
+    --muted: #5c6070;
+    --line: #c5c6cb;
+    --line-strong: #4e5260;
+    --primary: #1674d8;
+    --link: #1266c0;
+    --link-visited: #5a3fb0;
+    --focus: #1674d8;
+    --warn-bg: #fdf1e3;
+    --warn-line: #b35c00;
+
+    --radius: 12px;
+    --measure: 46rem;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+        "Noto Sans", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #151724;
+        --paper: #1c1f2e;
+        --surface: #23263a;
+        --surface-high: #2e3250;
+        --text: #f5f6f8;
+        --muted: #b1b2b8;
+        --line: #3a3e52;
+        --line-strong: #9aa0b0;
+        --primary: #1a88fe;
+        --link: #7ab8ff;
+        --link-visited: #c3b1ff;
+        --focus: #7ab8ff;
+        --warn-bg: #3a2a1a;
+        --warn-line: #f0a860;
+    }
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 1rem;
+    line-height: 1.6;
+    overflow-wrap: break-word;
+}
+
+/* Skip link: visible only when focused. */
+.skip-link {
+    position: absolute;
+    left: 1rem;
+    top: -10rem;
+    z-index: 10;
+    padding: 0.5rem 0.9rem;
+    border-radius: 8px;
+    background: var(--paper);
+    color: var(--text);
+    font-weight: 600;
+}
+
+.skip-link:focus {
+    top: 0.75rem;
+}
+
+a {
+    color: var(--link);
+    text-underline-offset: 0.15em;
+}
+
+a:visited {
+    color: var(--link-visited);
+}
+
+a:hover {
+    text-decoration-thickness: 2px;
+}
+
+:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+/* Top bar: wordmark and a link back to the app. */
+.site-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 0.75rem;
+    max-width: calc(var(--measure) + 2rem);
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+.brand {
+    display: inline-flex;
+    align-items: center;
+    line-height: 0;
+}
+
+.brand img {
+    display: block;
+    height: 22px;
+    width: auto;
+}
+
+.back-link,
+.back-link:visited {
+    display: inline-block;
+    padding: 0.35rem 0.8rem;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    color: var(--text);
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.back-link:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+/* Links between the three legal pages. */
+.legal-nav {
+    max-width: calc(var(--measure) + 2rem);
+    margin: 0 auto;
+    padding: 0 1rem;
+}
+
+.legal-nav ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    margin: 0;
+    padding: 0 0 0.75rem;
+    list-style: none;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.9rem;
+}
+
+.legal-nav li + li,
+.site-footer li + li {
+    margin-top: 0;
+}
+
+.legal-nav a[aria-current="page"] {
+    color: var(--text);
+    font-weight: 700;
+    text-decoration: none;
+}
+
+main {
+    display: block;
+    max-width: calc(var(--measure) + 2rem);
+    margin: 0 auto;
+    padding: 1rem 1rem 3rem;
+}
+
+article {
+    padding: 1.5rem 1.25rem 2rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--paper);
+}
+
+@media (min-width: 40rem) {
+    article {
+        padding: 2.25rem 2.5rem 2.75rem;
+    }
+}
+
+h1,
+h2,
+h3 {
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+}
+
+h1 {
+    margin: 0 0 0.25rem;
+    font-size: 1.9rem;
+}
+
+h2 {
+    margin: 2.5rem 0 0.75rem;
+    padding-top: 0.25rem;
+    font-size: 1.35rem;
+}
+
+h3 {
+    margin: 1.75rem 0 0.5rem;
+    font-size: 1.1rem;
+}
+
+/* Anchored headings stay clear of the viewport edge when linked from the contents. */
+[id] {
+    scroll-margin-top: 1rem;
+}
+
+p,
+ul,
+ol,
+dl,
+table,
+address {
+    margin: 0 0 1rem;
+}
+
+ul,
+ol {
+    padding-left: 1.4rem;
+}
+
+li + li {
+    margin-top: 0.35rem;
+}
+
+strong {
+    font-weight: 700;
+}
+
+code {
+    padding: 0.05em 0.3em;
+    border-radius: 4px;
+    background: var(--surface);
+    font-family: var(--mono);
+    font-size: 0.9em;
+    overflow-wrap: anywhere;
+}
+
+.meta {
+    margin: 0 0 1.5rem;
+    color: var(--muted);
+    font-size: 0.95rem;
+}
+
+/* Plain-English summary at the top of each page. */
+.summary {
+    margin: 0 0 2rem;
+    padding: 1rem 1.25rem 0.25rem;
+    border-left: 4px solid var(--primary);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    background: var(--surface);
+}
+
+.summary h2 {
+    margin: 0 0 0.5rem;
+    padding: 0;
+    font-size: 1.15rem;
+}
+
+/* Table of contents. */
+.toc {
+    margin: 0 0 2rem;
+    padding: 1rem 1.25rem 0.25rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.toc h2 {
+    margin: 0 0 0.5rem;
+    padding: 0;
+    font-size: 1.05rem;
+}
+
+.toc ol {
+    padding-left: 0;
+    list-style: none;
+}
+
+.toc li + li {
+    margin-top: 0.2rem;
+}
+
+/* Operator identity block. */
+.identity {
+    margin: 0 0 1rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    font-style: normal;
+}
+
+.identity dl {
+    display: grid;
+    grid-template-columns: minmax(7rem, max-content) 1fr;
+    gap: 0.35rem 1rem;
+    margin: 0;
+}
+
+.identity dt {
+    color: var(--muted);
+    font-weight: 600;
+}
+
+.identity dd {
+    margin: 0;
+}
+
+@media (max-width: 30rem) {
+    .identity dl {
+        grid-template-columns: 1fr;
+        gap: 0.1rem;
+    }
+
+    .identity dd + dt {
+        margin-top: 0.5rem;
+    }
+}
+
+/* Highlighted notes, for example "do not send files". */
+.note {
+    margin: 0 0 1rem;
+    padding: 0.9rem 1.1rem;
+    border-left: 4px solid var(--warn-line);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    background: var(--warn-bg);
+}
+
+.note > :last-child {
+    margin-bottom: 0;
+}
+
+/*
+ * Data tables. `table.stack` turns each row into a labelled card on narrow
+ * screens; `table.cards` does so at every width, for tables with too many
+ * columns for the text measure. Each cell's label comes from `data-label`.
+ */
+.table-wrap {
+    margin: 0 0 1.25rem;
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+}
+
+caption {
+    padding: 0 0 0.5rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+    text-align: left;
+}
+
+th,
+td {
+    padding: 0.6rem 0.65rem;
+    border: 1px solid var(--line);
+    text-align: left;
+    vertical-align: top;
+}
+
+thead th {
+    background: var(--surface-high);
+    font-weight: 700;
+}
+
+tbody th {
+    background: var(--surface);
+    font-weight: 600;
+}
+
+table.cards,
+table.cards tbody,
+table.cards tr,
+table.cards th,
+table.cards td {
+    display: block;
+    width: 100%;
+}
+
+table.cards thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+table.cards tr {
+    margin: 0 0 1rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+table.cards th,
+table.cards td {
+    border: 0;
+    border-top: 1px solid var(--line);
+}
+
+table.cards tbody th {
+    border-top: 0;
+}
+
+table.cards td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+/* Wide screens: the label sits in a left column of each card. */
+@media (min-width: 44.0625rem) {
+    table.cards td[data-label] {
+        position: relative;
+        padding-left: 12rem;
+    }
+
+    table.cards td[data-label]::before {
+        position: absolute;
+        top: 0.75rem;
+        left: 0.65rem;
+        width: 10.5rem;
+    }
+}
+
+@media (max-width: 44rem) {
+    table.stack,
+    table.stack tbody,
+    table.stack tr,
+    table.stack th,
+    table.stack td {
+        display: block;
+        width: 100%;
+    }
+
+    table.stack thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+    }
+
+    table.stack tr {
+        margin: 0 0 1rem;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        overflow: hidden;
+    }
+
+    table.stack th,
+    table.stack td {
+        border: 0;
+        border-top: 1px solid var(--line);
+    }
+
+    table.stack tbody th {
+        border-top: 0;
+    }
+
+    table.stack td[data-label]::before {
+        content: attr(data-label);
+        display: block;
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+    }
+}
+
+.site-footer {
+    max-width: calc(var(--measure) + 2rem);
+    margin: 0 auto;
+    padding: 0 1rem 2.5rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.site-footer ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1.25rem;
+    margin: 0 0 0.5rem;
+    padding: 0;
+    list-style: none;
+}
+
+.site-footer p {
+    margin: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    html {
+        scroll-behavior: smooth;
+    }
+}
+
+@media print {
+    :root {
+        --bg: #ffffff;
+        --paper: #ffffff;
+        --surface: #ffffff;
+        --surface-high: #ffffff;
+        --text: #000000;
+        --muted: #333333;
+        --line: #999999;
+        --line-strong: #666666;
+        --link: #000000;
+        --link-visited: #000000;
+        --warn-bg: #ffffff;
+    }
+
+    body {
+        font-size: 10.5pt;
+        line-height: 1.45;
+    }
+
+    .skip-link,
+    .back-link,
+    .legal-nav,
+    .toc {
+        display: none;
+    }
+
+    .site-header,
+    main,
+    .site-footer {
+        max-width: none;
+        margin: 0;
+        padding: 0 0 0.75rem;
+    }
+
+    article {
+        padding: 0;
+        border: 0;
+    }
+
+    h2,
+    h3 {
+        break-after: avoid;
+    }
+
+    tr,
+    .identity,
+    .summary,
+    .note {
+        break-inside: avoid;
+    }
+
+    /* Print the target of external citation links; mail addresses are already
+       written out in the link text. */
+    article a[href^="https://"]::after {
+        content: " <" attr(href) ">";
+        font-size: 0.85em;
+        overflow-wrap: anywhere;
+    }
+}

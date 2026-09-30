@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<!--
+  Oxfer abuse, safety and law-enforcement page, served at /abuse.
+
+  OWNER CHECKLIST. Replace each placeholder token below everywhere it appears
+  in this file. They are written here without their double square brackets, so
+  this list does not trip the placeholder check in build-web.sh, which refuses
+  to deploy while any token remains in privacy.html, terms.html or abuse.html.
+
+    OPERATOR_NAME           Legal name of the person or company that runs Oxfer.
+                            Also shown as the Grievance Officer for India.
+    OPERATOR_ADDRESS        Postal address: domicile (natural person) or
+                            registered office (company).
+    OPERATOR_REGISTRATION   Trade-register number and tax ID (company only).
+                            For a natural person, delete the whole line marked
+                            "delete for a natural person".
+    EFFECTIVE_DATE          Date this version takes effect, e.g. 1 November 2026.
+
+  The response times below are commitments. The abuse@oxfer.app mailbox must
+  be monitored so they can be met.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="How to report abuse of Oxfer, what the operator can do, and how authorities and regulators can reach the operator.">
+<title>Abuse and safety · Oxfer</title>
+<link rel="stylesheet" href="assets/legal.css">
+<link rel="icon" type="image/svg+xml" href="assets/oxfer-favicon-light.svg">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+    <a class="brand" href="/">
+        <picture>
+            <source srcset="assets/oxfer-wordmark-dark.svg" media="(prefers-color-scheme: dark)">
+            <img src="assets/oxfer-wordmark-light.svg" alt="Oxfer home" width="179" height="28">
+        </picture>
+    </a>
+    <a class="back-link" href="/">Back to the app</a>
+</header>
+
+<nav class="legal-nav" aria-label="Legal pages">
+    <ul>
+        <li><a href="/privacy">Privacy</a></li>
+        <li><a href="/terms">Terms of use</a></li>
+        <li><a href="/abuse" aria-current="page">Abuse and safety</a></li>
+    </ul>
+</nav>
+
+<main id="main">
+<article>
+    <h1>Abuse, safety and requests from authorities</h1>
+    <p class="meta">Last updated: [[EFFECTIVE_DATE]]</p>
+
+    <section class="summary" aria-labelledby="summary-title">
+        <h2 id="summary-title">In short</h2>
+        <ul>
+            <li>One address for everything: <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a>, for users, rights holders, authorities and regulators, in English or Romanian. A person reads every message.</li>
+            <li>Do not send us files or illegal material. Send the Oxfer link, or the part of it before <code>&amp;cap=</code>, and describe the problem.</li>
+            <li>We acknowledge within 24 hours and answer within 15 days. We act on intimate images shared without consent within 48 hours. We report child sexual abuse material to NCMEC and to Romanian authorities.</li>
+            <li>We hold no files and no records of users or transfers. We can block a share or an address at our relay.</li>
+            <li>If someone is in immediate danger, contact your local emergency services first.</li>
+        </ul>
+    </section>
+
+    <nav class="toc" aria-labelledby="toc-title">
+        <h2 id="toc-title">Contents</h2>
+        <ol>
+            <li><a href="#contact-point">1. Contact point</a></li>
+            <li><a href="#how-to-report">2. How to report</a></li>
+            <li><a href="#response-times">3. What happens next</a></li>
+            <li><a href="#blocking">4. What we can do, and how blocking works</a></li>
+            <li><a href="#csam">5. Child sexual abuse material</a></li>
+            <li><a href="#intimate-images">6. Intimate images shared without consent</a></li>
+            <li><a href="#copyright">7. Copyright and other rights</a></li>
+            <li><a href="#appeals">8. Appeals and complaints</a></li>
+            <li><a href="#authorities">9. Requests from authorities and regulators</a></li>
+            <li><a href="#india">10. Grievance Officer for India</a></li>
+            <li><a href="#records">11. Records we keep</a></li>
+        </ol>
+    </nav>
+
+    <section id="contact-point" aria-labelledby="contact-point-title">
+        <h2 id="contact-point-title">1. Contact point</h2>
+        <p><a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a> is our single point of contact for users of Oxfer and for authorities, under Articles 11 and 12 of the EU Digital Services Act. It serves EU Member State authorities, the European Commission, the European Board for Digital Services, regulators and law enforcement elsewhere, rights holders and anyone affected by content shared through Oxfer.</p>
+        <ul>
+            <li>Languages: English and Romanian.</li>
+            <li>Every message is read by a person. No automated system answers or decides on reports.</li>
+            <li>For privacy requests about your own data, write to <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a> instead.</li>
+        </ul>
+        <address class="identity">
+            <dl>
+                <dt>Operator</dt>
+                <dd>[[OPERATOR_NAME]]</dd>
+                <dt>Postal address</dt>
+                <dd>[[OPERATOR_ADDRESS]]</dd>
+                <!-- delete for a natural person: remove the next line -->
+                <dt>Registration</dt><dd>[[OPERATOR_REGISTRATION]]</dd>
+                <dt>Email</dt>
+                <dd><a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a></dd>
+                <dt>Languages</dt>
+                <dd>English, Romanian</dd>
+            </dl>
+        </address>
+    </section>
+
+    <section id="how-to-report" aria-labelledby="how-to-report-title">
+        <h2 id="how-to-report-title">2. How to report</h2>
+        <div class="note" role="note">
+            <p><strong>Do not send us files, screenshots of illegal images, or any illegal material.</strong> Do not download child sexual abuse material to report it. We do not need the content to act.</p>
+            <p>We will not use a link you report to download or open the shared files.</p>
+        </div>
+        <p id="who-learns"><strong>Who learns about your report.</strong> We never tell the person who shared the content, or any other user, that a report was made or who made it. Oxfer has no accounts and holds no contact details for the people who share files. The only exception is a referral to NCMEC or to authorities (<a href="#csam">section 5</a> and <a href="#authorities">section 9</a>), which can include your report and, where needed, how to reach you. If the person whose share or address we blocked appeals, our answer explains the decision but does not say whether anyone made a report or who made it.</p>
+        <p>Please include:</p>
+        <ul>
+            <li>what the problem is, for example the kind of content or behaviour;</li>
+            <li>the Oxfer link. A link looks like <code>https://oxfer.app/#endpoint…&amp;cap=…</code>. We only need the part that starts with <code>endpoint</code> and ends before <code>&amp;cap=</code>. It identifies the share without giving access to the files, so please leave out the <code>&amp;cap=</code> part if you can;</li>
+            <li>when you received or saw the link, and whether the sender still seemed to be sharing;</li>
+            <li>the country you are in, if relevant to the law you are relying on;</li>
+            <li>how we can reach you, if you want an answer. You do not have to give your name, but without a way to reach you we cannot tell you the outcome.</li>
+        </ul>
+        <p>Start the subject line with <strong>URGENT</strong> for child sexual abuse material, intimate images shared without consent, or threats to someone's safety.</p>
+    </section>
+
+    <section id="response-times" aria-labelledby="response-times-title">
+        <h2 id="response-times-title">3. What happens next</h2>
+        <div class="table-wrap">
+            <table class="stack">
+                <caption>Our response times</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Situation</th>
+                        <th scope="col">What we do</th>
+                        <th scope="col">When</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <th scope="row">Any message</th>
+                        <td data-label="What we do">Acknowledge receipt.</td>
+                        <td data-label="When">Within 24 hours</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Any report or complaint</th>
+                        <td data-label="What we do">Review it and tell you our decision and any action taken.</td>
+                        <td data-label="When">Within 15 days</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Intimate images shared without consent</th>
+                        <td data-label="What we do">Block the share at our relay (<a href="#intimate-images">section 6</a>).</td>
+                        <td data-label="When">Within 48 hours</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Child sexual abuse material</th>
+                        <td data-label="What we do">Block the share at our relay and report to NCMEC and Romanian authorities (<a href="#csam">section 5</a>).</td>
+                        <td data-label="When">As a priority, without delay</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Appeal against a block</th>
+                        <td data-label="What we do">Review the decision again and lift the block if it was wrong (<a href="#appeals">section 8</a>).</td>
+                        <td data-label="When">Promptly, and within 15 days</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Request or notice from an authority or regulator</th>
+                        <td data-label="What we do">Answer (<a href="#authorities">section 9</a>).</td>
+                        <td data-label="When">Within the deadline the request sets</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <p>Our acknowledgement lists the possible outcomes of a report or complaint: no action; a block at our relay, of the share or of network addresses; a referral to NCMEC or other authorities; or a reply that explains our decision. It also confirms that we will tell you our decision and any action we took.</p>
+        <p id="no-further-messages">You can ask us to send you no further messages about your report or complaint, when you send it or at any time later: say so in your message, or reply to us with <strong>No further messages</strong>. From then on we send you nothing about it, not even the acknowledgement or our decision, but we still handle it in the same way.</p>
+        <p>Content shared through Oxfer is available only while the sender is sharing, so a share you report may already have ended. We still record the report and block the share, because we cannot always tell whether the sender is still sharing.</p>
+    </section>
+
+    <section id="blocking" aria-labelledby="blocking-title">
+        <h2 id="blocking-title">4. What we can do, and how blocking works</h2>
+        <p>Oxfer does not store files. Files move directly between two devices, encrypted, or through our relay, which only forwards encrypted data. We cannot see, scan or delete files, and we keep no records of users or transfers. What we can do is control access to our relay.</p>
+        <ul>
+            <li><strong>Blocking a share.</strong> Every share gets a new endpoint ID, which is part of its link. We can deny that endpoint ID at our relay. Browsers need our relay to connect, so in the browser app this stops new recipients from reaching that share. Because endpoint IDs are new for each share, this block affects only that share. A new share from the same person gets a new endpoint ID.</li>
+            <li><strong>Blocking addresses.</strong> For repeated or serious abuse, we can block IP addresses from using our relay, for a limited time or permanently. Many people can share an IP address, for example on mobile networks or VPNs, so we use address blocks with care and review them on request.</li>
+            <li><strong>Limits.</strong> Our relay limits how many connections and how much data it accepts.</li>
+        </ul>
+        <p>A block cannot stop a transfer already running on a direct connection, a direct connection between two desktop apps, or copies that recipients have already saved. The rules users agree to are in our <a href="/terms#acceptable-use">terms of use</a>.</p>
+    </section>
+
+    <section id="csam" aria-labelledby="csam-title">
+        <h2 id="csam-title">5. Child sexual abuse material</h2>
+        <p>Child sexual abuse material is prohibited on Oxfer. When we learn that a share is used for it, we block the share at our relay without delay, and we report it to the National Center for Missing &amp; Exploited Children (NCMEC) in the United States and to Romanian authorities. We hold no content to remove or hand over.</p>
+        <p>You can also report directly to:</p>
+        <ul>
+            <li>NCMEC's CyberTipline: <a href="https://report.cybertip.org/">report.cybertip.org</a>;</li>
+            <li>the hotline in your country, listed by INHOPE: <a href="https://www.inhope.org/what-we-do/how-to-report">inhope.org</a>. In Romania this is Ora de Net: <a href="https://oradenet.ro/linia-de-raportare/">oradenet.ro</a>;</li>
+            <li>your local police.</li>
+        </ul>
+        <p>If a child is in immediate danger, contact your local emergency services.</p>
+    </section>
+
+    <section id="intimate-images" aria-labelledby="intimate-images-title">
+        <h2 id="intimate-images-title">6. Intimate images shared without consent</h2>
+        <p>Sharing intimate or sexual images or videos of a person without their consent is prohibited, including fake or altered images. If you are the person shown, or you act for them, email us with the link and <strong>URGENT</strong> in the subject. Do not send the images. We block the share at our relay within 48 hours of receiving your report, and sooner when we can.</p>
+        <p>Oxfer does not store files, so there are no copies for us to find or delete. If the images are also posted on sites that store content, <a href="https://stopncii.org/">StopNCII.org</a> helps adults stop them being shared on participating platforms.</p>
+    </section>
+
+    <section id="copyright" aria-labelledby="copyright-title">
+        <h2 id="copyright-title">7. Copyright and other rights</h2>
+        <p>If you believe a share infringes your copyright or other rights, email us with:</p>
+        <ul>
+            <li>a description of the work or right concerned;</li>
+            <li>the Oxfer link, or the part before <code>&amp;cap=</code>;</li>
+            <li>your name and contact details;</li>
+            <li>a statement that you believe in good faith that the use is not authorised by the rights holder or the law;</li>
+            <li>a statement that the information is accurate and that you are the rights holder or authorised to act for them;</li>
+            <li>your full name as your signature.</li>
+        </ul>
+        <p>We hold no copy to remove. We block the share at our relay, and under our <a href="/terms#repeat-infringers">repeat-infringer policy</a> we block the addresses of repeat infringers.</p>
+    </section>
+
+    <section id="appeals" aria-labelledby="appeals-title">
+        <h2 id="appeals-title">8. Appeals and complaints</h2>
+        <ul>
+            <li><strong>Appeals.</strong> If we blocked your share or your address and you believe we were wrong, email us with <strong>Appeal</strong> in the subject and explain why. We review the decision again promptly. If it was wrong, we lift the block and tell you. Our answer explains the decision, but does not say whether anyone reported you or who did (<a href="#who-learns">section 2</a>).</li>
+            <li><strong>Complaints.</strong> You can complain if you think we did not handle a report properly, or did not follow our terms or the law, including our duties on freedom of expression and privacy. Email us with <strong>Complaint</strong> in the subject.</li>
+            <li><strong>Other options.</strong> You can complain about our compliance with the EU Digital Services Act to the Digital Services Coordinator of the EU country where you live. In Romania this is ANCOM (<a href="https://www.ancom.ro/en/category/servicii-digitale-en/">ancom.ro</a>). You can also go to court.</li>
+        </ul>
+    </section>
+
+    <section id="authorities" aria-labelledby="authorities-title">
+        <h2 id="authorities-title">9. Requests from authorities and regulators</h2>
+        <h3 id="what-we-hold">9.1 What we hold</h3>
+        <ul>
+            <li>No files, file names or file contents. Transfers are encrypted between the two devices and we cannot decrypt them.</li>
+            <li>No accounts, and no records of users, share links or transfers.</li>
+            <li>No access logs at our relay. The relay does not log IP addresses, endpoint IDs or connections. It logs only its own operational errors, without the addresses of the devices using it, and these logs are deleted automatically after at most three days. The server's SSH service records our own administrative logins to the server.</li>
+            <li>No request logs of our own for the website. Cloudflare, our hosting provider, keeps its own logs under its policies.</li>
+            <li>Correspondence with us, and our record of reports and the actions we took (<a href="#records">section 11</a>).</li>
+        </ul>
+        <p>Legal process therefore cannot obtain from us any information about past transfers, because none exists. Going forward, we can block a share or an address at our relay (<a href="#blocking">section 4</a>).</p>
+        <h3 id="how-to-send">9.2 How to send a request</h3>
+        <ul>
+            <li><strong>Romanian authorities:</strong> email <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a> or write to the postal address in <a href="#contact-point">section 1</a>.</li>
+            <li><strong>Authorities outside Romania:</strong> please use the legal channels available to you, such as mutual legal assistance (MLAT) or the EU instruments for cross-border cooperation in criminal matters, which reach us through Romanian authorities. You may contact us first at <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a> to check what exists before you start formal process.</li>
+            <li><strong>Emergencies:</strong> if there is an imminent risk to someone's life or safety, email us with <strong>URGENT</strong> in the subject. We will help as far as the law allows.</li>
+        </ul>
+        <p>We check every request for legal validity and answer within the deadline it sets.</p>
+        <h3 id="regulators">9.3 Regulators</h3>
+        <p>EU authorities, the European Commission and the European Board for Digital Services, the UK's Ofcom (<a href="https://www.ofcom.org.uk/">ofcom.org.uk</a>) and Australia's eSafety Commissioner (<a href="https://www.esafety.gov.au/">esafety.gov.au</a>) can send information requests and notices to <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a>. We answer each within the deadline it sets.</p>
+    </section>
+
+    <section id="india" aria-labelledby="india-title">
+        <h2 id="india-title">10. Grievance Officer for India</h2>
+        <p>For users in India, the Grievance Officer is the operator:</p>
+        <address class="identity">
+            <dl>
+                <dt>Name</dt>
+                <dd>[[OPERATOR_NAME]]</dd>
+                <dt>Postal address</dt>
+                <dd>[[OPERATOR_ADDRESS]]</dd>
+                <dt>Email</dt>
+                <dd><a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a></dd>
+            </dl>
+        </address>
+        <p>We acknowledge complaints within 24 hours and resolve them within 7 days of receipt. Complaints about content that shows a person's private areas, nudity or sexual acts, or that impersonates a person, including altered images, are handled first.</p>
+    </section>
+
+    <section id="records" aria-labelledby="records-title">
+        <h2 id="records-title">11. Records we keep</h2>
+        <p>We keep a record of each report and what we did about it: the date, the type of report, the endpoint ID or address we blocked, and the outcome. It never contains file content. We keep it as long as needed to handle the matter and to show how we handled it, and review it at least once a year. Our <a href="/privacy#processing">privacy notice</a> explains how we handle the personal data in reports.</p>
+    </section>
+</article>
+</main>
+
+<footer class="site-footer">
+    <ul>
+        <li><a href="/">Oxfer app</a></li>
+        <li><a href="/privacy">Privacy</a></li>
+        <li><a href="/terms">Terms of use</a></li>
+        <li><a href="/abuse" aria-current="page">Abuse and safety</a></li>
+    </ul>
+    <p>Abuse and safety. Last updated: [[EFFECTIVE_DATE]].</p>
+</footer>
+</body>
+</html>
