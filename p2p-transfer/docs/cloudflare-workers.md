@@ -26,7 +26,8 @@ node verify-deployment.mjs https://oxfer.42dev.workers.dev/
 `npm run build` is `bash build-web.sh`. In order, it:
 
 1. Validates `P2P_RELAY_URL` ([relay selection](#relay-selection-p2p_relay_url)).
-   An empty or whitespace-only value is unset before the build.
+   An empty or ASCII-whitespace-only value is unset before the build; any
+   other value with a character outside printable ASCII fails.
 2. Runs a Trunk 0.21.14 release build. The Trunk binary is downloaded into
    `target/pages-tools/` and checked against a pinned SHA-256.
 3. Fails if any file is over Cloudflare's 25 MiB asset limit, or if Trunk did
@@ -36,9 +37,9 @@ node verify-deployment.mjs https://oxfer.42dev.workers.dev/
    `<script>`.
 4. Fails while the legal pages still contain placeholders
    ([legal pages](#legal-pages-and-the-placeholder-guard)).
-5. Fails when the filled legal pages describe `relay.oxfer.app` but
-   `P2P_RELAY_URL` is unset, which would publish a privacy notice for a relay
-   the build does not use ([relay go-live guard](#relay-go-live-guard)).
+5. Fails when the legal pages are filled but `P2P_RELAY_URL` does not list
+   `https://relay.oxfer.app`, which would publish a privacy notice for a
+   relay the build does not use ([relay go-live guard](#relay-go-live-guard)).
 6. Runs `package-cf-output.mjs`. It copies `dist/` into
    `.cloudflare/output/v0/workers/default/assets/` and writes a rendered
    `_headers` there ([security headers](#security-headers)).
@@ -98,8 +99,10 @@ node verify-deployment.mjs https://www.oxfer.app/
    WASM bundle, the service worker, `theme.html`, `/privacy`, `/terms`,
    `/abuse` and the static scripts, stylesheet and images. For each path it
    checks the status and MIME type, that the bytes equal the local `dist/`, and
-   the cache (including `no-transform`, and `no-store` on `/sw.js`), referrer,
-   nosniff, Permissions-Policy, X-Frame-Options and report-only CSP headers.
+   the cache, referrer, nosniff, Permissions-Policy, X-Frame-Options and
+   report-only CSP headers. The expected `Cache-Control` of each path comes
+   from `assets/_headers`: `no-transform` on `/privacy`, `/terms` and
+   `/abuse` and on no other path, and `no-store` on `/sw.js`.
    It also fails if a response carries `NEL`, `Report-To` or
    `Reporting-Endpoints` ([Network Error Logging](#network-error-logging-must-be-off));
    on a `*.workers.dev` origin it only warns. It makes up to 10 attempts,
@@ -120,17 +123,21 @@ One value is used in five places:
 | Where | What happens |
 | --- | --- |
 | `.github/workflows/oxfer-web.yml` | The deploy job sets `P2P_RELAY_URL: ${{ vars.P2P_RELAY_URL }}`. An unset variable arrives as an empty string. |
-| `build-web.sh` | An empty or whitespace-only value is unset, which means n0's relays. Any other value is checked with `node package-cf-output.mjs --check-relay` before the long build, then exported. |
+| `build-web.sh` | An empty or ASCII-whitespace-only value is unset, which means n0's relays. Any other value is checked with `node package-cf-output.mjs --check-relay` before the long build, then exported. Once the legal pages are filled, the value must also list `https://relay.oxfer.app` ([relay go-live guard](#relay-go-live-guard)). |
 | `src/node.rs` | `RelayChoice::from_env()` reads `option_env!("P2P_RELAY_URL")` at compile time. A valid list selects `RelayChoice::Custom`, built on iroh's `presets::Minimal`: only the listed relays, with no n0 relay map and no pkarr publishing or lookup at `dns.iroh.link`. |
 | `package-cf-output.mjs` | Replaces `{{RELAY_CONNECT_SRC}}` in `_headers` with the matching CSP `connect-src` sources. |
 | `verify-deployment.mjs` | Renders the same policy and asserts that the deployment serves it. |
 
 Format: a comma-separated list of `https://host[:port]` URLs, with `http://`
 only for a local test relay. Spaces around commas are trimmed, order is kept
-and duplicates are dropped. The build fails for an empty entry (for example a
-trailing comma), another scheme such as `wss://`, credentials, a path, query or
-fragment, an IPv6 literal, or a host with a trailing dot. Error messages give
-the entry's position, never its text.
+and duplicates are dropped. The value must be printable ASCII: the build
+fails for any other character, visible or not, such as a byte-order mark
+(U+FEFF) or a no-break space pasted in with the value. It also fails for an
+empty entry (for example a trailing comma), another scheme such as `wss://`,
+credentials, a path, query or fragment, an IPv6 literal, or a host with a
+trailing dot. Error messages give the entry's position, never its text; for
+an invisible character they also give its code point, for example
+`P2P_RELAY_URL entry 1 contains the invisible character U+FEFF; retype the value`.
 
 | `P2P_RELAY_URL` | Relay sources in `connect-src` |
 | --- | --- |
@@ -138,10 +145,18 @@ the entry's position, never its text.
 | `https://relay.oxfer.app` | `https://relay.oxfer.app wss://relay.oxfer.app` |
 | `https://a.example, https://b.example:8443` | `https://a.example wss://a.example https://b.example:8443 wss://b.example:8443` |
 
-The Rust parser is more lenient than the build check. A build that skips
-`build-web.sh` (plain `trunk build`, `trunk serve` or `cargo`) with an invalid
-value logs `P2P_RELAY_URL is not a valid relay list (...); using the default`
-in the browser console and uses n0's relays.
+The Rust parser in `src/node.rs` accepts some values the build check
+rejects, such as a path or a trailing-dot host. The reverse must never
+happen, because the app would then fall back to n0 at run time while the
+CSP and the privacy notice name the configured relay. Trimming is where the
+two differ: Rust's `str::trim` keeps U+FEFF, which JavaScript's `trim`
+strips, so a check that trimmed would accept a value starting with a
+byte-order mark that the app then rejects. The build check therefore
+rejects every character outside printable ASCII instead of trimming it. A
+build that skips `build-web.sh` (plain `trunk build`, `trunk serve` or
+`cargo`) with an invalid value logs
+`P2P_RELAY_URL is not a valid relay list (...); using the default` in the
+browser console and uses n0's relays.
 
 Switching production to the self-hosted relay (runbook:
 [`deploy/relay/README.md`](../deploy/relay/README.md#switching-production-to-the-relay)):
@@ -153,11 +168,16 @@ gh workflow run oxfer-web.yml --repo radumarias/syncoxiders --ref main
 
 Then open `https://oxfer.app/diags`. It should list
 `Relay wss://relay.oxfer.app/relay` and no `*.relay.n0.iroh.link` probes.
-To roll back, run `gh variable delete P2P_RELAY_URL --repo radumarias/syncoxiders`
-and re-run the workflow. Once the legal pages are filled, that build fails at
-the [relay go-live guard](#relay-go-live-guard) until the pages describe the
-relays actually in use, so a rollback to n0 also means editing the privacy
-notice.
+To roll back before the legal pages are filled, run
+`gh variable delete P2P_RELAY_URL --repo radumarias/syncoxiders` and re-run
+the workflow. Once they are filled, that build fails at the
+[relay go-live guard](#relay-go-live-guard), which requires
+`https://relay.oxfer.app` in the list whatever the pages say. A rollback to
+n0 is then one commit that edits the privacy notice (and any page or record
+that names `relay.oxfer.app`) to describe n0's relays, and changes the guard
+in `build-web.sh` and its test in `tests/web-pages.test.mjs` to match; delete
+the variable when that commit lands
+([relay runbook](../deploy/relay/README.md#rollback)).
 
 The same value works locally:
 
@@ -168,14 +188,20 @@ P2P_RELAY_URL=https://relay.oxfer.app node verify-deployment.mjs https://oxfer.a
 
 ## Security headers
 
-[`assets/_headers`](../assets/_headers) sets these on every path (`/*`). `/sw.js`
-also matches its own rule, `Cache-Control: no-cache, no-store, must-revalidate`;
-Cloudflare comma-joins the two values, so the service worker is served with
-`no-transform` and `no-store`.
+[`assets/_headers`](../assets/_headers) sets these on every path (`/*`).
+Cloudflare comma-joins the values of every rule that matches a request path,
+so a path with its own `Cache-Control` rule gets both:
+
+- `/sw.js` adds `no-cache, no-store, must-revalidate`, so the service worker
+  is served with `no-store`.
+- `/privacy`, `/terms` and `/abuse` add `no-transform`
+  ([why only these](#why-cache-control-no-transform)). `NO_TRANSFORM_PATHS`
+  in `package-cf-output.mjs` lists them. `/privacy.html` and the other
+  `.html` spellings only redirect (307) to these paths.
 
 | Header | Value |
 | --- | --- |
-| `Cache-Control` | `public, max-age=0, must-revalidate, no-transform` |
+| `Cache-Control` | `public, max-age=0, must-revalidate` (`CACHE_CONTROL`) |
 | `Referrer-Policy` | `no-referrer` |
 | `X-Content-Type-Options` | `nosniff` |
 | `Content-Security-Policy-Report-Only` | the policy below |
@@ -210,9 +236,16 @@ which starts the WASM. Every served HTML page must avoid inline `<script>`,
 
 No `report-uri` or `report-to` directive is set, so violations of the
 report-only policy are not sent anywhere. They appear only in the browser
-console; Chromium prefixes them with `[Report Only]`. One violation is expected
-on n0 builds: the Diags page's dotted-hostname probe
-([docs/diagnostics.md](diagnostics.md#relay-probes)).
+console; Chromium prefixes them with `[Report Only]`. On n0 builds the Diags
+page always causes one: its dotted-hostname probe of
+`wss://euc1-1.relay.n0.iroh.link./relay`, because a hostname ending in a dot
+does not match `*.iroh.link`. If the page's first relay registration fails,
+the legacy dotted-DNS check adds more: its HTTPS latency probes of
+`https://<relay>.relay.n0.iroh.link./ping` for each of the four n0 relays,
+repeated while it runs, and a `wss://<relay>.relay.n0.iroh.link./relay`
+connection if one answers
+([docs/diagnostics.md](diagnostics.md#n0-builds-trailing-dns-dots)).
+Custom-relay builds cause neither.
 
 ### Enforcing the policy
 
@@ -245,33 +278,41 @@ To roll back, revert that commit and redeploy.
 
 ### Why `Cache-Control: no-transform`
 
+Only `/privacy`, `/terms` and `/abuse` send `no-transform`.
+
 Cloudflare documents `no-transform` as a way to stop features that edit a
 response body, among them
 [Email Address Obfuscation](#zone-settings-that-rewrite-responses), which
 would rewrite the `mailto:` links on the legal pages and add a script. With
-it, the served bytes stay those of the release build, which the byte
+it, the legal pages are served byte for byte as built, which the byte
 comparison in `verify-deployment.mjs` and the published
-[bundle hashes](#bundle-hashes) rely on. `verify-deployment.mjs` names the
-directive when a response lacks it, and `CACHE_CONTROL` in
-`package-cf-output.mjs` holds the expected value.
+[bundle hashes](#bundle-hashes) rely on. They are the only served pages with
+email addresses.
 
 Cloudflare also documents that `no-transform` stops it from compressing
-origin responses with Brotli or gzip. Whether that applies to Workers static
-assets has not been checked here. On 30 September 2026, before a build with
-this header was deployed, `oxfer.app` served `p2p-transfer_bg.wasm` with
-`content-encoding: br`: about 3.6 MB transferred instead of 9.3 MB. After the first deploy with `no-transform`,
-check it:
+responses with Brotli or gzip. On 30 September 2026 `oxfer.app` served
+`p2p-transfer_bg.wasm` with `content-encoding: br`: about 3.6 MB transferred
+instead of 9.3 MB. So the app shell, the JavaScript and the WASM do not get
+`no-transform`, and keep that compression. Check it after a deploy:
 
 ```sh
 curl -sS -o /dev/null -D - -H 'Accept-Encoding: br, gzip' \
   https://oxfer.app/p2p-transfer_bg.wasm | grep -i '^content-encoding:'
 ```
 
-No output means the WASM is now sent uncompressed. Then choose between
-keeping `no-transform` with the larger first load, or removing it from
-`assets/_headers`, `CACHE_CONTROL` and `tests/package-cf-output.test.mjs` and
-relying on Email Address Obfuscation being off; the byte comparison still
-catches any rewrite.
+It should print `content-encoding: br` (or `gzip`). The byte comparison in
+`verify-deployment.mjs` still catches any rewrite of the other paths.
+
+`verify-deployment.mjs` reads the expected directives of each path from
+`assets/_headers` (`cacheControlDirectives` in `package-cf-output.mjs`). It
+names the directive when a legal page lacks `no-transform`, and fails when
+any other checked path has it. Before fetching anything,
+`checkLocalCacheControl` applies the same rule to the local
+`assets/_headers`. To add a page with an email address, add its clean path
+to `NO_TRANSFORM_PATHS`, give it a `Cache-Control: no-transform` rule in
+`assets/_headers`, and add it to the paths `verify-deployment.mjs` checks.
+`tests/package-cf-output.test.mjs` pins the list and checks that the three
+agree, so update it in the same commit.
 
 ## Legal pages and the placeholder guard
 
@@ -302,18 +343,38 @@ For a local test build only:
 OXFER_ALLOW_PLACEHOLDERS=1 npm run build
 ```
 
-It warns and packages anyway. Never set it in CI and never deploy its output.
+It warns and packages anyway. It also bypasses the
+[relay go-live guard](#relay-go-live-guard), but not the relay-list check.
+Never set it in CI and never deploy its output.
 
 ### Relay go-live guard
 
-The filled pages describe the operator's relay at `relay.oxfer.app`. Once no
-placeholder is left, `build-web.sh` also refuses to package when any of the
-three pages mentions `relay.oxfer.app` and `P2P_RELAY_URL` is unset (an empty
-or blank value counts as unset), because that build uses n0's public relays.
-It checks only that a relay list is set, not that it names
-`relay.oxfer.app`; `verify-deployment.mjs` then checks that the deployed CSP
-matches the value. `OXFER_ALLOW_PLACEHOLDERS=1` bypasses this guard too, for
-local test builds only.
+The filled pages describe the operator's relay at `relay.oxfer.app`, run
+from the VPS kit in [`deploy/relay/`](../deploy/relay/README.md). Once no
+placeholder is left, `build-web.sh` also refuses to package unless
+`P2P_RELAY_URL` lists `https://relay.oxfer.app`. An unset, empty or
+ASCII-whitespace-only value (n0's public relays) fails, and so does a list
+of only other relays; a list with `https://relay.oxfer.app` among others
+passes. The guard runs
+`node package-cf-output.mjs --check-relay --require-relay=https://relay.oxfer.app`;
+the relay is `operator_relay` in `build-web.sh` and `OPERATOR_RELAY` in
+`package-cf-output.mjs`. `verify-deployment.mjs` then checks that the
+deployed CSP matches the value.
+
+The guard does not read the page text. Instead, a test in
+`tests/web-pages.test.mjs` fails when `privacy.html` no longer names
+`relay.oxfer.app`, so the guard changes in the same commit as the pages. The
+same test runs the guard blocks of `build-web.sh` (between its `# BEGIN` and
+`# END` markers) against scratch copies of the pages.
+`OXFER_ALLOW_PLACEHOLDERS=1` bypasses this guard too, with a warning, for
+local test builds only. It never bypasses the relay-list check that runs
+before the Trunk build ([relay selection](#relay-selection-p2p_relay_url)).
+
+The pages and the compliance records are written for the VPS kit. The kit's
+Fly.io variant would make statements about IP blocking, log retention, the
+relay's processor and international transfers false; the relay runbook's
+[Fly.io variant](../deploy/relay/README.md#flyio-variant) section lists what
+must change first.
 
 So set the repository variable `P2P_RELAY_URL`
 ([relay selection](#relay-selection-p2p_relay_url)) no later than the commit
@@ -330,8 +391,9 @@ Obfuscation is one such feature. Cloudflare turns it on for new zones. It
 rewrites email addresses, including `mailto:` links, and injects an
 `email-decode.min.js` script. The legal pages link to `privacy@oxfer.app` and
 `abuse@oxfer.app`. Cloudflare documents that it skips responses with
-`Cache-Control: no-transform`, which every path now sends
-([why](#why-cache-control-no-transform)). Turn it off in the zone as well:
+`Cache-Control: no-transform`, which the legal pages send
+([why only they do](#why-cache-control-no-transform)). Turn it off in the
+zone as well:
 **Security** → **Settings** → filter **Client-side abuse** → **Email Address
 Obfuscation** → **Off**. If `/privacy`, `/terms` or `/abuse` still differ
 from the release build, check this setting and any other feature that edits

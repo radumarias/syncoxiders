@@ -41,14 +41,22 @@ start, these are all the items the web app keeps (Chromium: DevTools →
 | --- | --- | --- |
 | localStorage `oxfer.theme.v1` (`rusty` or `clean`) | Only when the user picks a theme in the **Theme** menu, or once at start-up to carry over a non-default theme the user picked in an older version | Clearing site data; start-up also removes a default `clean` value that an older version wrote without a choice |
 | Service worker `sw.js` and Cache Storage `oxfer-v3` (the app shell, fetched network-first) | On a visit without `#dev` | `#dev` ([below](#console-handle-__p2p)), a new cache name in `assets/sw.js`, clearing site data |
-| IndexedDB database and origin-private (OPFS) directory, both `oxfer-resume` | Data only when the receiver ticks **Keep a copy here so I can continue later**. The app looks for saved copies at start-up, which creates an empty database if there is none; the directory appears with the first kept copy | Each copy: **Delete saved copy** → **Delete permanently** under **Saved files in this browser**. The empty database and directory: clearing site data |
+| IndexedDB database and origin-private (OPFS) directory, both `oxfer-resume` | Only when the receiver ticks **Keep a copy here so I can continue later** and saving starts: both are created then. Looking for saved copies at start-up, **Download file** and deleting a copy never create either | Each copy: **Delete saved copy** → **Delete permanently** under **Saved files in this browser**. The database and directory themselves stay, empty, after the last copy is deleted: clearing site data removes them |
 
-Oxfer writes no other localStorage keys. Older versions also let eframe write
-its `app` key and `egui_memory_ron`; the current build writes neither and
-removes both at start-up, after carrying over the theme. Running diagnostics
-adds nothing to this list. The desktop app is different: it keeps eframe's
-normal settings file on disk, with the theme, the save folder and window
-state.
+Oxfer sets no cookies and writes no other localStorage keys. Cloudflare may
+set its own security cookies, such as `__cf_bm`, when its bot protection is
+active (privacy notice, section 6).
+
+Older versions also let eframe write its `app` key and `egui_memory_ron`; the
+current build writes neither and removes both at start-up, after carrying
+over the theme. Older versions also created an empty `oxfer-resume` database
+at start-up while looking for saved copies, so a browser that ran one may
+still show it. The current build leaves that database alone (deleting it
+could race a save in another tab); clearing site data removes it.
+
+Running diagnostics adds nothing to this list. The desktop app is different:
+it keeps eframe's normal settings file on disk, with the theme, the save
+folder and window state.
 
 ## Relay probes
 
@@ -84,9 +92,12 @@ them within 15 seconds. The label names the configuration:
 If a build meant for `relay.oxfer.app` still shows the n0 probe list and the
 `DNS dots removed` label, it was built without the variable, or with a value
 the app rejected. Rejected values are logged in the browser console as
-`P2P_RELAY_URL is not a valid relay list (...)`. **Technical details** on the
-home screen says the same thing in words: "a relay operated by Oxfer" or
-"n0.computer's public iroh relays".
+`P2P_RELAY_URL is not a valid relay list (...)`. `build-web.sh`, which makes
+every deployed build, refuses such values before building, including ones
+with an invisible character such as a byte-order mark, so a rejected value
+points to a build made another way (`trunk build` or `trunk serve`).
+**Technical details** on the home screen says the same thing in words: "a
+relay operated by Oxfer" or "n0.computer's public iroh relays".
 
 ### n0 builds: trailing DNS dots
 
@@ -104,11 +115,20 @@ custom relay is configured)`.
 The page's Content-Security-Policy interacts with the dotted checks. On n0
 builds, `connect-src` allows `https://*.iroh.link` and `wss://*.iroh.link`.
 A hostname ending in a dot does not match those sources (checked in Chromium).
-While the policy is report-only, the dotted probe still runs, and the console
-shows a `[Report Only] Refused to connect to
-'wss://euc1-1.relay.n0.iroh.link./relay'` message. Once the policy is enforced,
-the dotted probe and the legacy dotted check report a failure whatever the
-network does. Custom-relay builds run neither check.
+While the policy is report-only, both dotted checks still run, and each
+dotted connection adds a `[Report Only] Refused to connect to ...` console
+message:
+
+- the dotted probe, always: `wss://euc1-1.relay.n0.iroh.link./relay`;
+- the legacy dotted check, only when the first registration failed: its
+  HTTPS latency probes of `https://<relay>.relay.n0.iroh.link./ping` for
+  `euc1-1`, `use1-1`, `usw1-1` and `aps1-1`, repeated while it runs (three
+  rounds in a Chromium test, so 12 messages), and a relay connection to
+  `wss://<relay>.relay.n0.iroh.link./relay` if a probe answers.
+
+Once the policy is enforced, the dotted probe and the legacy dotted check
+report a failure whatever the network does. Custom-relay builds run neither
+check.
 
 ## Direct WebRTC path and STUN
 
@@ -118,6 +138,11 @@ server over UDP, it gathers no server-reflexive (`srflx`) candidates and a
 direct data channel may not open. The transfer then continues over the iroh
 relay. The paired diagnostics do not test ICE; use the `WebRTC perf` lines
 below.
+
+The desktop app uses neither WebRTC nor this STUN server, and is not served
+by Cloudflare, so its **Technical details** text names only the relay
+operator (or says the build has no relay). It says instead that its share
+links contain the device's IP addresses.
 
 ## Slow WebRTC transfers
 
