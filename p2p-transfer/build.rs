@@ -31,7 +31,8 @@ fn main() {
     println!("cargo:rustc-env=OXFER_GIT_REVISION={revision}");
 
     // The commit timestamp is stable across rebuilds of the same revision. It is
-    // not the deployment time; the Pages dashboard records that separately.
+    // not the deployment time; the Cloudflare Worker's deployment history (and
+    // the oxfer-web workflow run) records that separately.
     let committed_at = git(&["show", "-s", "--format=%cI", "HEAD"])
         .filter(|date| date.len() == 25 && date.is_ascii() && date.as_bytes()[10] == b'T')
         .unwrap_or_else(|| "unknown".to_string());

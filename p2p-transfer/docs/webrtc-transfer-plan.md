@@ -1,9 +1,18 @@
 # Plan: browser-to-browser transfer over WebRTC with iroh signaling
 
+> **Historical design document.** Where this plan and the code differ, the code
+> is current, and [`compliance-plan.md`](compliance-plan.md) supersedes it for
+> relays, STUN, headers, page scripts and browser storage. Since it was
+> written: `P2P_RELAY_URL` became a relay list, the only STUN server is
+> Cloudflare's, page scripts moved out of `index.html` into `assets/`, and
+> cross-session resume shipped as the opt-in "Keep a copy". Current guidance
+> is in [`../CLAUDE.md`](../CLAUDE.md).
+
 Branch: `webrtc-transfer` (based on `improve-ui-38` @ e9cc2e9).
-Status: implemented through browser WebRTC and streaming file sinks on the
-`webrtc-transfer` branch; cross-session resume and production relay operations
-remain. The original design and amendments are retained below.
+Status when written: implemented through browser WebRTC and streaming file
+sinks on the `webrtc-transfer` branch; cross-session resume and production
+relay operations remain. The original design and amendments are retained
+below.
 
 ## 1. Summary
 
@@ -179,9 +188,11 @@ index.html        fixed script tags, no WebTorrent
 
 - `pub struct Node { endpoint: Endpoint, router: Router, files: SharedFiles }`.
 - One constructor: `Node::bind(files, relay: RelayChoice) -> Result<Node>`,
-  where `RelayChoice` is `N0Preset` for development or `Custom(RelayUrl)` for
-  the self-hosted relay. It always generates a **fresh `SecretKey`** so links
-  from the same person are not linkable by endpoint id.
+  where `RelayChoice` selects n0's public relays for development or
+  `Custom(Vec<RelayUrl>)` for self-hosted relays, parsed from the
+  comma-separated `P2P_RELAY_URL` (as built: `N0`, `N0WithoutTrailingDots`,
+  `Custom(Vec<RelayUrl>)` and `None`). It always generates a **fresh
+  `SecretKey`** so links from the same person are not linkable by endpoint id.
 - `Node::ticket(&self) -> EndpointTicket` after `endpoint.online().await`,
   built from `endpoint.addr()`.
 - `Node::link(&self, base_url) -> String` = `{base}#{ticket}&cap={secret}`.
@@ -308,7 +319,9 @@ is stale, so a switch can never duplicate or reorder bytes.
   `relay` → `Relayed`, else `Direct`. With no TURN configured this is always
   `Direct` once connected, but keep it so a TURN server can be added later
   without UI changes.
-- ICE servers: `stun:stun.cloudflare.com:3478` and `stun:stun.l.google.com:19302`.
+- ICE servers: `stun:stun.cloudflare.com:3478` only. `stun.l.google.com` was
+  removed: every STUN server receives users' IP addresses, and Cloudflare
+  already serves the app (compliance plan A4 and A7).
 - Failure: if `connectionState` is not `connected` within 10 s or becomes
   `failed`, the receiver sends `Control::UseRelay` and both sides switch
   `Transport` to `IrohStream`, resuming from the last written offset.
@@ -364,8 +377,10 @@ is stale, so a switch can never duplicate or reorder bytes.
 
 - Development: `presets::N0` (public, rate-limited, no uptime guarantee).
 - Production: self-host `iroh-relay` 1.1 on a small VPS with a domain and
-  Let's Encrypt, then `RelayChoice::Custom(url)` selected by a compile-time
-  env var. Browsers need `wss://` with a valid certificate.
+  Let's Encrypt, then `RelayChoice::Custom(urls)` selected by the compile-time
+  `P2P_RELAY_URL`, a comma-separated list of relay URLs. Browsers need
+  `wss://` with a valid certificate. The kit is in
+  [`deploy/relay/`](../deploy/relay/README.md).
 
 ### 3.13 Prepare phase and file snapshot
 
