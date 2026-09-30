@@ -1,0 +1,106 @@
+#!/bin/sh
+# IP bans for the Oxfer relay host that survive reboots, nftables reloads and
+# setup.sh reruns. Installed as /usr/local/sbin/oxfer-relay-ban by setup.sh.
+#   oxfer-relay-ban add ADDRESS [DAYS|permanent]  ban now and persist (30 days)
+#   oxfer-relay-ban del ADDRESS                   lift now and persist
+#   oxfer-relay-ban list                          bans and their expiry (UTC)
+#   oxfer-relay-ban prune                         lift expired bans (hourly timer)
+# ADDRESS: an IPv4 or IPv6 address or prefix, e.g. 2001:db8:1:2::/64.
+#
+# Bans are lines in /etc/nftables.d/bans.nft, which /etc/nftables.conf
+# includes, each with its absolute expiry:
+#   add element inet oxfer_relay banned_v4 { 203.0.113.7 timeout 2592000s } # expires 1793361600
+# The kernel lifts a ban at its timeout while the ruleset stays loaded. A
+# reload or reboot loads the line again with the timeout it was written with,
+# so the hourly prune deletes lines past their expiry, and their elements.
+# prune prints no addresses, so none reach the journal.
+set -eu
+FILE=/etc/nftables.d/bans.nft
+DIR=${FILE%/*}
+die() { printf 'oxfer-relay-ban: %s\n' "$*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || die "run as root"
+exec 9>/run/oxfer-relay-ban.lock
+flock 9
+
+set_of() { case "$1" in *:*) echo banned_v6 ;; *) echo banned_v4 ;; esac; }
+utc() { date -u -d "@$1" '+%Y-%m-%d %H:%M UTC'; }
+
+# Managed lines of FILE as "set address expiry"; expiry 0 means permanent.
+entries() {
+	[ -f "$FILE" ] || return 0
+	awk '$1 == "add" && $2 == "element" && $4 == "oxfer_relay" && $6 == "{" {
+		if ($8 == "timeout" && $12 == "expires") print $5, $7, $13
+		else if ($8 == "}" && $10 == "permanent") print $5, $7, 0
+	}' "$FILE"
+}
+
+# rewrite "ADDRESSES TO DROP" "LINE TO ADD": replace FILE atomically, then
+# check the whole ruleset with it and roll back if nft rejects it.
+rewrite() {
+	install -d -m 0755 "$DIR"
+	[ -f "$FILE" ] || printf '# Oxfer relay IP bans; edit with oxfer-relay-ban.\n' >"$FILE"
+	awk -v drop="$1" 'BEGIN { n = split(drop, a, " "); for (i = 1; i <= n; i++) skip[a[i]] = 1 }
+		!($1 == "add" && $2 == "element" && $4 == "oxfer_relay" && ($7 in skip))' \
+		"$FILE" >"$DIR/.bans.nft.new"
+	[ -z "$2" ] || printf '%s\n' "$2" >>"$DIR/.bans.nft.new"
+	chmod 0600 "$DIR/.bans.nft.new"
+	cp -p "$FILE" "$DIR/.bans.nft.old"
+	mv -f "$DIR/.bans.nft.new" "$FILE"
+	if ! out=$(nft -c -f /etc/nftables.conf 2>&1); then
+		mv -f "$DIR/.bans.nft.old" "$FILE"
+		[ -n "${QUIET:-}" ] || printf '%s\n' "$out" >&2
+		die "the ruleset does not validate with this change; $FILE left as it was"
+	fi
+	rm -f "$DIR/.bans.nft.old"
+}
+
+now=$(date +%s)
+case "${1:-}" in
+add)
+	[ $# -ge 2 ] && [ $# -le 3 ] || die "usage: oxfer-relay-ban add ADDRESS [DAYS|permanent]"
+	a=$(printf '%s' "$2" | tr 'A-F' 'a-f')
+	s=$(set_of "$a")
+	days=${3:-30}
+	case "$days" in permanent) ;; '' | *[!0-9]* | 0*) die "DAYS must be a whole number above 0, or 'permanent'" ;; esac
+	nft list table inet oxfer_relay >/dev/null 2>&1 || die "firewall not loaded; run setup.sh"
+	# Deleting first lets a repeated add set a new expiry.
+	nft delete element inet oxfer_relay "$s" "{ $a }" 2>/dev/null || true
+	if [ "$days" = permanent ]; then
+		nft add element inet oxfer_relay "$s" "{ $a }" || die "nft refused the address"
+		line="add element inet oxfer_relay $s { $a } # permanent"
+		until=never
+	else
+		secs=$((days * 86400))
+		nft add element inet oxfer_relay "$s" "{ $a timeout ${secs}s }" || die "nft refused the address"
+		line="add element inet oxfer_relay $s { $a timeout ${secs}s } # expires $((now + secs))"
+		until=$(utc $((now + secs)))
+	fi
+	rewrite "$a" "$line"
+	echo "banned until $until"
+	;;
+del)
+	[ $# -eq 2 ] || die "usage: oxfer-relay-ban del ADDRESS"
+	a=$(printf '%s' "$2" | tr 'A-F' 'a-f')
+	nft delete element inet oxfer_relay "$(set_of "$a")" "{ $a }" 2>/dev/null ||
+		echo "was not in the loaded ruleset"
+	rewrite "$a" ""
+	echo "lifted"
+	;;
+list)
+	entries | while read -r _ a e; do
+		if [ "$e" = 0 ]; then u=permanent; else u=$(utc "$e"); fi
+		printf '%-43s %s\n' "$a" "$u"
+	done
+	;;
+prune)
+	QUIET=1
+	old=$(entries | awk -v now="$now" '$3 != 0 && $3 <= now')
+	[ -n "$old" ] || exit 0
+	printf '%s\n' "$old" | while read -r s a _; do
+		nft delete element inet oxfer_relay "$s" "{ $a }" 2>/dev/null || true
+	done
+	rewrite "$(printf '%s\n' "$old" | awk '{ print $2 }')" ""
+	echo "lifted $(printf '%s\n' "$old" | wc -l) expired ban(s)"
+	;;
+*) die "usage: oxfer-relay-ban add|del|list|prune (details at the top of $0)" ;;
+esac

@@ -8,7 +8,11 @@
 #
 # First boot writes the kit to /opt/oxfer-relay/ and runs setup.sh, which
 # installs the pinned, checksum-verified iroh-relay binary, the systemd unit,
-# the firewall, journald retention, key-only SSH and unattended upgrades.
+# the firewall and ban tool, log retention, key-only SSH and unattended
+# upgrades. Without DNS pointing here it leaves the relay stopped.
+# Each file below is the kit file of the same name in
+# p2p-transfer/deploy/relay/, gzip-compressed and base64-encoded to fit the
+# providers' user-data limits; "sh render.sh --check" proves they match.
 # Progress: tail -f /var/log/cloud-init-output.log
 
 ssh_pwauth: false
@@ -17,6 +21,8 @@ package_upgrade: true
 packages:
   - ca-certificates
   - curl
+  - iproute2
+  - logrotate
   - nftables
   - unattended-upgrades
 
@@ -24,543 +30,352 @@ write_files:
   - path: /opt/oxfer-relay/setup.sh
     owner: root:root
     permissions: "0755"
+    encoding: gz+b64
     content: |
-      #!/bin/sh
-      # Oxfer relay host setup for Debian 12/13 and Ubuntu 24.04. Run as root.
-      #
-      # Idempotent. cloud-init.yaml runs it on first boot from /opt/oxfer-relay/.
-      # Run it by hand on a provider without user data, after an upgrade of the
-      # pins below, and in the yearly rebuild rehearsal:
-      #   cd p2p-transfer/deploy/relay
-      #   tar -cf - . | ssh root@HOST \
-      #     'mkdir -p /opt/oxfer-relay && tar -C /opt/oxfer-relay --no-same-owner -xf - && sh /opt/oxfer-relay/setup.sh'
-      #
-      # It installs a prebuilt, checksum-verified iroh-relay binary and never
-      # compiles anything on the host.
-      set -eu
-
-      # Relay release, pinned by version and SHA-256. Keep the version equal to
-      # the iroh version in the workspace Cargo.lock. Assets are the static musl
-      # builds published on the n0-computer/iroh GitHub release:
-      #   https://github.com/n0-computer/iroh/releases/download/v$RELAY_VERSION/iroh-relay-v$RELAY_VERSION-<target>.tar.gz
-      # Hashes computed from the downloaded assets on 2026-09-30; they equal the
-      # digests GitHub lists for the release assets.
-      RELAY_VERSION=1.1.0
-      RELAY_SHA256_X86_64=9a68108b824e4164ad2eec729cf0e8167e4cb50581cb745a242bace135df7614
-      RELAY_SHA256_AARCH64=1b4261b6dd0d17ae9a7516aa6d122b296a77678bac174ce30262702c9f91cb00
-
-      KIT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-      BIN=/usr/local/bin/iroh-relay
-
-      log() { printf 'oxfer-relay-setup: %s\n' "$*"; }
-      die() { printf 'oxfer-relay-setup: ERROR: %s\n' "$*" >&2; exit 1; }
-
-      [ "$(id -u)" -eq 0 ] || die "run as root"
-      for f in config.toml iroh-relay.service nftables.conf journald-oxfer-relay.conf \
-      	sshd-oxfer-relay.conf unattended-upgrades.conf; do
-      	[ -f "$KIT_DIR/$f" ] || die "missing $KIT_DIR/$f"
-      done
-
-      # shellcheck source=/dev/null
-      . /etc/os-release
-      case "${ID:-}:${VERSION_ID:-}" in
-      debian:12 | debian:13 | ubuntu:24.04) ;;
-      *) log "WARNING: untested system ${ID:-?} ${VERSION_ID:-?}; continuing" ;;
-      esac
-
-      # 1. Packages. rsyslog would copy the journal into /var/log with weeks of
-      # retention; the journal, capped at three days, is the only log store here.
-      # On first boot apt's daily timers may hold the dpkg lock; wait for it.
-      export DEBIAN_FRONTEND=noninteractive
-      apt_get() { apt-get -o DPkg::Lock::Timeout=600 "$@"; }
-      apt_get update -q
-      apt_get install -y -q --no-install-recommends ca-certificates curl nftables unattended-upgrades
-      if dpkg-query -W -f='${Status}' rsyslog 2>/dev/null | grep -q 'ok installed'; then
-      	apt_get purge -y -q rsyslog
-      fi
-
-      # 2. Relay binary.
-      case "$(uname -m)" in
-      x86_64) target=x86_64-unknown-linux-musl sha=$RELAY_SHA256_X86_64 ;;
-      aarch64 | arm64) target=aarch64-unknown-linux-musl sha=$RELAY_SHA256_AARCH64 ;;
-      *) die "no pinned iroh-relay build for $(uname -m)" ;;
-      esac
-      restart_relay=0
-      if [ "$("$BIN" --version 2>/dev/null || true)" != "iroh-relay $RELAY_VERSION" ]; then
-      	asset="iroh-relay-v$RELAY_VERSION-$target.tar.gz"
-      	tmp=$(mktemp -d)
-      	trap 'rm -rf "$tmp"' EXIT
-      	log "downloading $asset"
-      	curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-delay 3 -o "$tmp/$asset" \
-      		"https://github.com/n0-computer/iroh/releases/download/v$RELAY_VERSION/$asset"
-      	printf '%s  %s\n' "$sha" "$tmp/$asset" | sha256sum -c --quiet - ||
-      		die "SHA-256 mismatch for $asset; refusing to install"
-      	tar -xzf "$tmp/$asset" -C "$tmp" ./iroh-relay
-      	[ "$("$tmp/iroh-relay" --version)" = "iroh-relay $RELAY_VERSION" ] ||
-      		die "downloaded binary does not report version $RELAY_VERSION"
-      	install -m 0755 -o root -g root "$tmp/iroh-relay" "$BIN.new"
-      	mv -f "$BIN.new" "$BIN"
-      	restart_relay=1
-      	log "installed $("$BIN" --version)"
-      fi
-
-      # 3. Configuration files. install_file SRC DST MODE; returns 0 when DST changed.
-      install_file() {
-      	if cmp -s "$1" "$2"; then return 1; fi
-      	install -D -m "$3" -o root -g root "$1" "$2"
-      	log "updated $2"
-      }
-
-      if install_file "$KIT_DIR/config.toml" /etc/iroh-relay/config.toml 0644; then restart_relay=1; fi
-      if install_file "$KIT_DIR/iroh-relay.service" /etc/systemd/system/iroh-relay.service 0644; then restart_relay=1; fi
-      if install_file "$KIT_DIR/journald-oxfer-relay.conf" /etc/systemd/journald.conf.d/zz-oxfer-relay.conf 0644; then
-      	systemctl restart systemd-journald
-      	journalctl --rotate >/dev/null 2>&1 || true
-      	journalctl --vacuum-time=3d >/dev/null 2>&1 || true
-      fi
-      install_file "$KIT_DIR/unattended-upgrades.conf" /etc/apt/apt.conf.d/52oxfer-relay 0644 || true
-
-      # 4. Firewall: check first, then load, so a bad file never drops the host's
-      # existing rules.
-      install -d -m 0755 /etc/nftables.d
-      nft -c -f "$KIT_DIR/nftables.conf" || die "nftables.conf does not validate"
-      install_file "$KIT_DIR/nftables.conf" /etc/nftables.conf 0755 || true
-      systemctl enable nftables >/dev/null 2>&1
-      systemctl restart nftables
-
-      # 5. SSH: key-only, but only once a key is actually installed.
-      has_key=0
-      for k in /root/.ssh/authorized_keys /home/*/.ssh/authorized_keys; do
-      	if [ -s "$k" ] && grep -Eq '^(ssh-|ecdsa-|sk-)' "$k"; then has_key=1; fi
-      done
-      if [ ! -x /usr/sbin/sshd ]; then
-      	log "sshd not installed; skipping SSH hardening"
-      elif [ "$has_key" -eq 0 ]; then
-      	log "WARNING: no authorized SSH key found; password login left as is"
-      else
-      	# Ubuntu 24.04 starts sshd through ssh.socket, so its privilege
-      	# separation directory (RuntimeDirectory=sshd) may not exist yet, and
-      	# "sshd -t" fails without it.
-      	install -d -m 0755 /run/sshd
-      	cp /etc/ssh/sshd_config.d/01-oxfer-relay.conf /tmp/oxfer-sshd.bak 2>/dev/null || true
-      	if install_file "$KIT_DIR/sshd-oxfer-relay.conf" /etc/ssh/sshd_config.d/01-oxfer-relay.conf 0644; then
-      		if /usr/sbin/sshd -t; then
-      			systemctl try-reload-or-restart ssh.service
-      		else
-      			log "WARNING: sshd rejected the drop-in; restoring the previous one"
-      			if [ -f /tmp/oxfer-sshd.bak ]; then
-      				mv -f /tmp/oxfer-sshd.bak /etc/ssh/sshd_config.d/01-oxfer-relay.conf
-      			else
-      				rm -f /etc/ssh/sshd_config.d/01-oxfer-relay.conf
-      			fi
-      		fi
-      	fi
-      	rm -f /tmp/oxfer-sshd.bak
-      fi
-
-      # 6. Unattended upgrades and the relay itself.
-      systemctl enable --now unattended-upgrades.service >/dev/null 2>&1 || true
-      systemctl daemon-reload
-      systemctl enable iroh-relay.service >/dev/null 2>&1
-      if [ "$restart_relay" -eq 1 ]; then
-      	systemctl restart iroh-relay.service
-      else
-      	systemctl start iroh-relay.service
-      fi
-
-      # 7. Local smoke test: the plain-HTTP captive-portal endpoint answers even
-      # before the certificate exists.
-      i=0
-      until [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1/generate_204 || true)" = 204 ]; do
-      	i=$((i + 1))
-      	[ "$i" -lt 10 ] || die "relay does not answer on port 80; see: journalctl -u iroh-relay"
-      	sleep 1
-      done
-      log "relay is running: $("$BIN" --version)"
-      log "next: verify from outside, see README.md (First-boot verification)"
+      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
   - path: /opt/oxfer-relay/config.toml
     owner: root:root
     permissions: "0644"
+    encoding: gz+b64
     content: |
-      # iroh-relay 1.1.0 configuration for relay.oxfer.app.
-      # Installed as /etc/iroh-relay/config.toml and read with
-      #   iroh-relay --config-path /etc/iroh-relay/config.toml
-      #
-      # Every key comes from the config structs of the iroh-relay 1.1.0 binary
-      # (Config, TlsConfig, Limits, PerClientRateLimitConfig, RateLimitConfig in
-      # src/main.rs). None of them uses #[serde(deny_unknown_fields)], so a
-      # misspelt or misplaced key is silently ignored rather than rejected. Keep
-      # keys exactly where they are, and re-check them against src/main.rs when
-      # the relay version changes.
-      #
-      # Line references are to iroh-relay-1.1.0/src/main.rs unless a file is named.
-
-      # Relay service on (main.rs:104-105; default true, main.rs:371-373).
-      enable_relay = true
-
-      # Plain-HTTP listener. With [tls] present it answers only GET /generate_204,
-      # the captive-portal check native iroh clients send to http://<relay>/
-      # (src/server.rs:802-816 and 1161-1186; iroh-1.1.0
-      # src/net_report/reportgen.rs:620). Everything else gets 404. Certificates
-      # do not use this port (see cert_mode below).
-      # Field main.rs:118; default [::]:80 (main.rs:339-342). "[::]" is dual-stack
-      # on Linux with the default net.ipv6.bindv6only=0, so one socket serves both
-      # the A and the AAAA record.
-      http_bind_addr = "[::]:80"
-
-      # QUIC address discovery (QAD) on UDP, used by native clients only; browsers
-      # never send UDP to the relay. Field main.rs:133-134, default false.
-      # Requires [tls] (main.rs:585-587).
-      enable_quic_addr_discovery = true
-
-      # Aggregate Prometheus counters, no per-client data (main.rs:142-143,
-      # default true).
-      enable_metrics = true
-      # Must stay on loopback. When unset it defaults to the http_bind_addr IP with
-      # port 9090, which would be [::]:9090 on every interface (main.rs:344-347).
-      metrics_bind_addr = "127.0.0.1:9090"
-
-      # Relay access for every endpoint (main.rs:154-155 and 158-197). Oxfer shares
-      # use fresh endpoint keys, so an allowlist cannot work. 1.1.0 also accepts
-      #   access.denylist = ["<endpoint id>", ...]
-      # (main.rs:166-167 and 260-272); see "Abuse blocking" in README.md.
-      access = "everyone"
-
-      [tls]
-      # HTTPS and WSS listener: /relay, /ping, /healthz, / and /robots.txt
-      # (src/server.rs:731-740). Field main.rs:399; default is the http_bind_addr
-      # IP with port 443 (main.rs:460-463).
-      https_bind_addr = "[::]:443"
-
-      # QAD socket. Field main.rs:406; default is the https_bind_addr IP with port
-      # 7842 (main.rs:465-469, src/defaults.rs:7). Clients assume 7842 for a relay
-      # URL without explicit QUIC settings (src/relay_map.rs:272-283; iroh-1.1.0
-      # src/net_report/reportgen.rs:648-658), so do not move it. noq 1.2.0 clears
-      # IPV6_V6ONLY on this socket, so it is dual-stack (noq src/endpoint.rs:129-135).
-      quic_bind_addr = "[::]:7842"
-
-      # Certificates from Let's Encrypt. Variant names are case-sensitive: Manual,
-      # LetsEncrypt, Reloading (main.rs:62-68). The ACME client, tokio-rustls-acme
-      # 0.9.1, answers only the TLS-ALPN-01 challenge, on the HTTPS listener itself
-      # (tokio-rustls-acme src/acme.rs:187-191; src/server/http_server.rs:1088-1096),
-      # so TCP 443 must reach this process directly: no TLS-terminating proxy.
-      cert_mode = "LetsEncrypt"
-
-      # Certificate name; a string or a list (main.rs:407-409 and 488-503).
-      hostname = "relay.oxfer.app"
-
-      # Required in LetsEncrypt mode, sent as mailto: (main.rs:445-448 and 644-655).
-      contact = "ops@oxfer.app"
-
-      # true selects the Let's Encrypt production directory (main.rs:430-444,
-      # default true). Set false only while debugging DNS or the firewall, to stay
-      # clear of production rate limits, then set it back.
-      prod_tls = true
-
-      # ACME account key and certificate cache (main.rs:414-417 and 656). Files are
-      # named cached_account_<hash> and cached_cert_<hash>
-      # (tokio-rustls-acme src/caches/dir.rs:41-59). Lives in the systemd
-      # StateDirectory, so it survives restarts and upgrades.
-      cert_dir = "/var/lib/iroh-relay/certs"
-
-      # Rate limits (main.rs:505-513). In 1.1.0 only the per-client receive limit
-      # is implemented. accept_conn_limit and accept_conn_burst are parsed but have
-      # no effect (src/server.rs:486-499), so they are left out; nftables.conf
-      # limits new connections per source address instead.
-      [limits.client.rx]
-      # Token bucket on bytes read from each client connection (main.rs:515-534 and
-      # 727-752). Both are u32 and must be non-zero. 25 MiB/s steady, 50 MiB burst.
-      bytes_per_second = 26214400
-      max_burst_bytes = 52428800
+      H4sIAAAAAAACA5VY70/jSBL9zl/Rgg8Lp9ixHcdJYGd1LHB3aGGWHZhZnUajqON0Ei/+td1tAvvX
+      36tqOzEwd9LNSEMmdldXv3r16jVHItPVxtMqly8i9EM/EGlVrrJ1o6XNqlKsKi34qV89r5T2ZV37
+      B0fCKNvUvtmIrDRW5rkRmRXSiKGy6XAfcuiC+bYq8oHYZnYj7EZhtX5S+geDQEtVvuSZsaJQeq2W
+      iCeOjVJCpqkyRixUXm1PzoRaIr7dZEasslwNRFnRf6VFtvULJfRJySVvcNo/kee5BLxaYuv/kdzB
+      EWJcIakX8aheELVQ2EpXBefrXhTG6ia1RlQr/vYdcouslPoFgY4veMFAPOSm+3iTFZk1A3Gn9EWe
+      qdJ+klbxl90bb74AFAS0ToeFzEpfmxNffKxK1W5fiMYgx6OvAHOpjgnHeVM+ltW2nK8ylS/NybeB
+      MJWQiFJkxtQqtwLVxOc6lymwppMCUQNES5vj87qsNL5H6TdKE74lav+HSq1a+uIXpWqEwiIj1LNM
+      acUW7ynK5kVIjbLIEquVl25U+uiSlGtJFOmfg1bR0QhDBx9wN0S2FDuulfG5GjdZSc9BOlWCC7SB
+      sFUPdY9RH/YjN2VOrJHMEjpbKQvkfsAEoZ2IeVkKDEGzdtFpGMReGIzPwMWVbAASyoyzdI9Hk9Ab
+      TUYn/oEq5SJXc5fzB36NIt/leNP718PDnSAmqxJtIn4nrn+1ufkmaq0MAOYOKc0WZ8X2AO+fVw9i
+      uKbXUfh5FMSDFpRU1jZ7Ul5dafSWcGiWkr7j44uUCYTKKeANTDbW1qfD4Y+c2U9DYiCh4tqMzjAN
+      Im8aJlyfMExCLwynyZnDklFsmVYqi+PRvkP3A+nR+iQKwD7uDzRhuRYqN0qsFXKIg9gXF0rbbJWl
+      OAg3dcUNCoK6nqVIrq1TvDgvqqVqO5ta9x/E1h3cyGxfia+np9+Q/L5Wo9HMG8URkjmkZ4dU42Uj
+      cw8qlD4iGAoL4jTPe7HpYuFsflY/JT7adPmUUAk+BNwh1FSmSh+VdcoE2anspi3GOYPGn/AHhEwr
+      DUYR5HOKNJfLpQYbDttcD4kSv32+vhD0gNi4zExasbQc/3Z+eUIpfr68GxA8S7F46SrbFZUSOxML
+      XW2RDKFZKix2tcY6qveuc/y34I1GXjiKB7tDryQK5fTxzyZDOi0nd4COp2NvPJ3s2Y3XUj7TfJ/3
+      nuvn67VWa5RZ3EEcFRJpDOSxKS1yJVkWtdKeO4pYSit7bRZHXhiPBiz6+0bb74xwOktNt9uRuG1I
+      OCyaDZDlVVUvUGO0FuQDnY4RRC3VxjIdLm8Kc33HTEA0JuEsmKHm202WbsS2agDdQjmW0RPaR/GJ
+      MzrQCirZo14cg3qEVJvo6/KH0cQP8DfkSMyCX2iSSLQvJHvli2sk2Z0cGh4GUSz+5n4ALZ2hONy2
+      3Ylo04jxet3Mk2jqTUbBCXEfCn3z6XM3kUCRukLq4voSTSc1EYyHGJNFLRFqpaGIpp3FKJfNCgXZ
+      wtRxm0Pe55wzkyPwkuSEe4QiOsC4IDybClVUwEquLE8LlWmalCXmBYk5kjG+CIj+VF52CMevwo8m
+      HuN5JB6q2suBfM4zaU+ZceB2x9JiRwa5ACsdj/2DXUD8W8s0s8TWYC/4rY/ohYTYj8dOCcdTL5wh
+      A/EreRthNpI6hGRrhQ+bHZ7t2HPjtBTwO9WWTUsqSxK6baU7XrLHYKvUmozO4Pj2GWXv5p6rJs8L
+      86psg+9Yq53v6UQN/80xHRELKu1m+aI7qr9zVB/EV9/3e70eJokXJhM+e5QEXjSJYK0gywh0eL6g
+      cy9y6CAE/pCM2Ker88vbK7/A8N8lVUgLsA0fgnLorIB/0CKNVuAWgqiiCbhKCE/T8Z43/v3+fjcm
+      T8WQQRqIYY1N8WOjZG43f+ETvzzUFaTYEHbvh9pkFHqTmAbTaxEczWb7CZKZ76gCYrW64FQhjkd7
+      lGIgEyc072mR+Y7I43Wn8ueX7dx4m0IcJN9NwbxXJs4AwSbTOOonMUYSs4F4KwjE1ot2UkhjGnQv
+      rySfLl2fI9jnTzccvGosClTnGRrDDSUU0gLqVmr4/Xkha9aaSeRF09H/YwviqZeMp65H26FfUHNm
+      QKSs/oQvjuhGkSvJk+z67ksy/5L8+vHm3yS1TGQHYNflr8a5OKYYlEDXIcziaIYZN0Z9eFS9Lw/h
+      wfXpuxKngzfK/mDEVZnqlxopfpE6k+g7conOYKbSKA+j1mQ0k0/FrSyRDmkwlpp24YC0pZJLMkK7
+      iiWRl0xRnAdyChe3V+08H2AuPWaVpyFfufFkWlC3Bf7MDwev7SBx5OHm3ju/ufvoBSGZ4RzGfA0r
+      yliptom65gFcRuUr6ot3WzBo9IEBm04gc+FZb4wMuR/2rRQGU0hhMIPYU8kr8XBxx13BqqsVBLZ1
+      crpKnaeBEULbn9IMoawxAoqMnAwwwUvPEIS910NlevC9rQ3Dfwb24n5Fy5nJrGD7dggwKoIZa0KM
+      VMcB92dlLK2l+G/uqIcHe8/Dl8re/oJyIp0t+cqKPXJbnfY2i9F78ZQ3SzD0kzGRDZMNnCRVPaxq
+      8/fXO5FhQcBc0fWQSvWKaATIsnFT0QFHY3O/3wiCE8fvjZG4V62DcwyBbcnJzy6a9ZqAuvx4T2DR
+      fiuE3YIvRDeekgjGbUfWoLc9XTXcuMeksTSwWhvF1uqA3pyDRH3HR1yGtpPH4+lMsKS96jmHsz9N
+      GHtx6IZMMk5YnXPXXeRl6T7mlqBrXdT5jxtpNj+5wO4JU8d9/d/5ze+aIRB1+3rjGXa7ycjAZ65j
+      zAt6pSDfc2+R62UHfic3psF1kN7HuLdSk6YiiaZea7mkeyjngQ2o6sMnqYd5tnj1GwQ8N45re2B7
+      5jqAuQ5BVXFdtr8j2LV6zycjKUU3AF6OWOizrKhzVeAh3bxpstZ2Tt5q7qwaZdn/dtFotAsJWOv6
+      FhD+jXxiyCuhViuc++38jKeJF89mTr27O7zI1Qo+pbFnolxZNm4+/foDgdrTlWrbs3mGDoIAjYZX
+      7m485FyUxC3pq1vju4P6+vkbm71H8G7R8IULnFy8WK6AbM0qq00LTc9P7lENgeooJhBobkYTbzKm
+      G+HPuLTxEZpRxAixeMHfl1Xp/aV05YtoLG6zn4eYOpQfaDAO6AvB+PkHnMkcB4I0Yuclyh4lURjH
+      QXBQyGcH89zl+0GMoziaTvHoP8nW33pFEwAA
   - path: /opt/oxfer-relay/iroh-relay.service
     owner: root:root
     permissions: "0644"
+    encoding: gz+b64
     content: |
-      # iroh-relay 1.1.0 for Oxfer (relay.oxfer.app).
-      # Installed as /etc/systemd/system/iroh-relay.service by setup.sh.
-      # Check:  systemd-analyze verify /etc/systemd/system/iroh-relay.service
-      # Audit:  systemd-analyze security iroh-relay.service
-
-      [Unit]
-      Description=iroh relay server for Oxfer (relay.oxfer.app)
-      Documentation=https://github.com/radumarias/syncoxiders/tree/main/p2p-transfer/deploy/relay
-      Wants=network-online.target
-      After=network-online.target nftables.service
-
-      [Service]
-      Type=exec
-      ExecStart=/usr/local/bin/iroh-relay --config-path /etc/iroh-relay/config.toml
-
-      # Logging. The relay writes tracing output to stderr and has no access-log
-      # option; RUST_LOG (EnvFilter, src/main.rs:568-571) is the only control.
-      #  - At "info", per-connection spans add the client IP and port to every
-      #    connection error (conn{peer=...}, src/server/http_server.rs:499).
-      #  - At "warn", those spans are off, but each failed or probed connection
-      #    still writes a line.
-      #  - This filter keeps startup failures, ACME errors and server-task failures
-      #    (target iroh_relay::server) and silences the per-connection targets. A
-      #    span-scoped directive such as "[conn]=off" cannot do this, because
-      #    EnvFilter ORs span directives with target directives.
-      # What remains per request is one line per malformed request on port 80,
-      # with the parser error and no address.
-      Environment="RUST_LOG=off,iroh_relay=warn,iroh_relay::server::http_server=off,iroh_relay::server::client=off,iroh_relay::server::streams=off,iroh_relay::protos=off,iroh_metrics=warn"
-      Environment=NO_COLOR=1
-      StandardOutput=journal
-      StandardError=journal
-      SyslogIdentifier=iroh-relay
-
-      # The binary shuts down gracefully only on SIGINT (tokio::signal::ctrl_c,
-      # src/main.rs:605-611).
-      KillSignal=SIGINT
-      TimeoutStopSec=15s
-      Restart=on-failure
-      RestartSec=5s
-
-      # Identity and state. cert_dir (/var/lib/iroh-relay/certs) holds the ACME
-      # account key and the certificate, so they survive restarts and upgrades.
-      DynamicUser=yes
-      StateDirectory=iroh-relay
-      StateDirectoryMode=0700
-      WorkingDirectory=/var/lib/iroh-relay
-      UMask=0077
-
-      # Ports 80 and 443 need CAP_NET_BIND_SERVICE; nothing else is granted.
-      AmbientCapabilities=CAP_NET_BIND_SERVICE
-      CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-      NoNewPrivileges=yes
-
-      # One file descriptor per relayed WebSocket connection.
-      LimitNOFILE=65536
-
-      # Sandbox.
-      ProtectSystem=strict
-      ProtectHome=yes
-      PrivateTmp=yes
-      PrivateDevices=yes
-      DevicePolicy=closed
-      ProtectClock=yes
-      ProtectHostname=yes
-      ProtectKernelTunables=yes
-      ProtectKernelModules=yes
-      ProtectKernelLogs=yes
-      ProtectControlGroups=yes
-      ProtectProc=invisible
-      ProcSubset=pid
-      RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
-      RestrictNamespaces=yes
-      RestrictRealtime=yes
-      RestrictSUIDSGID=yes
-      LockPersonality=yes
-      MemoryDenyWriteExecute=yes
-      RemoveIPC=yes
-      SystemCallArchitectures=native
-      SystemCallFilter=@system-service
-      SystemCallFilter=~@privileged
-      SystemCallErrorNumber=EPERM
-
-      [Install]
-      WantedBy=multi-user.target
+      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
+      T+W78Kyj7GudFhVqbeFKM5tX3T/xem1JgQsAAA==
   - path: /opt/oxfer-relay/nftables.conf
     owner: root:root
     permissions: "0644"
+    encoding: gz+b64
     content: |
-      #!/usr/sbin/nft -f
-      # Firewall for the Oxfer relay host (relay.oxfer.app).
-      # Installed as /etc/nftables.conf by setup.sh and loaded by nftables.service.
-      #   Check:  nft -c -f /etc/nftables.conf
-      #   Apply:  systemctl reload nftables
-      #
-      # Inbound is dropped by default. Nothing here logs packets or addresses.
-      #
-      # Host-specific additions (SSH source addresses, permanent bans) go in
-      # /etc/nftables.d/*.nft on the server, included at the end of this file.
-      # Keep them out of this public repository; setup.sh never touches that
-      # directory. Reloading replaces the whole ruleset, so bans added at runtime
-      # with "nft add element" are lost on reload or reboot unless also written
-      # to a local file.
-
-      flush ruleset
-
-      table inet oxfer_relay {
-      	# Abuse blocking. Traffic from these addresses is dropped before anything
-      	# else, including connections that are already open.
-      	#   Temporary ban, until it expires, the ruleset reloads or the host reboots:
-      	#     nft add element inet oxfer_relay banned_v4 '{ 203.0.113.7 timeout 30d }'
-      	#     nft add element inet oxfer_relay banned_v6 '{ 2001:db8:1:2::/64 timeout 30d }'
-      	#   Lift it:
-      	#     nft delete element inet oxfer_relay banned_v4 '{ 203.0.113.7 }'
-      	#   Permanent ban, in /etc/nftables.d/bans.nft on the server:
-      	#     add element inet oxfer_relay banned_v4 { 203.0.113.7 }
-      	set banned_v4 {
-      		type ipv4_addr
-      		flags interval, timeout
-      	}
-
-      	set banned_v6 {
-      		type ipv6_addr
-      		flags interval, timeout
-      	}
-
-      	# Per-source new-connection limit on the relay's TCP ports. iroh-relay
-      	# 1.1.0 parses accept_conn_limit but does not implement it
-      	# (src/server.rs:486-499), so this takes its place. A browser opens one
-      	# WebSocket per session plus a few HTTPS latency probes, so the limit
-      	# leaves room for many users behind one carrier-grade NAT address. IPv6
-      	# is keyed on the /64, which is what one subscriber usually gets.
-      	set relay_flood_v4 {
-      		type ipv4_addr
-      		flags dynamic, timeout
-      		timeout 1m
-      		size 65536
-      	}
-
-      	set relay_flood_v6 {
-      		type ipv6_addr
-      		flags dynamic, timeout
-      		timeout 1m
-      		size 65536
-      	}
-
-      	set ssh_flood_v4 {
-      		type ipv4_addr
-      		flags dynamic, timeout
-      		timeout 1m
-      		size 4096
-      	}
-
-      	set ssh_flood_v6 {
-      		type ipv6_addr
-      		flags dynamic, timeout
-      		timeout 1m
-      		size 4096
-      	}
-
-      	# SSH access. Open to all by default; authentication is key-only (see
-      	# sshd-oxfer-relay.conf). To allow only your own addresses, create
-      	# /etc/nftables.d/ssh.nft on the server with, for example:
-      	#   flush chain inet oxfer_relay ssh_access
-      	#   add rule inet oxfer_relay ssh_access ip saddr 198.51.100.10 accept
-      	#   add rule inet oxfer_relay ssh_access ip6 saddr 2001:db8:10::/64 accept
-      	#   add rule inet oxfer_relay ssh_access drop
-      	# and keep the provider's web console as the way back in.
-      	chain ssh_access {
-      		accept
-      	}
-
-      	chain input {
-      		type filter hook input priority filter; policy drop;
-
-      		ip saddr @banned_v4 drop
-      		ip6 saddr @banned_v6 drop
-
-      		ct state invalid drop
-      		ct state { established, related } accept
-      		iif "lo" accept
-
-      		# ICMP needed for path MTU discovery, error reporting and ping.
-      		icmp type { destination-unreachable, time-exceeded, parameter-problem } accept
-      		icmp type echo-request limit rate 20/second burst 50 packets accept
-
-      		# ICMPv6: neighbour discovery and router advertisements (required for
-      		# IPv6 to work at all; RFC 4861 sends them with hop limit 255), MLD
-      		# queries from the link, path MTU discovery, errors and ping.
-      		icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } ip6 hoplimit 255 accept
-      		icmpv6 type mld-listener-query ip6 saddr fe80::/10 accept
-      		icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem } accept
-      		icmpv6 type echo-request limit rate 20/second burst 50 packets accept
-
-      		# SSH, rate-limited per source, then the ssh_access policy.
-      		tcp dport 22 ct state new add @ssh_flood_v4 { ip saddr limit rate over 10/minute burst 20 packets } drop
-      		tcp dport 22 ct state new add @ssh_flood_v6 { ip6 saddr & ffff:ffff:ffff:ffff:: limit rate over 10/minute burst 20 packets } drop
-      		tcp dport 22 jump ssh_access
-
-      		# Relay: HTTPS and WSS on 443 (relaying, latency probes, ACME
-      		# TLS-ALPN-01), plain HTTP on 80 (captive-portal check only).
-      		tcp dport { 80, 443 } ct state new add @relay_flood_v4 { ip saddr limit rate over 50/second burst 200 packets } drop
-      		tcp dport { 80, 443 } ct state new add @relay_flood_v6 { ip6 saddr & ffff:ffff:ffff:ffff:: limit rate over 50/second burst 200 packets } drop
-      		tcp dport { 80, 443 } accept
-
-      		# QUIC address discovery for native clients (iroh default port 7842).
-      		udp dport 7842 accept
-
-      		# Everything else, including the metrics port 9090, falls to the drop
-      		# policy. The metrics server is bound to 127.0.0.1 anyway.
-      	}
-
-      	chain forward {
-      		type filter hook forward priority filter; policy drop;
-      	}
-
-      	chain output {
-      		type filter hook output priority filter; policy accept;
-      	}
-      }
-
-      # Host-specific additions, not tracked in the repository. A pattern with no
-      # matching files is not an error.
-      include "/etc/nftables.d/*.nft"
+      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
   - path: /opt/oxfer-relay/journald-oxfer-relay.conf
     owner: root:root
     permissions: "0644"
+    encoding: gz+b64
     content: |
-      # Journal retention for the Oxfer relay host.
-      # Installed as /etc/systemd/journald.conf.d/zz-oxfer-relay.conf by setup.sh.
-      # The journal is the only log store on this host (setup.sh removes rsyslog).
-      # Drop-ins apply in file-name order across /usr/lib and /etc and the last
-      # value wins. The zz- prefix sorts after syslog.conf, which Debian 13's
-      # systemd package ships with ForwardToSyslog=yes.
-
-      [Journal]
-      Storage=persistent
-      SystemMaxUse=200M
-      RuntimeMaxUse=50M
-      MaxRetentionSec=3day
-      # Retention deletes whole archived journal files, and the active file is
-      # otherwise rotated only monthly (MaxFileSec defaults to one month). Daily
-      # rotation makes the three-day limit effective.
-      MaxFileSec=1day
-      ForwardToSyslog=no
+      H4sIAAAAAAACA12RQW/bMAyF7/4VBHpYC9R2u2JH34ICG1AMaLrTsANj05VaWTREOon760cpSQfs
+      ZJmivvfIdwU/eEkRAyRSiuo5wsgJ1BH8PI6UrB5wBceiTXUF36MohkADoEBL2reyitI0tG8nztD0
+      HMdmaD8+as6AugBKFXYrCOkyN+Iy7MVEzs/AS9HkGFYI/AqinPKvVe0qy8P15a15mnhPAsnErfkm
+      wzaJ59pHAZxnY3ibwweqI06GSYNNgn1iMdeLpDb4HWAcygjlkMUDihppj2EhOBirKRZtEpgTjf4I
+      wklNYVTDnbTLYLdwcL53sKGdxwj3D1/EOOfNwIz9O74SiPOzGFcdPHI6YBpeeFsg3UrSVNXvcxZ/
+      qq1Nb0+6mZJ4ycFU20J7wuMvoe7r3d1T9bxYXhOdS9+sYsfnS4xb6ruHAVcz8lmDgYKdzYTjQICp
+      d35vWV5CyBuT2899YK92XaqWj4HYqunghSCxotrLktfEUZ19r03/0ZpN2pRGXIItS9ma6NRz08AG
+      fcieCiBbmvCdTtmrS0S1WYbgJ69A40jFQVP9A3f3eab/9xe5+guJbRJqygIAAA==
   - path: /opt/oxfer-relay/sshd-oxfer-relay.conf
     owner: root:root
     permissions: "0644"
+    encoding: gz+b64
     content: |
-      # Key-only SSH for the Oxfer relay host.
-      # Installed as /etc/ssh/sshd_config.d/01-oxfer-relay.conf by setup.sh, and
-      # only when an authorized key is present, so a fresh box cannot lock you out.
-      # sshd uses the first value it reads for each option, and Debian and Ubuntu
-      # read sshd_config.d/*.conf in name order before sshd_config. The 01- prefix
-      # puts this file ahead of cloud-init's 50-cloud-init.conf.
-      PubkeyAuthentication yes
-      PasswordAuthentication no
-      KbdInteractiveAuthentication no
-      AuthenticationMethods publickey
-      PermitRootLogin prohibit-password
-      MaxAuthTries 3
-      LoginGraceTime 30
-      X11Forwarding no
-      AllowAgentForwarding no
-      # "local" keeps ssh -L working, e.g. to read the metrics on 127.0.0.1:9090.
-      AllowTcpForwarding local
+      H4sIAAAAAAACA2VS3WvbMBB/919xtA/7IP7IyhjdW2FsK01ZaDPY25Dtc3RE0RnplMT763dyBltW
+      jLElnX5fd9fwgFPJ3k3w/PwVBg4gFuHbacAAAZ2ZwHKUqriGex/FOIc9mAg1SlfHaPPb/+zYD7St
+      +rpZlpyvlvPVKu9DO0FESWMV7QKM7xVq5jta9LoGk8RyoF8KvMMJKMIYMKKXBUQGA4OuLLR8gs54
+      zwKOux1MnIDTLCxLgBQxztIHClHgYFxCIFEPpo+zLzSdBR6F2M864BO2lPn193ubvCTFyuVw6ent
+      2QZ58GaPwKHXaFpUSLyohI2yawBZ/kAnBRuTZE3qaCCHYGwG5wE6x6kvyZO8ivC+Kf+uZ6qqWKdW
+      o7jTYDQG6kzWDBPGYm1iPKqC/448Fw9tf+8Fg+mEDvjy/HLnETVzzWVMraNOuYo1hj3JE7OseKte
+      x8CWWpJy/ENZPJpTBtkE0qRvirnsi/LhhjSWm6b4sVx+5nA0oSe/nTmd4+PdVmkv96/hSnto3JU2
+      HMeYU4RyBcqy04oFYKVpCp+bkXu6RwnURZ0bWL77UDX6LD/eNrdNdebYdOM/DDO2ktQHE2rH29qZ
+      KPrNo2XAkd9l8LrHQ+2Tc2BRO/la9mPuUnwxwG8WecY4C9E6xfAMGVF5clAKNQbyOonr/FnpiUaT
+      bf4G8eVyIlwDAAA=
   - path: /opt/oxfer-relay/unattended-upgrades.conf
     owner: root:root
     permissions: "0644"
+    encoding: gz+b64
     content: |
-      // Unattended OS upgrades for the Oxfer relay host.
-      // Installed as /etc/apt/apt.conf.d/52oxfer-relay by setup.sh. Files in
-      // apt.conf.d are read in name order and later values win, so this overrides
-      // 20auto-upgrades. The upgrade origins stay at the distribution's default
-      // (security updates) from 50unattended-upgrades.
-      APT::Periodic::Update-Package-Lists "1";
-      APT::Periodic::Unattended-Upgrade "1";
-      APT::Periodic::AutocleanInterval "7";
-      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
-      Unattended-Upgrade::Remove-Unused-Dependencies "true";
-      // Reboot when an upgrade requires it (kernel, libc), at 03:30 in the
-      // server's time zone (UTC on most VPS images). Open relay connections drop
-      // and clients reconnect within about a minute.
-      Unattended-Upgrade::Automatic-Reboot "true";
-      Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
-      Unattended-Upgrade::Automatic-Reboot-Time "03:30";
+      H4sIAAAAAAACA5VSzWrbQBC+5ykGX2qDJbkJoaCeQkshtGCTWOl5vTu2h6xm1d3ZpO7Td9ZV4tKE
+      0h4EljXf70zTQMdGBNmhg+Ut5GEXjcME2xBB9gjL71uMENGbA+xDkvqsaeCakxjvFWISNCi2MYOU
+      p7aBt7VrLs9DwVW/cJsDJJQ81GlfwyfySk9ceE4IMBFVxTj9Amx6hBCdCht24I3orwfjswIfieeQ
+      gnqjBOEBYyS1W8jOFyZLqJ4S1LBW++ObstGOOIH6PoCRYzRHSSJtslDgNwkcbk32UqimCW2OJAfF
+      O1VPM9jG0MPlIj+3dRI6u1qt23aFkYIj27bdEVOtjL03O6y+qEyCydvJ+xeDJ7Ju9Pna2JXGsh4N
+      X7MWoT3A5J1OvUS37Q322knVcU7692eMjP7JiHqQmPGfkB9xKN/Z0m8wLeYGNyEIPO6RdTXP7Ub8
+      limWtQpM74+qc/C0sbN5KXtx0V4symK19cKSNAVGrVxIF/0jMMK0W3+AwNDricHd6haoL5ZnNSzV
+      yXh/eiqMtqxLtxXDcDwhPRDrCVk7jjhO6JXofajFTcgCBnriLFi/Gry02xshW43h/tbSn8PVVxXq
+      NE/6P9i6BJ8ce1HIT8w7se2GAwAA
+  - path: /opt/oxfer-relay/logrotate-oxfer-relay.conf
+    owner: root:root
+    permissions: "0644"
+    encoding: gz+b64
+    content: |
+      H4sIAAAAAAACA2WSz27UMBDGz5unGKmH7krBm5aeqLhxQUKCAzyAHU827jqeyDNpiBDvzjgJpaiX
+      KP4z3/ebz3MDX+gSEmRsKXsGSiA9wtefHWbdjHaBnlhqwGGUgB68DXEx1Q18Tiw2Rt2yDGeU9hzp
+      kkmsoPFnKgLvNgG3AKNMo+G+hrkPbQ8eIwpy8VKp0bZXe0G+BZrTW61ZhrEGp1+wyUNZegfHgZL0
+      cQHKsKDNcXlUqZc6hX/CVtRiJsAkOahdp3cpIXQh4smAH68X8KQHiQRcDukCTlnAqtKG6KGl1JX7
+      Bph7dc+hgBcIOMaSHZ8KVl2i+4Qu2AR39yvoDzclmVTq/sE0D3sHxyldU2lzYsx8enypeX/Lm4ON
+      TK9tjHcl772t5nV2QNGvzYAVQKvBrrcCJfMvCSNhKI85Jd5eT8UcyoyYoGk+NM0K29zpX73+qpYj
+      DcR2onVeYYsCHL8pcGDRMD9KnvBUg4KWqLbhgWhZ87aOJq1Vq6UoDTo9BkJX5meBK+LIO6SGPffK
+      oNn368KyapXG1cLAd23viaacbNzLSsNslWSNCZ8VZHtS6TNiMWRTnZ9tLtOzTg28rNx/qz1W+FUd
+      tkQOf9OtDjtqdRgCs3LRtTq0GfW0+l39ATbZSDQvAwAA
+  - path: /opt/oxfer-relay/tmpfiles-oxfer-relay.conf
+    owner: root:root
+    permissions: "0644"
+    encoding: gz+b64
+    content: |
+      H4sIAAAAAAACA2VRPW/bMBDd/StenSFDbSoJMnXuUqBoM6RzQYlnizB9J/BOdvTvc5STLgUnAu/7
+      7vBLUKJakSOEYSPh99uBKiqVuGAUtYAfrBZLoYSomzt0ZENn5+mQC2lInTTCfiWEQfiAfoGSzVPQ
+      cYc4TSU3qrnBQIicmhNdqC4u1ou4g+qYcK3ZSEFxGDEr1Xtdo8GzZV55KnNtEilVUoVJS3OJtXNI
+      91mjAbnJe4ezXFwxu8OLZLZbjC7RpeO5lN3NV095ar2yrVzXUGw/1P7KRKxEp28IISArWByG1h1S
+      kXKlwaQuX7bIPhPFFFzqdXTkilGppujpINU/iyPOyYt56HWrHa6+MaFkJgyVomU+rme4ObCLfac+
+      R8bj0xrvTz+zzXh6Dg/PLY9jGfnIrt/u49nS7IsP0Shsfn79f5/9x/s3w+YdO/2JtQYCAAA=
+  - path: /opt/oxfer-relay/oxfer-relay-ban
+    owner: root:root
+    permissions: "0755"
+    encoding: gz+b64
+    content: |
+      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
+  - path: /opt/oxfer-relay/oxfer-relay-ban.service
+    owner: root:root
+    permissions: "0644"
+    encoding: gz+b64
+    content: |
+      H4sIAAAAAAACA32QzWoDMQyE734KQS4tNPYT7KG0OQQCCaQ9hRy8trZrcORF0obdt683/TmE0pPw
+      yN8woxXsUqcCOA2JMcJ+6pCBMfsZtgdoPQk8lEVc38R1VWDgkfDRmhVsSdTnXEEv4FCDk1kUL/F7
+      ujvUCvI1BYR2BkEdBys9eIrVqhqxVqO6uYc0XZAt7MqHgIdQRtInILzWpDWNj5FRxJrTOyU9m1eU
+      wGnQVKhZyv3XzTx3itxQp77NKD/xzEuhmBaHg9d+MyVRaW71fn9Gt/C2vo05Hb+ws3mbB2wKofRF
+      zWbCcFxaNW4UdrkEn520idyfBzWfyKpsQYwBAAA=
+  - path: /opt/oxfer-relay/oxfer-relay-ban.timer
+    owner: root:root
+    permissions: "0644"
+    encoding: gz+b64
+    content: |
+      H4sIAAAAAAACA32PsWrDQAyG93sKQZZ0iD11Kre0GRooJKQtHYIHxSc3omdd0Mk07tP3bAzdOgn0
+      o+//tILnNGgcob1Q+wVdUqDblZUC7G8dKShFHGF3gDNKfgDsrCxD+hbjnoANdJAMaG4F55QM1gfS
+      zNlI7K6CnWTDGAsNM9RkbZ3HkvVhmXWaSjZzyaY0VBNVK3d6F7bGbSm3ylfjJP6FO/vPDS7zI86d
+      3iZG4/byhJEkoPolOqKE1PMPhe10+Uqtv+9Z3J+yNx2oIBbvxn2gGIXH0c9iuTLUTzL3C5AP8qM3
+      AQAA
 
 runcmd:
   - [sh, /opt/oxfer-relay/setup.sh]

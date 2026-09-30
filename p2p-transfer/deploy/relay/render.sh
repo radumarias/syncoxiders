@@ -1,10 +1,14 @@
 #!/bin/sh
 # Regenerate the derived files of the relay kit from their sources:
-#   cloud-init.yaml   embeds verbatim copies of setup.sh and the host files
+#   cloud-init.yaml   embeds setup.sh and the host files, each gzip-compressed
+#                     and base64-encoded (cloud-init "encoding: gz+b64"): as
+#                     plain text the kit exceeds Hetzner's 32 KiB user data
 #   fly/config.toml   copy of config.toml; the Fly build context is fly/ only
 # Usage:
 #   sh render.sh           rewrite both files
-#   sh render.sh --check   exit 1 if either is stale
+#   sh render.sh --check   exit 1 if either is stale. It decodes every
+#                          embedded file and compares it with its source, so
+#                          another gzip build does not count as drift.
 # Edit the sources and re-render; never edit the derived files by hand.
 set -eu
 cd "$(dirname -- "$0")"
@@ -16,7 +20,12 @@ iroh-relay.service:/opt/oxfer-relay/iroh-relay.service:0644
 nftables.conf:/opt/oxfer-relay/nftables.conf:0644
 journald-oxfer-relay.conf:/opt/oxfer-relay/journald-oxfer-relay.conf:0644
 sshd-oxfer-relay.conf:/opt/oxfer-relay/sshd-oxfer-relay.conf:0644
-unattended-upgrades.conf:/opt/oxfer-relay/unattended-upgrades.conf:0644'
+unattended-upgrades.conf:/opt/oxfer-relay/unattended-upgrades.conf:0644
+logrotate-oxfer-relay.conf:/opt/oxfer-relay/logrotate-oxfer-relay.conf:0644
+tmpfiles-oxfer-relay.conf:/opt/oxfer-relay/tmpfiles-oxfer-relay.conf:0644
+oxfer-relay-ban:/opt/oxfer-relay/oxfer-relay-ban:0755
+oxfer-relay-ban.service:/opt/oxfer-relay/oxfer-relay-ban.service:0644
+oxfer-relay-ban.timer:/opt/oxfer-relay/oxfer-relay-ban.timer:0644'
 
 render_cloud_init() {
 	cat <<'EOF'
@@ -30,7 +39,11 @@ render_cloud_init() {
 #
 # First boot writes the kit to /opt/oxfer-relay/ and runs setup.sh, which
 # installs the pinned, checksum-verified iroh-relay binary, the systemd unit,
-# the firewall, journald retention, key-only SSH and unattended upgrades.
+# the firewall and ban tool, log retention, key-only SSH and unattended
+# upgrades. Without DNS pointing here it leaves the relay stopped.
+# Each file below is the kit file of the same name in
+# p2p-transfer/deploy/relay/, gzip-compressed and base64-encoded to fit the
+# providers' user-data limits; "sh render.sh --check" proves they match.
 # Progress: tail -f /var/log/cloud-init-output.log
 
 ssh_pwauth: false
@@ -39,14 +52,19 @@ package_upgrade: true
 packages:
   - ca-certificates
   - curl
+  - iproute2
+  - logrotate
   - nftables
   - unattended-upgrades
 
 write_files:
 EOF
 	printf '%s\n' "$FILES" | while IFS=: read -r src dst mode; do
-		printf '  - path: %s\n    owner: root:root\n    permissions: "%s"\n    content: |\n' "$dst" "$mode"
-		sed 's/^\(.\)/      \1/' "$src"
+		printf '  - path: %s\n    owner: root:root\n    permissions: "%s"\n    encoding: gz+b64\n    content: |\n' "$dst" "$mode"
+		{
+			gzip -9 -n -c "$src" | base64 | tr -d '\n' | fold -w 76
+			echo
+		} | sed 's/^/      /'
 	done
 	cat <<'EOF'
 
@@ -55,9 +73,34 @@ runcmd:
 EOF
 }
 
+# split YAML DIR: writes the Nth embedded payload to DIR/N and prints the
+# file with the payload lines left out.
+split() {
+	awk -v dir="$2" '
+		/^    content: \|$/ { n++; body = 1; print; next }
+		body && /^      / { print substr($0, 7) > (dir "/" n); next }
+		{ body = 0; print }
+	' "$1"
+}
+
 if [ "${1:-}" = "--check" ]; then
 	stale=0
-	render_cloud_init | cmp -s - cloud-init.yaml || { echo "cloud-init.yaml is stale" >&2; stale=1; }
+	tmp=$(mktemp -d)
+	trap 'rm -rf "$tmp"' EXIT
+	mkdir "$tmp/have" "$tmp/want"
+	render_cloud_init >"$tmp/want.yaml"
+	if [ ! -f cloud-init.yaml ] ||
+		[ "$(split cloud-init.yaml "$tmp/have")" != "$(split "$tmp/want.yaml" "$tmp/want")" ] ||
+		! printf '%s\n' "$FILES" | {
+			n=0
+			while IFS=: read -r src _; do
+				n=$((n + 1))
+				base64 -d <"$tmp/have/$n" 2>/dev/null | gzip -dc 2>/dev/null | cmp -s - "$src" || exit 1
+			done
+		}; then
+		echo "cloud-init.yaml is stale" >&2
+		stale=1
+	fi
 	cmp -s config.toml fly/config.toml || { echo "fly/config.toml is stale" >&2; stale=1; }
 	if [ "$stale" -ne 0 ]; then
 		echo "run: sh render.sh" >&2
@@ -65,7 +108,7 @@ if [ "${1:-}" = "--check" ]; then
 	fi
 	echo "cloud-init.yaml and fly/config.toml are up to date"
 else
-	render_cloud_init > cloud-init.yaml
+	render_cloud_init >cloud-init.yaml
 	cp config.toml fly/config.toml
-	echo "wrote cloud-init.yaml ($(wc -c < cloud-init.yaml) bytes) and fly/config.toml"
+	echo "wrote cloud-init.yaml ($(wc -c <cloud-init.yaml) bytes) and fly/config.toml"
 fi

@@ -1,0 +1,11 @@
+# Lifts expired Oxfer relay IP bans (oxfer-relay-ban prune).
+# Installed as /etc/systemd/system/oxfer-relay-ban.service by setup.sh and
+# started by oxfer-relay-ban.timer. Logs a count, never an address.
+[Unit]
+Description=Lift expired Oxfer relay IP bans
+After=nftables.service
+ConditionPathExists=/etc/nftables.d/bans.nft
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/oxfer-relay-ban prune

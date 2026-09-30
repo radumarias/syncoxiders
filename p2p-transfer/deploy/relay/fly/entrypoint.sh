@@ -9,6 +9,10 @@
 #    quic_bind_addr takes an IP, so the name is resolved here.
 # QUIC address discovery is off unless OXFER_RELAY_QAD=true (fly.toml [env]);
 # only native clients use it.
+# Endpoint-ID denylist: the Fly secret OXFER_RELAY_DENYLIST, IDs separated by
+# spaces or commas, as the ticket-endpoint-id example prints them. A secret
+# keeps them out of the public image; setting it restarts the machine:
+#   fly secrets set OXFER_RELAY_DENYLIST="<id> <id>" -a oxfer-relay-eu
 set -eu
 
 BASE=/etc/iroh-relay/config.base.toml
@@ -31,6 +35,25 @@ sed -e 's|^http_bind_addr = .*|http_bind_addr = "0.0.0.0:80"|' \
 	-e "s|^enable_quic_addr_discovery = .*|enable_quic_addr_discovery = $qad|" \
 	-e "s|^quic_bind_addr = .*|quic_bind_addr = \"$quic_addr\"|" \
 	"$BASE" > "$OUT"
+
+deny=$(printf '%s' "${OXFER_RELAY_DENYLIST:-}" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')
+n=0
+for id in $deny; do
+	printf '%s\n' "$id" | grep -Eqx '[0-9a-f]{64}|[a-z2-7]{52}' || {
+		echo "oxfer-relay: OXFER_RELAY_DENYLIST holds something that is not an endpoint ID" >&2
+		exit 1
+	}
+	n=$((n + 1))
+done
+if [ "$n" -gt 0 ]; then
+	grep -qx 'access = "everyone"' "$OUT" || {
+		echo "oxfer-relay: expected line missing from $OUT: access = \"everyone\"" >&2
+		exit 1
+	}
+	# shellcheck disable=SC2086 # split the IDs into words on purpose
+	list=$(printf '"%s", ' $deny)
+	sed -i "s|^access = \"everyone\"\$|access.denylist = [${list%, }]|" "$OUT"
+fi
 
 # The config structs ignore unknown or misplaced keys, so fail closed if the
 # base file no longer has the shape this script expects.
@@ -58,5 +81,5 @@ export NO_COLOR=1
 ulimit -n 65536 2>/dev/null || true
 
 # shellcheck disable=SC3045
-echo "oxfer-relay: $(/iroh-relay --version), QUIC address discovery $qad, open files limit $(ulimit -n)"
+echo "oxfer-relay: $(/iroh-relay --version), QUIC address discovery $qad, $n denylisted endpoint IDs, open files limit $(ulimit -n)"
 exec /iroh-relay --config-path "$OUT"
