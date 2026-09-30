@@ -135,7 +135,7 @@ Why Cloudflare Workers and Containers do not fit:
 | --- | --- | --- | --- | --- | --- | --- |
 | EU VPS with `iroh-relay` and `coturn` (Hetzner, Scaleway, OVH) | Yes | Yes | Yes | About EUR 4 to 8 per month, traffic included | You are the controller, EU provider under a DPA | Recommended |
 | n0 managed relays | Yes | Yes | Yes | Quote from n0 | Needs a DPA with n0 and confirmation of regions | Acceptable if you prefer not to operate a server |
-| Fly.io machine in an EU region | Yes | Yes | Yes | About USD 3 to 5 per month plus egress after 100 GB | US company, EU region, DPA available | Acceptable second choice, easy multi-region later |
+| Fly.io machine in an EU region (fra, ams, cdg, arn) | Yes, with a dedicated IPv4 | Yes, one machine per relay hostname | Yes, raw TCP passthrough on 443 | About USD 5 to 8 per month plus USD 0.02 per GB egress | US company (Fly.io Inc.), EU region, pre-signed DPA | Viable second choice; conditions in section 4 |
 | Cloudflare Workers or Containers | No | No | Limited | USD 5 plan plus usage | US processor on the relay hop | Not viable |
 | n0 public relays (today) | Yes | No | Yes | Free | No contract; hobby-use terms; US and Asia servers | Replace |
 
@@ -198,6 +198,75 @@ stay on localhost.
 
 Client side: `P2P_RELAY_URL=https://relay.oxfer.app`. The diagnostics page
 derives `wss://relay.oxfer.app/relay` from it.
+
+### Fly.io variant
+
+Fly.io can host the relay. Verified against Fly's networking and pricing
+documentation in September 2026. Eight conditions, none of which apply to a
+plain VPS:
+
+1. **One machine per relay hostname.** Both peers of a transfer must reach
+   the same relay process. Fly's anycast and autoscaling would split them, so
+   set `auto_stop_machines = "off"`, `auto_start_machines = false`,
+   `min_machines_running = 1`, one region, one machine. A second region is a
+   second app with its own hostname.
+2. **Dedicated IPv4, USD 2 per month.** Shared IPv4 only carries Fly-terminated
+   HTTP and TLS. Raw TCP on 443 and any UDP need a dedicated address.
+3. **TLS stays in the relay.** Expose 443 with no handlers so `iroh-relay` runs
+   ACME itself; its rustls-acme implementation uses the TLS-ALPN challenge, so
+   port 80 is not needed for certificates. Persist `cert_dir` on a small
+   volume, or every redeploy asks Let's Encrypt for a new certificate.
+4. **Client addresses.** With raw passthrough the relay sees Fly's proxy
+   address, not the client's. Harmless here: the relay logs nothing and limits
+   per connection. Do not enable the PROXY protocol handler; `iroh-relay` does
+   not parse it.
+5. **UDP for QUIC address discovery, native clients only.** Fly preserves the
+   UDP source address, so discovery works, but the socket must bind to the
+   `fly-global-services` address and internal and external ports must match.
+   `quic_bind_addr` takes an IP, so an entrypoint script resolves
+   `fly-global-services` and writes the config before start. Skip until native
+   builds ship; browsers never use UDP against the relay.
+6. **STUN.** Run coturn as a second small app with its own dedicated IPv4, or
+   use Cloudflare STUN alone. One STUN server is enough for WebRTC.
+7. **Egress is metered from the first byte**, USD 0.02 per GB in Europe and
+   North America. A relayed 5 GB transfer costs about ten cents. A VPS with
+   included traffic has no such line item.
+8. **Bucharest is not a Fly region.** Nearest are Frankfurt, Amsterdam, Paris
+   and Stockholm. The relay's data-protection position is a US processor with
+   EU servers under Fly's pre-signed DPA, the same shape as Cloudflare.
+
+```toml
+# fly.toml
+app = "oxfer-relay-eu"
+primary_region = "fra"
+
+[build]
+dockerfile = "Dockerfile"   # FROM n0computer/iroh-relay:v1.1.0, COPY config.toml
+
+[mounts]
+source = "relay_certs"
+destination = "/var/lib/iroh-relay"
+
+[[services]]
+protocol = "tcp"
+internal_port = 443
+auto_stop_machines = "off"
+auto_start_machines = false
+min_machines_running = 1
+  [[services.ports]]
+  port = 443              # no handlers: the relay terminates TLS and runs ACME
+
+# Add only when native clients need address discovery:
+# [[services]]
+# protocol = "udp"
+# internal_port = 7842
+#   [[services.ports]]
+#   port = 7842
+```
+
+The image `n0computer/iroh-relay` is published on Docker Hub with tags
+matching iroh releases. Use the tag that matches the workspace's iroh
+version or a newer 1.x.
 
 ## 5. Privacy notice: content checklist
 
