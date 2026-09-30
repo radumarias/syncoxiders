@@ -1,0 +1,365 @@
+# Oxfer compliance records
+
+Drafts of the assessments and records that
+[`../compliance-plan.md`](../compliance-plan.md) calls for, with the status of
+every plan item and the steps only the owner can take. Everything here is a
+**DRAFT** until the operator fills the placeholders, dates and signs it. It is
+not legal advice.
+
+This directory is public (decision D5). Records here state facts and reasons.
+Operational records (abuse log, incident log, correspondence, signed DPAs) stay
+private: see [Private records](#private-records).
+
+## Records
+
+| File | What it is | Plan item |
+| --- | --- | --- |
+| [osa-illegal-content.md](osa-illegal-content.md) | UK Online Safety Act illegal content risk assessment | D1 |
+| [osa-children-access.md](osa-children-access.md) | UK children's access assessment. Concludes that Oxfer is treated as likely to be accessed by children. | D2 |
+| [osa-children-risk.md](osa-children-risk.md) | UK children's risk assessment, required by that conclusion. Needs an owner decision on measure PCU B4. | D2 (follow-on) |
+| [esafety.md](esafety.md) | Australia: classification (DIS, not RES), DIS Standard risk assessment (Tier 3), Phase 2 code | D3 |
+| [ropa.md](ropa.md) | GDPR Article 30 record, processor list, legitimate interest and DPIA screening, UK and Swiss representatives | D4, D7 |
+| [transparency.md](transparency.md) | What exists per user or transfer, what authorities can obtain, how requests are handled | D5 |
+| [incident-runbook.md](incident-runbook.md) | Incident scenarios, notification decision tree and deadlines, bundle verification | D6 |
+
+Placeholders used throughout, the same as in the legal pages:
+`[[OPERATOR_NAME]]`, `[[OPERATOR_ADDRESS]]`, `[[OPERATOR_REGISTRATION]]`,
+`[[EFFECTIVE_DATE]]`, `[[RELAY_HOSTING_PROVIDER]]`, `[[RELAY_LOCATION]]`.
+Lines marked *to be completed by the operator* need facts only the operator has.
+
+## Status of every plan item
+
+"Code" means the item is implemented in the named file; "Record" means it is
+documented in this directory; "Owner" means it needs the owner (see
+[Owner actions](#owner-actions)). Paths are relative to `p2p-transfer/`.
+
+### A. Infrastructure
+
+| # | Item | Status | Where |
+| --- | --- | --- | --- |
+| A1 | EU VPS for the relay | Owner | Owner action 3; runbook in `deploy/relay/README.md` |
+| A2 | DNS for `relay.oxfer.app`, DNS-only | Owner | Owner action 3 |
+| A3 | Official `iroh-relay` 1.1 with ACME, ports, no access log | Code, Owner | `deploy/relay/`; logging facts in [ropa.md](ropa.md#21-relay-logging-verified-in-the-relay-source) |
+| A4 | STUN: Cloudflare only | Code | `src/webrtc.rs` `ICE_SERVERS` |
+| A5 | Relay rate limits, `access = "everyone"` | Code | `deploy/relay/` configuration |
+| A6 | Production builds use the relay | Code, Owner | `.github/workflows/oxfer-web.yml` passes `vars.P2P_RELAY_URL`; `build-web.sh`; owner sets the variable (owner action 3) |
+| A7 | ICE server list without Google | Code | `src/webrtc.rs` |
+| A8 | Several relays | Code | `src/node.rs` `RelayChoice::from_setting`, `parse_relay_list` |
+| A9 | Diagnostics and docs for the custom relay | Code | `src/diagnostics.rs`, `src/node.rs` `relay_probe_urls`; `docs/diagnostics.md` and `docs/cloudflare-workers.md` to describe it |
+| A10 | Uptime monitoring | Owner | Owner action 3 |
+| A11 | Upgrade policy | Owner | `deploy/relay/README.md` |
+| A12 | TURN only if measured | Not adopted | Issue #53; no TURN in the ICE list |
+
+### B. Client and deployment hardening
+
+| # | Item | Status | Where |
+| --- | --- | --- | --- |
+| B1 | CSP, report-only first | Code, Owner | `assets/_headers`, `assets/boot.js`, `package-cf-output.mjs` renders the relay into `connect-src`, `verify-deployment.mjs` asserts it; enforcing it is owner action 8 |
+| B2 | `Permissions-Policy` | Code | `assets/_headers`, asserted by `verify-deployment.mjs` |
+| B3 | `__p2p` debug handle only in debug builds or with `#dev` | Code | `src/webrtc.rs` `expose_debug_handle` |
+| B4 | Supply chain: 2FA, branch protection, scoped and rotated token, bundle hashes | Code, Owner | Hashes: `.github/workflows/oxfer-web.yml` (run summary and artifact); account settings: owner actions 5 and 6 |
+| B5 | Tell native senders their link contains their IP addresses | Code | `src/app.rs` share screen |
+| B6 | Footer links to Privacy, Terms, Abuse, Source | Code | `src/app.rs` bottom bar |
+
+### C. Legal pages
+
+| # | Item | Status | Where |
+| --- | --- | --- | --- |
+| C1 | Privacy notice | Code, Owner | `privacy.html`; placeholders: owner action 1 |
+| C2 | Terms of use | Code, Owner | `terms.html` |
+| C3 | Abuse, safety and law-enforcement page | Code, Owner | `abuse.html` |
+| C4 | Clean paths `/privacy`, `/terms`, `/abuse` | Code | Workers static-assets HTML handling (no `_redirects`); checked by `verify-deployment.mjs` |
+| C5 | Operator identity on each page | Owner | Decision D4, owner action 1; `build-web.sh` refuses to package while placeholders remain |
+| C6 | Honest "Technical details" relay sentence | Code | `src/app.rs` `show_how_it_works` |
+
+### D. Assessments and records
+
+| # | Item | Status | Where |
+| --- | --- | --- | --- |
+| D1 | UK illegal content risk assessment | Record, Owner | [osa-illegal-content.md](osa-illegal-content.md); sign at adoption |
+| D2 | UK children's access assessment | Record, Owner | [osa-children-access.md](osa-children-access.md), [osa-children-risk.md](osa-children-risk.md); PCU B4 decision |
+| D3 | Australia self-assessment | Record, Owner | [esafety.md](esafety.md) (the plan named it `esafety-dis.md`); Phase 2 section to complete |
+| D4 | GDPR Article 30 record and DPIA screening | Record | [ropa.md](ropa.md) |
+| D5 | Transparency and no-logs statement | Record, Code | [transparency.md](transparency.md); `privacy.html` section 3 and `abuse.html` section 9 |
+| D6 | Incident runbook | Record | [incident-runbook.md](incident-runbook.md) |
+| D7 | Processor list | Record, Owner | [ropa.md](ropa.md#4-recipients-and-processors-plan-item-d7); DPAs: owner action 4 |
+
+### E. Registrations and market posture
+
+| # | Item | Status | Where |
+| --- | --- | --- | --- |
+| E1 | Indonesia PSE registration | Owner | Owner action 9 |
+| E2 | UK: no registration; answer Ofcom on time | Record | [incident-runbook.md](incident-runbook.md#6-request-from-an-authority-or-regulator), [transparency.md](transparency.md#4-how-requests-are-handled) |
+| E3 | Markets not offered | Code | `terms.html` section 8 |
+| E4 | Geoblocking lever documented, off by default | Code | `docs/cloudflare-workers.md` |
+| E5 | Brazil: not directed at minors, no profiling | Code | `terms.html` section 3; `privacy.html` section 14.4 |
+
+### F. Ongoing
+
+| # | Item | Status | Where |
+| --- | --- | --- | --- |
+| F1 | Quarterly review | Owner | [Review cadence](#review-cadence) |
+| F2 | Watch list | Owner | [Review cadence](#review-cadence) |
+| F3 | Triggers that reopen everything | Record | [Review cadence](#review-cadence); [osa-illegal-content.md](osa-illegal-content.md#7-triggers-for-a-new-assessment-before-a-change) |
+
+## Owner actions
+
+Do them roughly in this order. Actions 1 and 3 are linked: the legal pages
+describe the operator's own relay, so publish them (by filling the placeholders,
+which unlocks the deploy guard) only when production builds use that relay.
+Otherwise the published privacy notice would describe a relay the production
+build does not use.
+
+### 1. Decide D4 and fill the placeholders
+
+- **First, turn off Cloudflare Network Error Logging** for the `oxfer.app`
+  zone. On 30 September 2026 responses carried Cloudflare's `nel` and
+  `report-to` headers, which ask browsers to send reports of failed requests
+  to `a.nel.cloudflare.com` [L17]. The privacy notice does not describe this,
+  so it must be off before the placeholders are filled, and
+  `verify-deployment.mjs` fails while either header is served
+  ([ropa.md](ropa.md#22-network-error-logging)). Turn it off with the zone's
+  **Network Error Logging** toggle in the dashboard, or with the zone setting
+  `nel`:
+
+  ```sh
+  curl -sS -X PATCH "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/settings/nel" \
+    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    --data '{"value":{"enabled":false}}'
+  curl -sI https://oxfer.app/ | grep -iE '^(nel|report-to):'   # expect no output
+  ```
+
+  The API call needs a token with *Zone Settings: Edit* on `oxfer.app`. The CI
+  token from the Workers template (action 5) does not have it; use the
+  dashboard or a short-lived token.
+- Decide whether Oxfer is run by a natural person or a company. A company
+  changes the e-commerce disclosures, brings Brazil's Marco Civil log rule into
+  view ([ropa.md](ropa.md#10-decision-d4-and-this-record)), and decides whether
+  the DSA's small-enterprise exemption from transparency reports applies
+  ([transparency.md](transparency.md#6-figures)).
+- Fill `[[OPERATOR_NAME]]`, `[[OPERATOR_ADDRESS]]`, `[[OPERATOR_REGISTRATION]]`
+  (trade-register number and tax ID for a company; delete the line for a natural
+  person), `[[EFFECTIVE_DATE]]`, `[[RELAY_HOSTING_PROVIDER]]` and
+  `[[RELAY_LOCATION]]` in `privacy.html`, `terms.html`, `abuse.html` and every
+  file in this directory. List what is left with:
+
+  ```sh
+  grep -rnoE '\[\[[A-Z][A-Z0-9_]*\]\]' p2p-transfer/*.html p2p-transfer/docs/compliance
+  ```
+
+- Complete the lines marked *to be completed by the operator*, then date and
+  sign each record.
+- Check section 4 of the privacy notice against the release build once, in a
+  fresh browser profile with the developer tools' storage view open. Local
+  storage stays empty until you pick a theme, then holds only `oxfer.theme.v1`.
+  There are no cookies apart from Cloudflare's security cookies, which the
+  notice's section 6 describes, when those protections are on. Cache storage
+  holds `oxfer-v3`. Once the app has started, IndexedDB holds an empty
+  `oxfer-resume` database, which gains entries (with an `oxfer-resume` folder
+  in the origin private file system) only after a transfer with "Keep a copy
+  here". In a profile that used an older build, the legacy `app` and
+  `egui_memory_ron` keys disappear after the first start.
+
+### 2. Create the mailboxes
+
+Create `privacy@oxfer.app`, `abuse@oxfer.app` and `ops@oxfer.app` with
+Cloudflare Email Routing [L1]. `ops@oxfer.app` is the relay's Let's Encrypt
+contact (`contact` in `deploy/relay/config.toml`); iroh-relay refuses to start
+in Let's Encrypt mode without one, so create it before action 3.
+
+1. Cloudflare dashboard, Email Routing, Destination addresses: add the mailbox
+   you read and verify it from the email Cloudflare sends.
+2. Routing rules: create `privacy`, `abuse` and `ops` on `oxfer.app`, each
+   forwarding to that destination.
+3. Send a test message to each address from an outside account and reply to it.
+4. Record the mailbox provider in [ropa.md](ropa.md#4-recipients-and-processors-plan-item-d7)
+   and file its DPA (action 4).
+
+### 3. Provision the relay and switch production to it
+
+1. Order the VPS and set it up with the runbook in
+   [`deploy/relay/README.md`](../../deploy/relay/README.md) (plan items A1, A3,
+   A5, A11).
+2. Cloudflare DNS: add `A` and `AAAA` records for `relay.oxfer.app`, proxy status
+   **DNS only** (A2).
+3. Check the relay from the app's Diags page with a local build that sets
+   `P2P_RELAY_URL=https://relay.oxfer.app`.
+4. Add an external uptime monitor for `https://relay.oxfer.app/` and TCP 443,
+   alerting by email (A10).
+5. GitHub repository, Settings, Secrets and variables, Actions, **Variables**:
+   create `P2P_RELAY_URL` with value `https://relay.oxfer.app` [L2]. Run the
+   `oxfer-web` workflow. The deploy job checks that the served
+   `Content-Security-Policy-Report-Only` names the relay in `connect-src`.
+6. Fill `[[RELAY_HOSTING_PROVIDER]]` and `[[RELAY_LOCATION]]`.
+
+### 4. Accept and file the DPAs
+
+| Provider | What to do |
+| --- | --- |
+| Cloudflare | The DPA is part of the self-serve subscription agreement [L3]. Save a PDF of the current version (6.4, effective 3 April 2026) with the date. Ask Cloudflare whether it covers the public STUN service; record the answer in [ropa.md](ropa.md#4-recipients-and-processors-plan-item-d7). |
+| VPS provider | Accept its DPA in the customer account (Hetzner: `accounts.hetzner.com/account/dpa` [L4]; OVHcloud attaches its DPA to the contract [L5]) and save a copy. |
+| Mailbox provider | Accept its DPA and save a copy. |
+| GitHub | No Oxfer user data goes to GitHub. Its DPA applies under the GitHub Customer Agreement [L6]; save a copy only if the account is on a plan it covers. |
+
+File them in the private records, and re-check them at each quarterly review.
+
+### 5. Secure the accounts (plan item B4)
+
+1. GitHub: turn on two-factor authentication with an authenticator app or a
+   security key [L7].
+2. Cloudflare: turn on two-factor authentication [L8].
+3. Branch protection on `main` [L9]: require status checks to pass before merging
+   (the `ci` jobs), and turn on "Do not allow bypassing the above settings" if the
+   rule should bind the owner too.
+4. Cloudflare API token for CI: created from the "Edit Cloudflare Workers"
+   template [L10], used only as the `CLOUDFLARE_API_TOKEN` secret.
+
+### 6. Rotate the Cloudflare API token every year
+
+Dashboard, My Profile, API Tokens, the token's menu, **Roll**; the old secret
+stops working [L11]. Paste the new value into the GitHub Actions secret
+`CLOUDFLARE_API_TOKEN` and run the `oxfer-web` workflow to confirm. Set a
+calendar reminder. Roll at once in the scenario in
+[incident-runbook.md](incident-runbook.md#1-compromised-build-or-deploy-pipeline-or-cloudflare-api-token).
+
+### 7. Keep the bundle hashes
+
+Each deploy records SHA-256 hashes in the run summary and the artifact
+`oxfer-web-sha256-<commit>`. GitHub keeps them at most 90 days in a public
+repository [L12]. Copy each production run's file to the private records or
+attach it to a GitHub release. Verification steps:
+[incident-runbook.md](incident-runbook.md#8-verifying-what-oxferapp-serves).
+
+### 8. Enforce the Content-Security-Policy
+
+1. Run the manual matrix with the browser console open and note every
+   `Content-Security-Policy-Report-Only` violation: current Chrome, Firefox and
+   Safari on desktop, Safari on iOS, Chrome on Android. On each: load the app;
+   share and receive over a direct path and over the relay; each download route
+   (`sink=fsa`, `sink=sw`, `sink=mem`); resume a saved copy; the Diags page; the
+   theme page; the three legal pages; keep-screen-on during a transfer.
+2. Fix or accept each violation.
+3. Rename the header from `Content-Security-Policy-Report-Only` to
+   `Content-Security-Policy` in `assets/_headers`, together with the
+   `CSP_REPORT_ONLY` constant in `package-cf-output.mjs` that
+   `verify-deployment.mjs` checks, and deploy.
+
+### 9. Register in Indonesia (plan item E1)
+
+- Law: Minister of Communication and Informatics Regulation 5 of 2020 on private
+  scope electronic system operators. A foreign operator that provides services
+  in Indonesia or whose system is used there must register, giving its identity,
+  the identity of its management or person in charge, a tax identification
+  number, and its number of Indonesian users and transaction value, with
+  supporting documents translated into Indonesian by a sworn translator [L13].
+- Portal: Komdigi's PSE registration site, `pse.komdigi.go.id` [L14]. Secondary
+  guides disagree on whether foreign operators file there directly or through
+  OSS-RBA, and on whether a local point of contact is expected [L15]. Follow the
+  portal's current instructions.
+- Stop and revisit decision D3 if registration requires an Indonesian entity or
+  a local representative: D3 assumed a free registration without either.
+- Expect a cost for sworn translation. Komdigi has been warning unregistered
+  providers and blocking is the sanction [L16].
+
+### 10. Other items that need the owner
+
+- **PCU B4.** Choose an option in
+  [osa-children-risk.md](osa-children-risk.md#6-decision-needed-pcu-b4).
+- **Old Pages project.** `oxfer.pages.dev` still answered on 30 September 2026. It
+  serves an earlier build that predates these changes, with no legal pages and
+  none of the security headers. Delete the Pages project, or keep it deployed
+  from the same build as production.
+- **Zone settings that rewrite pages.** `assets/_headers` now sends
+  `Cache-Control: no-transform`, so Cloudflare Email Address Obfuscation and
+  similar rewriting cannot alter the served pages, including the `mailto:`
+  links on the legal pages [L23]. Still check the `oxfer.app` zone settings once
+  ([cloudflare-workers.md](../cloudflare-workers.md#zone-settings-that-rewrite-responses)):
+  Email Address Obfuscation off, and no other feature that edits HTML.
+  `verify-deployment.mjs` fails if a served file differs from the build.
+- **NCMEC transfers.** Confirm with counsel the GDPR transfer basis before the
+  first report ([ropa.md](ropa.md#5-international-transfers)).
+- **Australia Phase 2 code.** Complete [esafety.md](esafety.md#7-phase-2-dis-online-safety-code-class-1c-and-class-2-material).
+- **EU e-Evidence.** The Regulation applies from 18 August 2026 and its companion
+  Directive had to be transposed by 18 February 2026 [L18]. Check whether
+  Romania's transposing law asks a provider established in Romania to designate
+  an establishment for receiving orders.
+- **Complaint measures ICU D3, D5 and D6.** The abuse page now says that
+  Oxfer never tells the sender or any other user that a report was made or who
+  made it (section 2), what the acknowledgement lists, and that a reporter can
+  opt out of further messages (section 3). Write the acknowledgement template
+  it describes (possible outcomes: no action; a block of the share or of
+  addresses at the relay; referral to NCMEC or authorities; a reply explaining
+  the decision; and confirmation that the decision will be sent), keep it with
+  the private records, honour opt-outs, then mark the three measures adopted in
+  [osa-illegal-content.md](osa-illegal-content.md#51-codes-measures-that-apply).
+
+## Review cadence
+
+| When | What |
+| --- | --- |
+| Quarterly (F1) | Read the plan, the three legal pages and these records against the code; re-check the DPAs, the processor list and the Cloudflare UK share of requests; copy bundle hashes. |
+| Every 12 months at most | UK children's access assessment [OSA s.36]; UK illegal content and children's risk assessments; Australian assessment; yearly transparency figures; review what the abuse log keeps. |
+| Before a change | Any trigger in [osa-illegal-content.md](osa-illegal-content.md#7-triggers-for-a-new-assessment-before-a-change) or plan item F3: accounts, analytics, ads, payments or donations, a store-and-forward relay, messaging, or roughly 100,000 monthly visitors from one country. Redo the assessments and the [DPIA screening](ropa.md#8-dpia-screening) first. |
+| When a regulator publishes | Ofcom risk profile or code changes; eSafety codes; EDPB guidance. |
+
+Watch list (F2), as of 30 September 2026. Items without a source are carried
+over from the plan.
+
+- EU regulation on child sexual abuse (interpersonal communications services).
+- Ofcom: its additional safety measures, consulted on in 2025, with updated
+  Codes expected later [L20]; its May 2026 statement recommending hash matching
+  for intimate image abuse to certain providers [L21]; notices under OSA
+  section 121.
+- EU-U.S. Data Privacy Framework: Latombe's appeal to the Court of Justice
+  (Case C-703/25 P) against the General Court's judgment upholding it [L22].
+- India: DPDP Rules duties from mid-May 2027
+  ([incident-runbook.md](incident-runbook.md#92-deadlines)); CERT-In directions.
+- Australia: Phase 2 codes in force since 9 March 2026 ([esafety.md](esafety.md)).
+- Brazil: ECA Digital enforcement; Marco Civil if D4 is a company.
+- US state privacy and child-safety laws.
+
+## Private records
+
+Keep outside this public repository, in a private repository or encrypted
+storage that only the operator can open:
+
+- the abuse log (date, kind of report, endpoint ID or address blocked, outcome;
+  never content) and the relay denylist history;
+- the incident log;
+- correspondence with authorities, regulators and NCMEC;
+- signed or accepted DPAs, with dates and versions;
+- bundle hash files for production deploys;
+- filled-in versions of these records, if the operator prefers not to publish
+  some facts (decision D5), with this directory keeping the public version.
+
+Keep each for as long as needed to show how a matter was handled, at least two
+years after the end of the calendar year of the action for anything the
+Australian DIS Standard requires [L19, s.38], and review what is kept every year.
+
+## Sources
+
+- [L1] Cloudflare, Email Routing rules and addresses: <https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/>
+- [L2] GitHub, store information in variables: <https://docs.github.com/actions/learn-github-actions/variables>
+- [L3] Cloudflare Data Processing Addendum: <https://www.cloudflare.com/cloudflare-customer-dpa/>
+- [L4] Hetzner, data privacy FAQ: <https://docs.hetzner.com/de/general/general-terms-and-conditions/data-privacy-faq/>
+- [L5] OVHcloud, legal and privacy security: <https://www.ovhcloud.com/en/personal-data-protection/legal-privacy-security/>
+- [L6] GitHub Data Protection Agreement: <https://github.com/customer-terms/github-data-protection-agreement>
+- [L7] GitHub, about two-factor authentication: <https://docs.github.com/en/authentication/securing-your-account-with-two-factor-authentication-2fa/about-two-factor-authentication>
+- [L8] Cloudflare, set up 2FA: <https://developers.cloudflare.com/learning-paths/application-security/account-security/set-up-2fa/>
+- [L9] GitHub, managing a branch protection rule: <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule>
+- [L10] Cloudflare, create an API token: <https://developers.cloudflare.com/fundamentals/api/get-started/create-token/>
+- [L11] Cloudflare, roll API tokens: <https://developers.cloudflare.com/fundamentals/api/how-to/roll-token/>
+- [L12] GitHub, artifact and log retention: <https://docs.github.com/en/github/administering-a-repository/managing-repository-settings/configuring-the-retention-period-for-github-actions-artifacts-and-logs-in-your-repository>
+- [L13] Komdigi legal database, Regulation 5 of 2020: <https://jdih.komdigi.go.id/produk_hukum/view/id/759/t/peraturan+menteri+komunikasi+dan+informatika+nomor+5+tahun+2020>
+- [L14] Komdigi, PSE registration: <https://pse.komdigi.go.id/>
+- [L15] XPND, PSE registration for foreign digital companies 2026 (secondary): <https://xpnd.co.id/guides/pse-registration-foreign-digital-companies-2026/>;
+  Legal Indonesia, PSE registration (secondary): <https://legalindonesia.id/pse-registration-indonesia/>
+- [L16] Digital Watch, Komdigi deadline for 25 providers (secondary): <https://dig.watch/updates/indonesia-gives-service-providers-deadline>
+- [L17] Cloudflare, Network Error Logging: <https://developers.cloudflare.com/network-error-logging/>
+- [L18] eucrim, e-Evidence Regulation and Directive: <https://eucrim.eu/news/e-evidence-regulation-and-directive-published/>
+- [L19] DIS Standard 2024, F2024L00710: <https://www.legislation.gov.au/F2024L00710/asmade/text>
+- [L20] Ofcom, consultation on additional safety measures: <https://www.ofcom.org.uk/online-safety/illegal-and-harmful-content/online-safety-additional-safety-measures>
+- [L21] Ofcom, statement on detecting intimate image abuse: <https://www.ofcom.org.uk/siteassets/resources/documents/online-safety/information-for-industry/illegal-harms/detecting-intimate-image-abuse/statement-detecting-intimate-image-abuse.pdf?v=418076>
+- [L22] WilmerHale, Court of Justice to review the Data Privacy Framework (secondary): <https://www.wilmerhale.com/en/insights/blogs/wilmerhale-privacy-and-cybersecurity-law/20251201-european-court-of-justice-to-review-challenge-to-eu-us-data-privacy-framework>
+- [L23] Cloudflare, Email Address Obfuscation (not applied with `Cache-Control: no-transform`): <https://developers.cloudflare.com/waf/tools/scrape-shield/email-address-obfuscation/>
+- OSA s.36: <https://www.legislation.gov.uk/ukpga/2023/50/section/36>
