@@ -40,7 +40,7 @@ to file-sharing services regardless of size.
 
 | # | Item | Where | Notes |
 | --- | --- | --- | --- |
-| A1 | Provision one EU VPS for the relay | Hetzner Falkenstein or Helsinki, Scaleway Paris, or OVH Gravelines | Smallest instance is enough. Hetzner includes 20 TB traffic per month. Accept the provider's DPA in the account settings and keep a copy. |
+| A1 | Provision one EU VPS for the relay | OVH VPS-1 in Gravelines, Strasbourg or Frankfurt; IONOS VPS S+ in Germany as the month-to-month fallback; Hetzner CX23 when its cost-optimised tier is orderable again | Smallest instance is enough; the relay needs well under 100 MB of RAM and idles at zero CPU. Traffic matters more than compute. Accept the provider's DPA in the account settings and keep a copy. Prices in section 4. |
 | A2 | DNS `relay.oxfer.app` A and AAAA records, DNS-only | Cloudflare DNS | Do not proxy this hostname. The relay needs long-lived WebSockets and UDP for QUIC address discovery, and proxying would add a US processor to the relay path. |
 | A3 | Run the official `iroh-relay` 1.1 binary or container image | VPS, systemd | Config in section 4. ACME TLS is built in. Open TCP 80 and 443, UDP 7842. Bind metrics to localhost. Disable access logging; set journald retention to a few days. |
 | A4 | Run a STUN-only server next to it | VPS, `coturn` with `stun-only` | iroh-relay 1.x no longer serves STUN, and browser WebRTC needs classic STUN. STUN is a few packets per session, negligible load. Open UDP and TCP 3478. |
@@ -133,7 +133,7 @@ Why Cloudflare Workers and Containers do not fit:
 
 | Option | UDP for QAD | Region control | Long-lived WebSockets | Cost order | Data-protection position | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| EU VPS with `iroh-relay` and `coturn` (Hetzner, Scaleway, OVH) | Yes | Yes | Yes | About EUR 4 to 8 per month, traffic included | You are the controller, EU provider under a DPA | Recommended |
+| EU VPS with `iroh-relay` and `coturn` (OVH, IONOS, Hetzner when in stock) | Yes | Yes | Yes | About EUR 4 to 6 per month, traffic included | You are the controller, EU provider under a DPA | Recommended |
 | n0 managed relays | Yes | Yes | Yes | Quote from n0 | Needs a DPA with n0 and confirmation of regions | Acceptable if you prefer not to operate a server |
 | Fly.io machine in an EU region (fra, ams, cdg, arn) | Yes, with a dedicated IPv4 | Yes, one machine per relay hostname | Yes, raw TCP passthrough on 443 | About USD 5 to 8 per month plus USD 0.02 per GB egress | US company (Fly.io Inc.), EU region, pre-signed DPA | Viable second choice; conditions in section 4 |
 | Cloudflare Workers or Containers | No | No | Limited | USD 5 plan plus usage | US processor on the relay hop | Not viable |
@@ -267,6 +267,46 @@ min_machines_running = 1
 The image `n0computer/iroh-relay` is published on Docker Hub with tags
 matching iroh releases. Use the tag that matches the workspace's iroh
 version or a newer 1.x.
+
+### Provider prices, September 2026
+
+Checked on 30 September 2026. Prices exclude VAT unless noted and will
+drift; recheck before ordering.
+
+| Provider and plan | Specs | Traffic | Price | Term | Notes |
+| --- | --- | --- | --- | --- | --- |
+| OVH VPS-1, Gravelines, Strasbourg, Frankfurt, Warsaw | 2 vCPU, 4 GB, 40 GB NVMe, 500 Mbps | Unlimited | EUR 3.81 per month | 12 months | French company. Anti-DDoS included, which matters for a public relay endpoint. Best value today. |
+| IONOS VPS S+, Germany | 1 vCPU, 2 GB, 60 GB NVMe, up to 1 Gbps | Unlimited | About EUR 5 per month after a 3-month promo, EUR 10 setup | Monthly | German company. The month-to-month fallback. |
+| Hetzner CX23 or CAX11, Falkenstein, Nuremberg, Helsinki | 2 vCPU, 4 GB, 40 GB | 20 TB, then EUR 1 per TB | EUR 5.99 per month including IPv4, after the June 2026 increase | Hourly, no commitment | Best tooling: API, cloud-init, free cloud firewall, snapshots. The whole cost-optimised tier was marked unavailable in early September 2026; the cheapest orderable plan is CPX12 at EUR 11.99. Use it when it returns. |
+| Scaleway STARDUST1-S, Paris or Amsterdam | 1 vCPU, 1 GB, 100 Mbps | Included | About EUR 4.10 per month with a flexible IPv4 | Hourly | Cheapest on paper. Stock is limited and 100 Mbps caps relayed throughput. |
+| netcup VPS 500 G12.5, Nuremberg or Vienna | 2 vCPU, 4 GB, 64 GB | Flat rate | EUR 8.26 per month | 12 months | Solid, but pricier and committed. |
+| Fly.io shared-cpu-1x, Frankfurt | 1 shared vCPU, 512 MB to 1 GB | Metered | About USD 5 to 8 per month plus USD 0.02 per GB egress, plus USD 2 dedicated IPv4 | Hourly | Conditions in the Fly.io variant above. |
+| Oracle Cloud Always Free, Frankfurt | 2 Arm OCPU, 12 GB total since mid-2026 | 10 TB per month | Free | None | Idle instances are reclaimed after 7 days below 20 percent utilisation, and Arm capacity is often unavailable. Not for something that must stay up. |
+| n0 managed relay | Managed | 250 GB per month included, USD 0.09 per GB after | USD 199 per month per region on the Pro plan | Monthly | Zero maintenance, but priced for companies. |
+
+### What you maintain
+
+A relay is stateless and single-purpose, so the list is short. Budget one
+to two hours for the first setup and about fifteen minutes a month after
+that, plus half an hour whenever iroh is upgraded.
+
+| Area | What | Cadence | Effort |
+| --- | --- | --- | --- |
+| OS patches | `unattended-upgrades` with a nightly reboot window when a kernel update needs it | Automatic; glance at it monthly | Minutes |
+| Relay version | Pin the `n0computer/iroh-relay` image tag or release binary. Upgrade when the workspace's iroh version moves or n0 publishes a security fix. Verify with the app's Diags page afterwards. | Quarterly, or on advisories | 30 minutes |
+| TLS | ACME renewal is built into the relay. Nothing to do unless the uptime probe reports a certificate error. | Automatic | None |
+| Uptime and certificate monitoring | A free external monitor on `https://relay.oxfer.app/` (the relay serves a plain page) and TCP 443, alerting by email. Same for STUN on UDP 3478 if the monitor supports it. | Automatic | None |
+| Traffic and capacity | Read the provider's traffic graph. Unlimited plans remove the overage worry; on Hetzner set an alert at 80 percent of 20 TB. The relay handles tens of thousands of concurrent connections on this hardware. | Monthly | Minutes |
+| Security hygiene | SSH keys only, password auth off, firewall allowing only 80, 443, 3478 and 7842, no other services on the box. Rotate SSH keys yearly. | Yearly | 15 minutes |
+| Logs and retention | journald capped at a few days, no access logs, metrics bound to localhost. Set once. | Once | None |
+| Abuse response | Block an offending IP at the firewall or via the relay's denylist access mode, and record it in the abuse log. | On demand | Minutes |
+| Rebuild capability | Keep the config, systemd units and a cloud-init file under `deploy/relay/` in this repo, so a fresh box is live in ten minutes. Rehearse once a year. | Yearly | 30 minutes |
+| Paperwork | Accept the provider's DPA once; keep it with the processor list; review with the quarterly plan review. | Quarterly | Minutes |
+| Cost | Check the invoice. | Monthly | Minutes |
+
+Backups are not needed: the relay holds no state, and certificates
+regenerate. On Fly.io the OS row disappears and the firewall row shrinks,
+but the image, monitoring, egress and paperwork rows stay.
 
 ## 5. Privacy notice: content checklist
 
