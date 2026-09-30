@@ -73,6 +73,8 @@ accessed by children that is neither large nor multi-risk [K2, section 3]:
 | PCU D1, D2 Complaints | Adopted | `abuse@oxfer.app`. |
 | PCU D7 Action on complaints about content harmful to children | Adopted | Handled under C1 and C2. |
 | PCU D9, D10 Appeals | Adopted | Abuse page, section 8. |
+| PCU D13 Complaints about non-compliance with the children's safety duties or the reporting duty | Adopted | Such complaints go to `abuse@oxfer.app` (terms, section 6; abuse page, section 8). The nominated individual is [[OPERATOR_NAME]], who handles them as ICU D12 in the illegal content risk assessment, within the 15-day timeframe on the abuse page [K2, PCU D13.3, D13.4]. |
+| PCU D14 Manifestly unfounded complaints | Not used | There is no policy for disregarding complaints, so none is disregarded; every complaint is considered [K2, PCU D14.2]. |
 | PCU G1, G3 Terms of service | Open | The terms must say how children are protected from each kind of primary priority and priority content, depending on the decision in section 6. |
 | PCU B4 Highly effective age assurance where primary priority content is not prohibited | **Decision needed** | Section 6. |
 

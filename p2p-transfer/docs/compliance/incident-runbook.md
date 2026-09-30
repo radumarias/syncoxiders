@@ -79,8 +79,11 @@ so the relay cannot impersonate a peer.
 3. Rotate every SSH key that had access.
 
 **Recovery**: build a fresh host from [`deploy/relay/`](../../deploy/relay/README.md),
-point the DNS records at it, and let the relay obtain new certificates. Check it
-with the app's Diags page.
+point the DNS records at it, and let the relay obtain new certificates. Then
+restore the blocks still in force from the private abuse log, not from the
+compromised host: endpoint IDs into `/etc/oxfer-relay/denylist.txt` followed by
+`setup.sh --denylist`, and addresses with `oxfer-relay-ban add` and their
+remaining days (section 4, steps 7 and 8). Check it with the app's Diags page.
 
 **Communication**: metadata may have been exposed; go to section 9.
 
@@ -105,27 +108,88 @@ untrusted code; treat as section 1.
 
 ## 4. Abuse report
 
-Timelines are those promised on the [abuse page](../../abuse.html), section 3.
+Timelines are those promised on the [abuse page](../../abuse.html), section 3,
+and for India section 10. The order in which reports are handled, and the
+targets, are in section 5.2 of the
+[illegal content risk assessment](osa-illegal-content.md#52-responsibilities-code-of-conduct-and-moderation-policies)
+(ICU C4, C5).
 
-1. Log it (date, kind, link part before `&cap=`, reporter contact if given).
-2. Acknowledge within 24 hours. The acknowledgement lists the possible outcomes
-   (no action, share blocked, address blocked, referral to authorities) and says
-   whether the reporter will be told the decision.
-3. Do not open or download the reported link.
-4. Decide. To block a share, add the endpoint ID from the link to the relay's
-   denylist (`access.denylist` in the relay configuration) and restart the relay;
-   a restart briefly interrupts transfers running through it. To block an
-   address, add a firewall rule or a relay denylist entry, with an expiry where
-   possible.
-5. Intimate images shared without consent: block within 48 hours.
-6. Answer within 15 days with the decision; record it.
-7. Appeals: review promptly, lift a wrong block, record it.
+1. **Log it** in the private abuse log: date and time received, kind of report,
+   the link part before `&cap=`, and the reporter's contact if given. Never
+   record the `cap=` part of a link, and never any content.
+2. **Opt-out.** If the reporter asks for no further messages, in the report or
+   later (for example by replying "No further messages"), note it in the log
+   and from then on send nothing about the report, not even the
+   acknowledgement or the decision. Handle the report in the same way
+   otherwise (abuse page, section 3; ICU D6).
+3. **Acknowledge within 24 hours** (unless the reporter opted out), from the
+   template kept with the private records. The acknowledgement lists the
+   possible outcomes: no action; a block at the relay, of the share or of
+   network addresses; a referral to NCMEC or other authorities; a reply that
+   explains the decision. It confirms that the reporter will be told the
+   decision and any action taken, and gives the timeframe: 15 days, or 7 days
+   for a complaint from India (ICU D4, D5).
+4. **Do not open or download the reported link**, and do not tell the person
+   who shared it, or anyone else, that a report was made or who made it
+   (abuse page, section 2).
+5. **Read the share's endpoint ID offline.** The relay blocks a share by its
+   endpoint ID, which is encoded in the link's ticket and cannot be read by eye.
+   From `p2p-transfer/`, pass only the part of the link before `&cap=`:
+
+   ```sh
+   cargo run -q -p p2p-transfer --example ticket-endpoint-id -- 'endpoint…'
+   ```
+
+   It prints the endpoint ID as 64 hexadecimal digits, the form the relay's
+   denylist accepts, and nothing else. It opens no connection and never prints
+   the `cap=` part. It also accepts the whole link or its fragment, but the
+   shell then keeps the capability in its history: to avoid that, pass `-`
+   and paste the link on standard input.
+6. **Decide**, in the order and within the targets of the prioritisation
+   policy.
+7. **To block a share,** add its endpoint ID to `/etc/oxfer-relay/denylist.txt`
+   on the relay host and run `sh /opt/oxfer-relay/setup.sh --denylist`, which
+   merges the list into `/etc/iroh-relay/config.toml` and restarts the relay.
+   The restart briefly interrupts transfers running through it. The list is
+   kept through relay restarts, upgrades and reruns of `setup.sh`
+   ([relay runbook, "Abuse blocking"](../../deploy/relay/README.md#abuse-blocking)).
+8. **To block an address,** for repeated or serious abuse only, use the relay
+   host's firewall: `oxfer-relay-ban add ADDRESS` bans it for 30 days (a
+   number of days can be given), puts it in the nftables sets `banned_v4` or
+   `banned_v6`, and writes it with its expiry to `/etc/nftables.d/bans.nft`,
+   so it survives reboots, firewall reloads and reruns of `setup.sh`. Addresses
+   can be blocked only there: the relay's denylist accepts endpoint IDs, not
+   addresses. Record the address, reason and expiry in the abuse log.
+9. **Intimate images shared without consent** (an intimate image content
+   report, abuse page section 6): block the reported share as soon as
+   reasonably practicable and no later than 48 hours after the report was
+   received [K18, s.10(3A)], and block any other shares the reporter gives as
+   carrying the same images. If the report lacks some of the declarations,
+   act on it anyway and ask for the rest. If you conclude that the content is
+   not an intimate image shared without consent, or that the reporter is
+   neither the person shown nor acting for them, do not block under this rule:
+   record the reasons, tell the reporter, and point to the expedited
+   complaints procedure [K18, s.10(3B)].
+10. **Answer** with the decision and any action taken, within 15 days, and
+    record it. A complaint from India is resolved within 7 days of receipt
+    [K19, rule 3(2)(a)(i)], and one about content showing a person's private
+    areas, nudity or sexual acts, or impersonating a person, is handled first
+    (abuse page, section 10).
+11. **Appeals** (subject "Appeal"): review promptly and within 15 days; lift a
+    wrong block and say so; record it. The answer explains the decision but
+    never says whether anyone made a report or who (abuse page, section 8).
+12. **Expedited complaints** (subject "URGENT Complaint") from a person who
+    made an intimate image content report, about that content or how the
+    report was handled: handle before other messages and send the outcome
+    within 48 hours. The Act requires this expedited procedure
+    [K18, s.21(2A)]; the 48 hours is the abuse page's own promise
+    (section 8).
 
 ## 5. Report of apparent child sexual abuse material
 
 1. Do not open, download or ask for the material. Do not forward it.
-2. Block the share's endpoint ID at the relay immediately (section 4, step 4),
-   and any address involved that you know.
+2. Block the share's endpoint ID at the relay immediately (section 4, steps 5
+   and 7), and any address involved that you know (section 4, step 8).
 3. Report to NCMEC's CyberTipline [K3] as soon as reasonably possible. US law
    requires this of providers within its scope once they have actual knowledge,
    with no duty to search for material [K4]; the operator reports on the same
@@ -137,7 +201,10 @@ Timelines are those promised on the [abuse page](../../abuse.html), section 3.
 5. Record what was reported, to whom and when. Keep the report itself as
    evidence, access-restricted.
 6. Before the first report, confirm with counsel the GDPR transfer basis for
-   sending report data to NCMEC in the United States ([ROPA](ropa.md), section 5).
+   sending report data to NCMEC in the United States. The privacy notice relies
+   on GDPR Art. 49(1)(d) ([ROPA](ropa.md#5-international-transfers), section 5).
+   Send only what NCMEC needs to act: the report, the endpoint ID or link part
+   before `&cap=`, and the reporter's contact only where needed.
 
 ## 6. Request from an authority or regulator
 
@@ -148,15 +215,22 @@ answer is "we hold nothing", send that answer within the deadline.
 
 ## 7. Relay outage
 
-**Detection**: external uptime monitor on `https://relay.oxfer.app/` and TCP 443
-(plan item A10); users reporting that links do not connect; the Diags page.
+**Detection**: the external monitors of plan item A10
+([README](README.md#3-provision-the-relay-and-switch-production-to-it), owner
+action 3): `https://relay.oxfer.app/healthz` answering 200 with `"ok"`, the
+certificate's expiry, and a WebSocket probe to `wss://relay.oxfer.app/relay`
+with the `iroh-relay-v1` subprotocol; users reporting that links do not
+connect; the Diags page.
 
 **Impact**: browsers cannot connect to each other without the relay; transfers
 already on a direct WebRTC path continue. No personal data is lost.
 
 **Recovery**: restart the service; if the host is unhealthy, rebuild from
-[`deploy/relay/`](../../deploy/relay/README.md). An outage alone is not a personal
-data breach; log it in the incident log.
+[`deploy/relay/`](../../deploy/relay/README.md) and restore the blocks in force,
+either by copying `/etc/oxfer-relay/denylist.txt` and
+`/etc/nftables.d/bans.nft` from the old host if it is still readable and was
+not compromised, or from the abuse log as in section 2. An outage alone is not
+a personal data breach; log it in the incident log.
 
 ## 8. Verifying what `oxfer.app` serves
 
@@ -176,8 +250,9 @@ while read -r hash path; do
 done < oxfer-web-sha256.txt
 ```
 
-`index.html` is served at `/` as well as `/index.html`; the legal pages redirect
-from `/privacy.html` to `/privacy`, which `curl -L` follows.
+`index.html` is served at `/`: a request for `/index.html` is redirected (307)
+to `/`, as `/theme.html` is to `/theme` and `/privacy.html` to `/privacy`, and
+`curl -L` follows these redirects, so the loop compares the served files.
 
 Against a local build of the same commit, with the same relay setting as the
 deployed build:
@@ -237,9 +312,12 @@ domain hijack serving code (section 3) is a high-risk breach; a relay compromise
 | Data Protection Board of India and affected Data Principals | Board: without delay, then a detailed report within 72 hours; people affected: without delay | Any personal data breach, from when Rule 7 takes effect: eighteen months after the Rules' Gazette publication of 13 November 2025, so treat 13 May 2027 as the start | [K11], [K12] |
 | CERT-In | Within 6 hours of noticing | Cyber incidents of the kinds in its directions, by email to `incident@cert-in.org.in`. Best effort: the directions address service providers and intermediaries generally, and their reach to providers outside India is not settled. | [K13] |
 | NCMEC CyberTipline | As soon as reasonably possible after actual knowledge | Apparent child sexual abuse material | [K3], [K4] |
+| Take-down after an intimate image content report (UK) | As soon as reasonably practicable, and no later than 48 hours after receiving the report | Block the reported share, and other shares identified as carrying the same or substantially the same content (section 4, step 9) | [K18, s.10(3A), (3B)] |
+| Expedited complaint from a person who made an intimate image content report (UK) | Handled before other messages; outcome within 48 hours (the abuse page's promise; the Act requires an expedited procedure but sets no time) | Complaints about that content or how the report was handled (section 4, step 12) | [K18, s.21(2A)]; abuse page, section 8 |
+| Complaints from users in India | Acknowledge within 24 hours; resolve within 7 days of receipt | Grievances to the Grievance Officer (abuse page, section 10) | [K19, rule 3(2)(a)(i)] |
 | Ofcom | As set in the notice | Answers to information notices | [K14] |
 | eSafety Commissioner | 24 hours for a class 1 removal notice; as set for other notices | Removal notices and document requests | [K15] |
-| EU issuing authority | 10 days, or 8 hours in an emergency | European Production Orders, from 18 August 2026 | [K16] |
+| EU issuing authority | 10 days, or 8 hours in an emergency; preservation for 60 days, extendable by 30 | European Production Orders and European Preservation Orders, sent directly to the provider, from 18 August 2026 | [K16] |
 
 The Digital Services Act duty to notify suspicions of criminal offences
 threatening life or safety applies to hosting services [K17, Art. 18]. Oxfer
@@ -264,5 +342,7 @@ authorities anyway.
 - [K13] CERT-In directions under s.70B(6), 28 April 2022: <https://www.cert-in.org.in/PDF/CERT-In_Directions_70B_28.04.2022.pdf>
 - [K14] Online Safety Act 2023 s.102: <https://www.legislation.gov.uk/ukpga/2023/50/section/102>
 - [K15] Online Safety Act 2021 (Cth) s.109: <https://www.legislation.gov.au/C2021A00076/latest/text>; DIS Standard s.31: <https://www.legislation.gov.au/F2024L00710/asmade/text>
-- [K16] eucrim, e-Evidence Regulation and Directive: <https://eucrim.eu/news/e-evidence-regulation-and-directive-published/>
+- [K16] Regulation (EU) 2023/1543, Arts. 10 and 11 (EUR-Lex): <https://eur-lex.europa.eu/eli/reg/2023/1543/oj>; eucrim, e-Evidence Regulation and Directive (secondary): <https://eucrim.eu/news/e-evidence-regulation-and-directive-published/>
 - [K17] Regulation (EU) 2022/2065 (Digital Services Act): <https://eur-lex.europa.eu/legal-content/en/ALL/?uri=CELEX:32022R2065>
+- [K18] Online Safety Act 2023, as amended by the Crime and Policing Act 2026 from 29 June 2026: [s.10](https://www.legislation.gov.uk/ukpga/2023/50/section/10), [s.20A](https://www.legislation.gov.uk/ukpga/2023/50/section/20A), [s.21](https://www.legislation.gov.uk/ukpga/2023/50/section/21)
+- [K19] Information Technology (Intermediary Guidelines and Digital Media Ethics Code) Rules, 2021, as updated on 10 February 2026 (G.S.R. 120(E)), MeitY: <https://www.meity.gov.in/static/uploads/2026/02/550681ab908f8afb135b0ad42816a1c9.pdf>

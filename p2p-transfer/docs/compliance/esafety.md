@@ -64,7 +64,7 @@ would be a pre-assessed "communication relevant electronic service", and most of
 the RES Standard's compliance measures would apply [A3, s.6 and s.12]. The
 provider's view is that transferring files, with no messaging, is not
 communication "by means of" email, instant messaging, SMS, MMS or chat within
-s.13A. This is reconsidered if Oxfer ever adds messaging (section 8).
+s.13A. This is reconsidered if Oxfer ever adds messaging (section 9).
 
 ## 4. Category within the DIS Standard
 
@@ -118,7 +118,7 @@ Expected changes: production builds move to the operator's own relay; a desktop
 build may be distributed; use may grow. None of these adds storage, discovery,
 messaging or public reach, so none is expected to raise the risk of class 1A or
 1B material being accessed, distributed or stored. Changes that would are listed
-in section 8.
+in section 9.
 
 ### 5.4 Risk and determination
 
@@ -138,7 +138,7 @@ and every DIS with section 38 [A2, s.38(1)].
 
 | Provision | Obligation | How met |
 | --- | --- | --- |
-| s.7(5) | No material change unless reassessed or the change does not increase risk | Triggers in section 8. |
+| s.7(5) | No material change unless reassessed or the change does not increase risk | Triggers in section 9. |
 | s.31 | Give eSafety, on written notice, the risk profile determination, the risk assessment record and methodology, within the period set | This file. Notices go to `abuse@oxfer.app` ([abuse page](../../abuse.html), section 9.3). |
 | s.33 | Notify eSafety of a new or removed feature unless it will not significantly increase the risk of the service being used to generate high impact material | Oxfer has no generative features; adding one requires notification. |
 | s.37 | eSafety may extend reporting deadlines on application | Used if a notice's deadline cannot be met. |

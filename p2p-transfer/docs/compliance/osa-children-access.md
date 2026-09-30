@@ -6,7 +6,7 @@
 | Service | Oxfer: web app at `oxfer.app`, relay at `relay.oxfer.app`, desktop app built from this crate |
 | Provider | [[OPERATOR_NAME]], [[OPERATOR_ADDRESS]] |
 | Assessment date | [[EFFECTIVE_DATE]] |
-| Next assessment due | Not more than one year after [[EFFECTIVE_DATE]] [OSA s.36] |
+| Next assessment due | Not more than one year after [[EFFECTIVE_DATE]] (provider's policy; see section 1) |
 | Method | Ofcom's two-stage test in its *Children's access assessments guidance* [C1] |
 | Conclusion | **Oxfer is treated as likely to be accessed by children** (section 4) |
 
@@ -36,9 +36,15 @@ service description is in section 2 of the
   benefits to children, whether its content or design appeals to children, and
   whether children are part of its commercial strategy [C1].
 - A service whose provider does not carry out the assessment is treated as
-  likely to be accessed by children [OSA s.37]. Assessments must be recorded in
-  writing and repeated not more than one year apart, and before a significant
-  change [OSA s.36].
+  likely to be accessed by children [OSA s.37].
+- Every children's access assessment must be recorded in writing
+  [OSA s.36(7)]. The Act requires a new assessment at least every year, before
+  a significant change, and in response to certain evidence only while a
+  service is *not* treated as likely to be accessed by children
+  [OSA s.36(2) to (4)]. Once a service is so treated, as Oxfer is (section 4),
+  those repeat duties stop; they would apply again only if a later assessment
+  concluded that the child user condition is not met. The yearly review in
+  section 7 is therefore the provider's own policy, not a statutory deadline.
 
 ## 2. Stage 1: can children normally access Oxfer?
 
@@ -105,16 +111,18 @@ a finding that children use Oxfer in any particular number.
 2. **Children's safety duties and the Protection of Children Code.** Measures
    recommended for every service likely to be accessed by children include an
    accountable individual (PCU A2), content moderation and swift action
-   (PCU C1, C2), complaints and appeals (PCU D1, D2, D7, D9, D10) and terms of
-   service (PCU G1, G3) [C2]. Because the terms do not prohibit every kind of
-   primary priority content on the whole service (Code para 5.16), measure
-   PCU B4 on highly effective age assurance is engaged. The options are set out
+   (PCU C1, C2), complaints and appeals (PCU D1, D2, D7, D9, D10), handling of
+   complaints about non-compliance and manifestly unfounded complaints
+   (PCU D13, D14) and terms of service (PCU G1, G3) [C2]. Because the terms
+   do not prohibit every kind of primary priority content on the whole service
+   (Code para 5.16), measure PCU B4 on highly effective age assurance is
+   engaged. The options are set out
    in the [children's risk assessment](osa-children-risk.md#6-decision-needed-pcu-b4);
    choosing one is an owner decision.
 3. **Illegal content Codes.** Measures ICU D3 and D5 apply to services likely to
    be accessed by children that are at medium or high risk of any kind of
    illegal harm; the [illegal content risk assessment](osa-illegal-content.md#51-codes-measures-that-apply)
-   records them.
+   records them as adopted.
 
 ## 6. What would change the conclusion
 
@@ -134,8 +142,8 @@ a finding that children use Oxfer in any particular number.
 
 ## 7. Review
 
-Repeat this assessment not more than one year after [[EFFECTIVE_DATE]], before
-any change listed in section 7 of the
+As the provider's own policy (section 1), repeat this assessment not more than
+one year after [[EFFECTIVE_DATE]], before any change listed in section 7 of the
 [illegal content risk assessment](osa-illegal-content.md#7-triggers-for-a-new-assessment-before-a-change),
 and when Ofcom revises its guidance.
 
@@ -145,7 +153,7 @@ and when Ofcom revises its guidance.
 | --- | --- |
 | Assessed and approved by | [[OPERATOR_NAME]] |
 | Date | [[EFFECTIVE_DATE]] |
-| Next assessment due | Not more than one year after [[EFFECTIVE_DATE]] |
+| Next assessment due | Not more than one year after [[EFFECTIVE_DATE]] (provider's policy) |
 
 ## Sources
 

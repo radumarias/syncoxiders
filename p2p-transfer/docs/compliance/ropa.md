@@ -35,17 +35,43 @@ n0. The privacy notice describes the target configuration, so it should be
 published when the production build uses the operator's relay
 (see [README](README.md#owner-actions)).
 
+**Hosting variant.** The relay kit ([`deploy/relay/`](../../deploy/relay/README.md))
+has a VPS variant, set up by `setup.sh`, and a Fly.io variant
+(`deploy/relay/fly/`). This record, the privacy notice, the terms, the abuse
+page and the [transparency statement](transparency.md) describe the VPS
+variant, with an EU-headquartered provider and the server in the EU. On the
+Fly.io variant several of their statements would be false, so these must change
+before it is used:
+
+- **Processor and transfer.** Fly.io, Inc. is a United States company, and
+  its edge proxies, which can be outside the EU, receive every client
+  connection. Record it as a processor with its DPA and transfer basis (its
+  Data Privacy Framework certification, if the list shows one, or the Standard
+  Contractual Clauses) in sections 4 and 5, and in section 8 of the privacy
+  notice [T2][T21].
+- **Address blocking.** Behind Fly's proxy the relay sees the proxy's address,
+  not the client's, and there is no host firewall, so IP addresses cannot be
+  blocked or rate-limited per client. Change section 3.2 and section 6 here,
+  section 4 of the abuse page, sections 7.1 and 7.3 of the terms, sections 1
+  and 2 of the transparency statement, and measure ICU C2 in the
+  [illegal content risk assessment](osa-illegal-content.md#51-codes-measures-that-apply).
+- **Logs.** The relay's output goes to Fly's log pipeline, whose log search
+  keeps logs for 7 days [T22], not to a host journal capped at three days, and
+  the Fly image runs no SSH service. Change sections 2.1 and 6 here, section 3
+  of the privacy notice, section 9.1 of the abuse page and section 1 of the
+  transparency statement.
+
 ## 2. Processing activities
 
 | # | Activity and purpose | Data subjects | Personal data | Legal basis | Recipients | Retention |
 | --- | --- | --- | --- | --- | --- | --- |
 | P1 | Serving the app shell and legal pages from Cloudflare; protecting the site | Visitors | IP address, user agent, request line without the URL fragment, time, TLS and connection data; security cookies such as `__cf_bm` when Cloudflare bot protection is active; Network Error Logging reports until the owner turns them off (section 2.2) | Art. 6(1)(f), LIA 3.1 | Cloudflare, Inc. (processor) | Cloudflare's own log retention. The operator exports no logs; the dashboard shows aggregates. |
 | P2 | STUN, so browsers can find a direct path | Senders and recipients using the browser app | Public IP address and port, time | Art. 6(1)(b) | Cloudflare, Inc. (see section 4 on its role) | Cloudflare's policy. The operator receives nothing. |
-| P3 | Relay: authenticating endpoints, carrying connection setup, forwarding encrypted traffic when no direct path works | Senders and recipients | IP address and port, endpoint ID (a public key new for each share and each receiving session), connection times, traffic volume. The relay forwards ciphertext it cannot read. | Art. 6(1)(b); rate limits and blocking: Art. 6(1)(f), LIA 3.2 | [[RELAY_HOSTING_PROVIDER]] (processor, infrastructure only) | Held in memory while connected. No access log: with the shipped configuration the relay logs no client IP addresses, endpoint IDs or connection events (section 2.1). Its own operational errors are logged without client addresses and deleted by journald after at most 3 days. Aggregate metrics contain no personal data. Denylisted endpoint IDs and addresses: while the block is in force. |
+| P3 | Relay: authenticating endpoints, carrying connection setup, forwarding encrypted traffic when no direct path works | Senders and recipients | IP address and port, endpoint ID (a public key new for each share and each receiving session), connection times, traffic volume. The relay forwards ciphertext it cannot read. | Art. 6(1)(b); rate limits and blocking: Art. 6(1)(f), LIA 3.2 | [[RELAY_HOSTING_PROVIDER]] (processor, infrastructure only) | Held in memory only while connected: the relay's key cache is turned off, so endpoint IDs are not kept after a connection ends (section 2.1). No access log: with the shipped configuration the relay logs no client IP addresses, endpoint IDs or connection events. Its own operational errors are logged without client addresses and deleted by journald after at most 3 days. The host firewall's rate-limit sets hold a source address for at most 60 seconds. Aggregate metrics contain no personal data. Blocked endpoint IDs and IP addresses: while the block is in force (section 6). |
 | P4 | Peer connection: exchanging addresses (ICE candidates; direct addresses in native tickets) and transferring the files | Senders and recipients | IP addresses and candidates, endpoint IDs, file names, sizes, checksums, file contents | Art. 6(1)(b) | The other party to the transfer, chosen by the user who shares the link. The operator receives none of it. | Held by the peers for the session; saved files are under the recipient's control. |
 | P5 | Handling abuse reports, complaints, appeals and requests from authorities and regulators | Reporters, people reported (usually only as an endpoint ID or IP address), staff of authorities | Email address, name if given, message, reported link or endpoint ID, IP addresses blocked, decision and outcome, correspondence | Art. 6(1)(c) where a law requires the handling (for example the points of contact in DSA Arts. 11 and 12); otherwise Art. 6(1)(f), LIA 3.3 | Cloudflare Email Routing and the mailbox provider (processors); competent authorities; NCMEC for apparent child sexual abuse material (section 5) | As long as needed to handle the matter and show how it was handled; reviewed at least yearly. |
 | P6 | Handling data protection requests | People who write to `privacy@oxfer.app` | Email address, request, identity details if needed | Art. 6(1)(c) (GDPR Arts. 12 to 22) | Cloudflare Email Routing and the mailbox provider (processors) | As long as needed to show the request was handled; reviewed at least yearly. |
-| P7 | Browser-local storage: the theme (`oxfer.theme.v1`, written only when the user picks a theme), the service worker's app-shell cache, opt-in resumable copies (IndexedDB database and OPFS directory `oxfer-resume`). No cookies, no other keys; the legacy `app` and `egui_memory_ron` keys are migrated and removed at start-up. | Users of the browser app | The chosen theme; opt-in received file data with names, sizes, checksums and progress | Not received by the operator; storage relies on the strictly-necessary exemption for storage in the user's device [T9] | None | Until the user clears site data or deletes the saved copy |
+| P7 | Browser-local storage: the theme (`oxfer.theme.v1` in local storage, written only when the user picks a theme, or once to carry over a theme picked in an earlier version), the service worker's app-shell cache, and opt-in resumable copies (IndexedDB database and OPFS directory, both `oxfer-resume`, created only when the user turns on "Keep a copy" and starts saving; listing, exporting and deleting saved copies never create them). No cookies and no other local-storage keys; the legacy `app` and `egui_memory_ron` keys are migrated and removed at start-up. | Users of the browser app | The chosen theme; opt-in received file data with names, sizes, checksums and progress | Not received by the operator; storage relies on the strictly-necessary exemption for storage in the user's device [T9] | None | Until the user clears site data or deletes the saved copy |
 | P8 | Diagnostics page | Users who run it | Build label, user agent, feature checks, relay reachability results | Art. 6(1)(b) | None, unless the user sends the report (then P5 or P6) | Not stored |
 
 Build and deployment (GitHub repository and Actions, Cloudflare API) process the
@@ -68,13 +94,25 @@ per-connection targets off. With that configuration:
 - operational errors are logged without client addresses. The only
   per-request line is one per malformed HTTP request on port 80, with the
   parser error and no address;
-- journald is the only log store and keeps entries at most three days
-  (`MaxRetentionSec=3day`, rotated daily with `MaxFileSec=1day`);
+- the relay's key cache is turned off (`key_cache_capacity = 0` in
+  `deploy/relay/config.toml`). Left at its default, it would keep up to
+  1,048,576 endpoint IDs from relayed traffic in memory with no time limit,
+  after their connections end. With it off, endpoint IDs are held in memory
+  only while connected;
+- the systemd journal keeps entries at most three days
+  (`MaxRetentionSec=3day`, rotated daily with `MaxFileSec=1day`). `setup.sh`
+  removes rsyslog and deletes the log files it had written, so no other
+  general log store exists;
 - `sshd` records the source address and user of SSH logins and failed login
-  attempts. These concern the operator's own administration of the host, not
-  relay users, and fall under the same three-day retention;
+  attempts in the journal, and in the login records: failed attempts in
+  `/var/log/btmp`, sessions in `/var/log/wtmp`. The kit rotates `btmp` and
+  `wtmp` daily and keeps at most three days, and `lastlog` (and `lastlog2`
+  where present) keeps no persistent record. These records concern the
+  operator's own administration of the host, not relay users;
 - metrics are aggregate counters in memory, bound to `127.0.0.1`;
-- the firewall has no logging rules;
+- the firewall has no logging rules. Its rate-limit sets hold a source address
+  for at most 60 seconds; its ban sets hold only addresses the operator bans,
+  each with an expiry (section 6);
 - the relay's TLS certificate for `relay.oxfer.app` is published by Let's
   Encrypt in public Certificate Transparency logs, as every public certificate
   is. It names the host only.
@@ -112,7 +150,10 @@ notice therefore does not describe it.
   endpoint ID (which identifies a single share) or an IP address, from a report.
 - **Balancing:** no profile or history is built. Address blocks can affect other
   people behind the same address, so they are used for repeated or serious abuse,
-  time-limited where possible, and reviewed on request (abuse page, section 4).
+  set to expire (normally after 30 days), and reviewed on request (abuse page,
+  section 4). Rate limits hold a source address for at most 60 seconds.
+- **Variant:** address blocks and per-address rate limits need the host firewall
+  of the VPS variant; the Fly.io variant has neither (section 1).
 
 ### 3.3 P5, handling reports where no law requires it
 
@@ -130,7 +171,7 @@ notice therefore does not describe it.
 | --- | --- | --- | --- | --- |
 | Cloudflare, Inc. | Processor | P1 hosting and CDN; Email Routing for P5 and P6 | Cloudflare Data Processing Addendum, v6.4 effective 3 April 2026, incorporated into the self-serve subscription agreement [T1]; sub-processors: <https://www.cloudflare.com/gdpr/subprocessors/> | Global network; United States: EU-U.S. Data Privacy Framework certification and Standard Contractual Clauses in the DPA [T1][T2] |
 | Cloudflare, Inc. | Not confirmed | P2 public STUN at `stun.cloudflare.com`, used by browsers without any account or credential [T4] | Whether the DPA covers anonymous use of the public STUN service is not confirmed. Until Cloudflare confirms, this record treats Cloudflare as a separate recipient acting under its own privacy policy [T3]. | Anycast, global |
-| [[RELAY_HOSTING_PROVIDER]] | Processor | P3 infrastructure | Provider's DPA, accepted in the account and filed privately. Examples: OVHcloud attaches its DPA to its contracts [T10]; Hetzner customers conclude the DPA in the account at `accounts.hetzner.com/account/dpa` [T11]. | [[RELAY_LOCATION]], EU. No transfer; any non-EU sub-processor is covered by the provider's own safeguards. |
+| [[RELAY_HOSTING_PROVIDER]] | Processor | P3 infrastructure | Provider's DPA, accepted in the account and filed privately. Examples: OVHcloud attaches its DPA to its contracts [T10]; Hetzner customers conclude the DPA in the account at `accounts.hetzner.com/account/dpa` [T11]. | [[RELAY_LOCATION]], EU, with an EU-headquartered provider (the VPS variant, section 1). No transfer; any non-EU sub-processor is covered by the provider's own safeguards. The Fly.io variant would change this row (section 1). |
 | Mailbox provider (to be named when chosen) | Processor | P5, P6 | Provider's DPA, filed privately | To be recorded |
 | GitHub, Inc. | Not a processor of user data | Source code and CI for the operator's own account | The GitHub Data Protection Agreement applies under the GitHub Customer Agreement [T12]; no Oxfer user data goes to GitHub | Not applicable |
 | The other party to a transfer | Recipient chosen by the user | P4 | None | Wherever that user is; the data flows directly between the users' devices at their request |
@@ -144,11 +185,20 @@ notice therefore does not describe it.
   DPA [T1][T2]. The General Court upheld the Framework's adequacy decision on
   3 September 2025 (Case T-553/23, *Latombe*); an appeal to the Court of Justice
   is pending [T8]. Watch item in the [README](README.md#review-cadence).
-- **Relay:** in the EU; no transfer.
+- **Relay:** in the EU, with an EU-headquartered provider; no transfer. This
+  assumes the VPS variant; the Fly.io variant needs Fly.io, Inc.'s transfer
+  basis recorded first (section 1).
 - **NCMEC (United States):** reports of apparent child sexual abuse material
-  contain the report and identifiers, never content (the operator holds none).
-  The Chapter V basis for this transfer is to be confirmed with counsel before
-  the first report; the runbook limits what is sent.
+  contain the report, the link or endpoint ID in it and, only where needed,
+  how to reach the reporter; never content (the operator holds none). No
+  adequacy decision covers NCMEC: the Data Privacy Framework covers only
+  certified organisations [T2], and NCMEC is not one. The privacy notice
+  (section 8) relies on the derogation for transfers necessary for important
+  reasons of public interest [T15, Art. 49(1)(d)], an interest that Union or
+  Member State law must recognise [T15, Art. 49(4)]; the notice points to
+  Directive 2011/93/EU on combating the sexual abuse and sexual exploitation of
+  children [T23]. Confirm this basis with counsel before the first report; the
+  [incident runbook](incident-runbook.md) limits what is sent.
 - **Other peer:** data goes directly between the users' devices at their
   request; the operator does not transfer it.
 
@@ -157,12 +207,14 @@ notice therefore does not describe it.
 | Data | Where | Retention |
 | --- | --- | --- |
 | HTTP request logs | Cloudflare | Cloudflare's policy; none kept by the operator |
-| Relay connection state | Relay memory | While connected |
+| Relay connection state (IP addresses, endpoint IDs) | Relay memory; key cache off | While connected |
+| Rate-limit state (source addresses of new connections) | Relay host firewall sets | At most 60 seconds |
 | Relay operational error log (no client addresses) | Relay host journald | At most 3 days |
-| SSH login records (operator's logins; source addresses of failed attempts) | Relay host journald | At most 3 days |
+| SSH login records (operator's logins; source addresses of failed attempts) | Relay host journald, and `/var/log/wtmp` and `/var/log/btmp` | At most 3 days (the login files are rotated daily); `lastlog` and `lastlog2` keep no persistent record |
 | Relay TLS certificate (host name only) | Public Certificate Transparency logs | Permanent, public |
 | Relay aggregate metrics | Relay host, localhost only | Not personal data |
-| Blocks: denied endpoint IDs and banned IP addresses | Relay config and host firewall | While the block is in force; recorded in the abuse log |
+| Denied endpoint IDs | `/etc/oxfer-relay/denylist.txt` on the relay host, merged into the relay's configuration by `setup.sh` | While the block is in force; kept through relay restarts, upgrades and reruns of `setup.sh`; recorded in the abuse log |
+| Banned IP addresses | `/etc/nftables.d/bans.nft` on the relay host, each with an expiry (normally 30 days), loaded into the firewall | Until the expiry or until lifted; kept through reboots, firewall reloads and reruns of `setup.sh`; recorded in the abuse log |
 | Abuse log and correspondence | Private records | As long as needed; reviewed at least yearly |
 | Browser-local items | User's browser | Until the user clears them |
 
@@ -183,8 +235,8 @@ notice therefore does not describe it.
   protection with required CI, yearly token rotation (owner actions in the
   [README](README.md#owner-actions)).
 - Relay host: SSH keys only, firewall limited to the relay's ports, unattended
-  security updates, metrics on localhost, capped journald retention (relay
-  runbook).
+  security updates, metrics on localhost, journal and login records capped at
+  three days, relay key cache off (relay runbook).
 - Incident handling: [incident runbook](incident-runbook.md).
 
 ## 8. DPIA screening
@@ -292,7 +344,7 @@ Reviewed with the other records at the cadence in the
 - [T4] Cloudflare Realtime TURN service (lists `stun.cloudflare.com:3478`): <https://developers.cloudflare.com/realtime/turn/>
 - [T5] Cloudflare Network Error Logging: <https://developers.cloudflare.com/network-error-logging/>
 - [T6] iroh documentation, public relays: <https://docs.iroh.computer/iroh-services/relays/public>
-- [T7] `iroh-relay` 1.1.0 source (`src/main.rs`, `src/server/http_server.rs`) and `tracing-subscriber` 0.3 `EnvFilter::from_default_env`, as fetched into the workspace's Cargo registry.
+- [T7] `iroh-relay` 1.1.0 source (`src/main.rs`, `src/server/http_server.rs`, `src/server.rs`, `src/key_cache.rs`, `src/defaults.rs`) and `tracing-subscriber` 0.3 `EnvFilter::from_default_env`, as fetched into the workspace's Cargo registry; the relay kit in `deploy/relay/` (`config.toml`, `setup.sh`, `nftables.conf`).
 - [T8] General Court, Case T-553/23 *Latombe v Commission*: <https://infocuria.curia.europa.eu/tabs/redirect/juris/liste.jsf?num=T-553%2F23>;
   WilmerHale on the appeal (secondary): <https://www.wilmerhale.com/en/insights/blogs/wilmerhale-privacy-and-cybersecurity-law/20251201-european-court-of-justice-to-review-challenge-to-eu-us-data-privacy-framework>
 - [T9] Directive 2002/58/EC, Art. 5(3): <https://eur-lex.europa.eu/eli/dir/2002/58/oj?locale=en>;
@@ -310,4 +362,7 @@ Reviewed with the other records at the cadence in the
 - [T19] FDPIC, representatives under Art. 14 FADP: <https://www.edoeb.admin.ch/en/representatives-in-accordance-with-article-14-fadp>;
   FADP: <https://www.fedlex.admin.ch/eli/cc/2022/491/en>
 - [T20] Lei 12.965/2014 (Marco Civil da Internet): <https://www2.camara.leg.br/legin/fed/lei/2014/lei-12965-23-abril-2014-778630-publicacaooriginal-143980-pl.html>
+- [T21] Fly.io, compliance documents (DPA): <https://fly.io/documents/>; Fly.io, Data Privacy Framework privacy policy: <https://fly.io/legal/data-privacy-framework/>
+- [T22] Fly.io, logging overview (log search keeps logs for 7 days): <https://docs.fly.io/monitoring/logging-overview/>
+- [T23] Directive 2011/93/EU on combating the sexual abuse and sexual exploitation of children and child pornography: <https://eur-lex.europa.eu/eli/dir/2011/93/oj>
 - OSA s.4: <https://www.legislation.gov.uk/ukpga/2023/50/section/4>
