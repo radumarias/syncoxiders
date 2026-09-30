@@ -1,0 +1,78 @@
+# Fly.io variant of the Oxfer relay (../README.md, "Fly.io variant").
+# Deploy from this directory, always with one machine:
+#   fly deploy --ha=false
+# (fly deploy creates spare machines by default; both peers of a transfer
+# must reach the same relay process, so there must be exactly one.)
+
+app = "oxfer-relay-eu"
+primary_region = "fra"
+
+# iroh-relay shuts down gracefully only on SIGINT (src/main.rs:605-611).
+kill_signal = "SIGINT"
+kill_timeout = 15
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # "true" turns on QUIC address discovery on UDP 7842 for native clients.
+  # Needs the dedicated IPv4 and the UDP service at the end of this file.
+  OXFER_RELAY_QAD = "false"
+
+# ACME account key and certificate. Without the volume every deploy asks
+# Let's Encrypt for a new certificate (5 per week for the same name).
+[mounts]
+  source = "relay_certs"
+  destination = "/var/lib/iroh-relay"
+  initial_size = "1gb"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[[restart]]
+  policy = "always"
+
+# HTTPS and WSS. No handlers: Fly passes raw TCP through and the relay
+# terminates TLS and answers the ACME TLS-ALPN-01 challenge itself. Needs a
+# dedicated IPv4 (fly ips allocate-v4); a shared IPv4 cannot carry raw TCP.
+# Do not add the "proxy_proto" handler: iroh-relay does not parse PROXY.
+[[services]]
+  protocol = "tcp"
+  internal_port = 443
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [services.concurrency]
+    type = "connections"
+    soft_limit = 10000
+    hard_limit = 20000
+
+  [[services.ports]]
+    port = 443
+
+  [[services.tcp_checks]]
+    grace_period = "10s"
+    interval = "30s"
+    timeout = "5s"
+
+# Plain HTTP: the captive-portal check (/generate_204) of native clients.
+[[services]]
+  protocol = "tcp"
+  internal_port = 80
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 80
+
+# QUIC address discovery, native clients only. Uncomment together with
+# OXFER_RELAY_QAD = "true". Internal and external port must match.
+# [[services]]
+#   protocol = "udp"
+#   internal_port = 7842
+#
+#   [[services.ports]]
+#     port = 7842
