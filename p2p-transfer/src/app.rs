@@ -166,28 +166,60 @@ impl RelayOperator {
         }
     }
 
-    /// Body of the "PRIVACY BOUNDARY" panel.
+    /// Body of this build's "PRIVACY BOUNDARY" panel.
     const fn privacy_boundary(self) -> &'static str {
-        match self {
-            Self::Oxfer => {
+        self.privacy_boundary_for(cfg!(target_arch = "wasm32"))
+    }
+
+    /// Body of the "PRIVACY BOUNDARY" panel in the browser app (`web`) or the desktop app.
+    ///
+    /// Only the browser app is served by Cloudflare and sends STUN requests to it (the wasm-only
+    /// `webrtc::ICE_SERVERS`). The desktop app does neither: its transfers involve the relay
+    /// operator's infrastructure (none for `Disabled`) and the peer, and its links carry the
+    /// device's IP addresses (`NATIVE_LINK_ADDRESSES`).
+    const fn privacy_boundary_for(self, web: bool) -> &'static str {
+        match (self, web) {
+            (Self::Oxfer, true) => {
                 "Cloudflare serves the web app shell and answers STUN requests. The relay is \
                  operated by Oxfer. These services can observe network addresses and timing, \
                  and the relay also sees approximate traffic volume, but none of them sees file \
                  contents or the capability fragment. Peers that connect directly learn each \
                  other's network address."
             }
-            Self::N0 => {
+            (Self::N0, true) => {
                 "Cloudflare serves the web app shell and answers STUN requests. n0.computer \
                  runs the public relays and address lookup this build uses. These services can \
                  observe network addresses and timing, and a relay also sees approximate \
                  traffic volume, but none of them sees file contents or the capability \
                  fragment. Peers that connect directly learn each other's network address."
             }
-            Self::Disabled => {
+            (Self::Disabled, true) => {
                 "Cloudflare serves the web app shell and answers STUN requests, so it can \
                  observe network addresses and timing, but not file contents or the \
                  capability fragment. This build uses no relay. Peers that connect directly \
                  learn each other's network address."
+            }
+            (Self::Oxfer, false) => {
+                "The relay is operated by Oxfer. It can observe network addresses, timing and \
+                 approximate traffic volume, but not file contents or the capability fragment. \
+                 Share links from this desktop app also contain this device's IP addresses, so \
+                 anyone holding a link can see them. Peers that connect directly learn each \
+                 other's network address."
+            }
+            (Self::N0, false) => {
+                "n0.computer runs the public relays and address lookup this build uses. They \
+                 can observe network addresses and timing, and a relay also sees approximate \
+                 traffic volume, but not file contents or the capability fragment. Share links \
+                 from this desktop app also contain this device's IP addresses, so anyone \
+                 holding a link can see them. Peers that connect directly learn each other's \
+                 network address."
+            }
+            (Self::Disabled, false) => {
+                "This build uses no relay: peers connect directly and learn each other's \
+                 network address. The network between them carries only encrypted traffic and \
+                 sees neither file contents nor the capability fragment. Share links from this \
+                 desktop app contain this device's IP addresses, so anyone holding a link can \
+                 see them."
             }
         }
     }
@@ -4599,18 +4631,40 @@ mod tests {
             RelayOperator::N0,
             RelayOperator::Disabled,
         ] {
-            let boundary = operator.privacy_boundary();
-            assert!(
-                boundary
-                    .starts_with("Cloudflare serves the web app shell and answers STUN requests"),
-                "{operator:?}: {boundary}"
+            assert_eq!(
+                operator.privacy_boundary(),
+                operator.privacy_boundary_for(cfg!(target_arch = "wasm32")),
+                "{operator:?}: this build shows its own target's copy"
             );
-            assert!(boundary.contains("capability fragment"), "{operator:?}");
+            // Only the browser app is served by Cloudflare and uses its STUN server.
+            let web = operator.privacy_boundary_for(true);
+            assert!(
+                web.starts_with("Cloudflare serves the web app shell and answers STUN requests"),
+                "{operator:?}: {web}"
+            );
+            // The desktop app contacts neither, and its links carry the device's addresses
+            // (compliance plan C6, B5).
+            let desktop = operator.privacy_boundary_for(false);
+            for absent in ["Cloudflare", "STUN", "web app shell"] {
+                assert!(!desktop.contains(absent), "{operator:?}: {desktop}");
+            }
+            assert!(
+                desktop.contains("desktop app") && desktop.contains("IP addresses"),
+                "{operator:?}: {desktop}"
+            );
+            for boundary in [web, desktop] {
+                assert!(boundary.contains("capability fragment"), "{operator:?}");
+                assert!(
+                    boundary.contains("learn each other's network address"),
+                    "{operator:?}: the peer is named: {boundary}"
+                );
+            }
             assert!(operator.peer_path().contains("DTLS"), "{operator:?}");
         }
         let oxfer = [
             RelayOperator::Oxfer.peer_path(),
-            RelayOperator::Oxfer.privacy_boundary(),
+            RelayOperator::Oxfer.privacy_boundary_for(true),
+            RelayOperator::Oxfer.privacy_boundary_for(false),
         ];
         for text in oxfer {
             assert!(text.contains("operated by Oxfer"), "{text}");
@@ -4621,7 +4675,8 @@ mod tests {
         }
         for text in [
             RelayOperator::N0.peer_path(),
-            RelayOperator::N0.privacy_boundary(),
+            RelayOperator::N0.privacy_boundary_for(true),
+            RelayOperator::N0.privacy_boundary_for(false),
         ] {
             assert!(text.contains("n0.computer"), "{text}");
             assert!(
@@ -4631,7 +4686,8 @@ mod tests {
         }
         for text in [
             RelayOperator::Disabled.peer_path(),
-            RelayOperator::Disabled.privacy_boundary(),
+            RelayOperator::Disabled.privacy_boundary_for(true),
+            RelayOperator::Disabled.privacy_boundary_for(false),
         ] {
             assert!(text.contains("no relay"), "{text}");
             assert!(!text.contains("n0") && !text.contains("operated by Oxfer"));
@@ -5180,5 +5236,14 @@ mod tests {
                 .any(|text| text.contains("through the iroh relay")),
             "step 03 must say who runs the relay"
         );
+        if !cfg!(target_arch = "wasm32") {
+            // The desktop app is not served by Cloudflare and sends no STUN requests.
+            for text in &texts {
+                assert!(
+                    !text.contains("STUN") && !text.contains("web app shell"),
+                    "desktop Technical details: {text}"
+                );
+            }
+        }
     }
 }

@@ -24,7 +24,7 @@ use crate::file_io::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::file_io::{FsSink, FsSource};
 use crate::node::{
-    n0_relays_without_trailing_dots, parse_relay_list, relay_probe_urls,
+    n0_relays_without_trailing_dots, parse_relay_list, relay_probe_urls, share_endpoint_id,
     without_trailing_relay_dots, DiagnosticNode, Node, NodeError, Peers, RelayChoice, SinkPref,
 };
 use crate::protocol::{
@@ -916,6 +916,177 @@ fn local_test_fragment_bad_cap() {
         assert_eq!(params.cap, None, "{bad}");
         assert!(params.error.is_some(), "{bad} must report an error");
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// Endpoint ID of a reported link (examples/ticket-endpoint-id.rs)
+// ---------------------------------------------------------------------------------------
+
+#[test]
+fn local_test_share_endpoint_id_reads_every_link_form() {
+    let ticket = test_ticket();
+    let id = ticket.endpoint_addr().id.to_string();
+    let cap = test_cap(0xc5);
+    let link = Node::link("https://oxfer.app/", &ticket, &cap, false);
+    let dev_link = Node::link("https://oxfer.app/", &ticket, &cap, true);
+    let fragment = link.split_once('#').expect("fragment").1.to_string();
+    let bare = ticket.to_string();
+    // A link wrapped across lines in an email.
+    let (head, tail) = link.split_at(link.len() / 2);
+    for input in [
+        link.clone(),
+        dev_link,
+        fragment.clone(),
+        format!("#{fragment}"),
+        bare.clone(),
+        format!("{bare}&cap"),
+        format!("{bare}&cap={}&future=1", cap_to_hex(&cap)),
+        format!("cap={}&relay&{bare}", cap_to_hex(&cap)),
+        format!("https://oxfer.app/?from=mail#{fragment}"),
+        format!("  {link}\n"),
+        format!("{head}\n    {tail}"),
+        format!("<{link}>"),
+        format!("\"{bare}\""),
+        format!("'{link}'"),
+    ] {
+        assert_eq!(
+            share_endpoint_id(&input).as_deref(),
+            Ok(id.as_str()),
+            "{input:?}"
+        );
+    }
+
+    // No ticket, a damaged one, or an ID instead of a link: a fixed message, never the input.
+    let damaged = &bare[3..];
+    for input in [
+        String::new(),
+        " \n\t".to_string(),
+        "https://oxfer.app/".to_string(),
+        "https://oxfer.app/#dev".to_string(),
+        damaged.to_string(),
+        format!("https://oxfer.app/#{damaged}&cap={}", cap_to_hex(&cap)),
+        format!("cap={}", cap_to_hex(&cap)),
+        id.clone(),
+    ] {
+        let error = share_endpoint_id(&input).expect_err(&input);
+        assert!(
+            input.trim().is_empty() || !error.contains(input.trim()),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn local_test_share_endpoint_id_is_what_the_relay_denylist_parses() {
+    use serde::de::value::{Error as ValueError, SeqDeserializer};
+    use serde::de::{Deserialize, Deserializer, IntoDeserializer};
+
+    let ticket = test_ticket();
+    let id = ticket.endpoint_addr().id;
+    let link = Node::link("https://oxfer.app/", &ticket, &test_cap(0x42), false);
+    let entry = share_endpoint_id(&link).unwrap();
+    assert_eq!(entry.len(), 64, "{entry}");
+    assert!(
+        entry
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "{entry}"
+    );
+
+    // iroh-relay 1.1.0 (src/main.rs) reads `access.denylist` from TOML, a human-readable
+    // format, as `Denylist(Vec<EndpointId>)`. Each entry therefore goes through iroh-base
+    // 1.1.0's `Deserialize for PublicKey`, which calls `PublicKey::from_str`. These are the
+    // same impls, from the same iroh-base, fed the way TOML feeds them.
+    let as_toml_feeds_it = IntoDeserializer::<ValueError>::into_deserializer(entry.clone());
+    assert!(as_toml_feeds_it.is_human_readable());
+    let denylist = Vec::<iroh::EndpointId>::deserialize(SeqDeserializer::<_, ValueError>::new(
+        vec![entry.clone()].into_iter(),
+    ))
+    .unwrap();
+    assert_eq!(denylist, vec![id]);
+    assert_eq!(entry.parse::<iroh::EndpointId>().unwrap(), id);
+    // `Display` is the relay's own spelling of an ID, for example in its HTTP access header.
+    assert_eq!(entry, id.to_string());
+
+    // The link does not show the ID, and the ticket text is not one: pasted into the
+    // denylist as it stands, it fails the parse and the relay refuses to start.
+    let base32 = base32_lower(id.as_bytes());
+    assert_eq!(base32.parse::<iroh::EndpointId>().unwrap(), id);
+    assert!(!link.contains(&entry));
+    assert!(!link.contains(&base32));
+    let bare = ticket.to_string();
+    assert!(bare.parse::<iroh::EndpointId>().is_err());
+    assert!(
+        Vec::<iroh::EndpointId>::deserialize(SeqDeserializer::<_, ValueError>::new(
+            vec![bare].into_iter(),
+        ))
+        .is_err()
+    );
+}
+
+/// RFC 4648 base32 without padding, lowercase: the alphabet of tickets, and the other form
+/// `PublicKey::from_str` accepts.
+fn base32_lower(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+    let mut out = String::with_capacity(bytes.len().div_ceil(5) * 8);
+    let (mut buffer, mut bits) = (0u16, 0u32);
+    for &byte in bytes {
+        buffer = (buffer << 8) | u16::from(byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(char::from(ALPHABET[usize::from((buffer >> bits) & 31)]));
+        }
+        buffer &= (1 << bits) - 1;
+    }
+    if bits > 0 {
+        out.push(char::from(
+            ALPHABET[usize::from((buffer << (5 - bits)) & 31)],
+        ));
+    }
+    out
+}
+
+#[test]
+fn local_test_share_endpoint_id_never_returns_the_capability() {
+    let ticket = test_ticket();
+    let bare = ticket.to_string();
+    let damaged = &bare[3..];
+    let cap = cap_to_hex(&test_cap(0x5c));
+    for input in [
+        Node::link("https://oxfer.app/", &ticket, &test_cap(0x5c), false),
+        Node::link("https://oxfer.app/", &ticket, &test_cap(0x5c), true),
+        format!("{bare}&cap={cap}"),
+        format!("cap={cap}"),
+        format!("cap={cap}&{damaged}"),
+        format!("{damaged}&cap={cap}"),
+        format!("{bare}&cap=zz{cap}"),
+    ] {
+        let output = match share_endpoint_id(&input) {
+            Ok(id) => id,
+            Err(error) => error.to_string(),
+        };
+        for secret in [cap.as_str(), "cap=", damaged, bare.as_str()] {
+            assert!(!output.contains(secret), "{output} repeats {secret:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn local_test_share_endpoint_id_of_a_real_share_link() {
+    timeout(Duration::from_secs(20), async {
+        let node = Node::bind(Arc::new(Mutex::new(Vec::new())), RelayChoice::None)
+            .await
+            .unwrap();
+        let ticket = node.ticket().await.unwrap();
+        let link = Node::link("https://oxfer.app/", &ticket, &node.cap(), false);
+        let entry = share_endpoint_id(&link).unwrap();
+        assert_eq!(entry, node.id().to_string());
+        assert!(!entry.contains(&cap_to_hex(&node.cap())));
+        node.shutdown().await;
+    })
+    .await
+    .expect("local node timed out");
 }
 
 // ---------------------------------------------------------------------------------------

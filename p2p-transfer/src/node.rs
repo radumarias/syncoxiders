@@ -525,6 +525,11 @@ use tokio_util::sync::CancellationToken;
 const DAMAGED_LINK: &str = "this link is damaged; ask the sender to copy it again";
 /// ...and when it carried an access code but no ticket at all.
 const INCOMPLETE_LINK: &str = "this link is incomplete; ask the sender for the full link";
+/// [`share_endpoint_id`] was given nothing to read.
+const NO_LINK_GIVEN: &str = "nothing to read: pass a share link, its fragment or its ticket";
+/// [`share_endpoint_id`] found no ticket. Fixed text: it never repeats the input.
+const NO_TICKET_IN_LINK: &str = "no share ticket found: pass the whole share link, the part \
+     after its '#', or the part that starts with \"endpoint\", complete and unchanged";
 
 /// Context string of the capability derivation. Changing it invalidates every live link.
 const CAP_CONTEXT: &str = "syncoxiders/p2p-transfer cap v1";
@@ -1070,6 +1075,50 @@ impl Node {
         }
         self.endpoint.close().await;
     }
+}
+
+/// The endpoint ID of the share a link points at, as an entry for the relay's denylist.
+///
+/// This is the take-down step of an abuse report (`docs/compliance/incident-runbook.md`):
+/// the report carries a link, and the relay blocks the share by its endpoint ID. The link
+/// does not show that ID. Its ticket is `endpoint` followed by base32 of a postcard encoding
+/// in which the 32-byte ID starts one byte in, so neither the ID's hex nor its base32 form
+/// appears in the link.
+///
+/// `input` is any of:
+///
+/// * a whole share link, `https://oxfer.app/#[dev&]endpoint…&cap=…`;
+/// * its fragment, with or without the `#`;
+/// * the bare ticket: the part that starts with `endpoint` and ends before `&cap=`, which is
+///   what the abuse page asks reporters to send.
+///
+/// Whitespace anywhere in `input` is ignored, so a link wrapped across lines in an email
+/// still reads, and so are `<`, `>` and quotes around it. The fragment is read by
+/// [`Node::parse_fragment`], so this accepts exactly the tickets the app opens. Nothing is
+/// dialled.
+///
+/// The result is the ID's `Display` form, 64 lowercase hex digits, which iroh-relay 1.1.0
+/// accepts in `access.denylist = ["…"]`: the relay deserializes that list from TOML as
+/// `Vec<EndpointId>`, and each entry goes through `PublicKey`'s `FromStr` (iroh-base 1.1.0),
+/// which takes 64 hex digits or 52 base32 characters. The ticket text itself fails that
+/// parse, and the relay then refuses to start.
+///
+/// Only the ID comes out. The capability after `cap=` and the ticket's addresses are
+/// dropped, and an error is a fixed message that never repeats `input`, because the
+/// capability is a bearer secret.
+pub fn share_endpoint_id(input: &str) -> Result<String, &'static str> {
+    let compact: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    let compact = compact.trim_matches(|c| matches!(c, '<' | '>' | '"' | '\''));
+    if compact.is_empty() {
+        return Err(NO_LINK_GIVEN);
+    }
+    let fragment = compact
+        .split_once('#')
+        .map_or(compact, |(_, fragment)| fragment);
+    Node::parse_fragment(fragment)
+        .ticket
+        .map(|ticket| ticket.endpoint_addr().id.to_string())
+        .ok_or(NO_TICKET_IN_LINK)
 }
 
 /// Separate ALPN and no file handler: opening a diagnostics link never serves a
