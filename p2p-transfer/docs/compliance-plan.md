@@ -109,6 +109,15 @@ adversarial review. Where they conflict with the sections below, they win.
   still serves an older build and should be deleted.
 - **Native links.** eframe's `links` feature is now enabled so the desktop
   app can open the legal links.
+- **Monitoring (A10, "What you maintain").** Monitor
+  `https://relay.oxfer.app/healthz` for status 200 and the text `ok`, with
+  certificate-expiry alerts (Let's Encrypt no longer sends expiry emails),
+  plus a WebSocket probe of `wss://relay.oxfer.app/relay` offering the
+  `iroh-relay-v1` subprotocol.
+- **Relay state ("What you maintain").** The relay host is no longer
+  stateless: the blocks in force live in `/etc/oxfer-relay/denylist.txt` and
+  `/etc/nftables.d/bans.nft`. A rebuild copies them across or restores them
+  from the private abuse log; nothing else needs a backup.
 
 ## 0. Decisions needed from the owner
 
