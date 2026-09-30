@@ -28,7 +28,7 @@ server: `setup.sh` installs the prebuilt release binary and checks its SHA-256.
 | `tmpfiles-oxfer-relay.conf` | `/etc/tmpfiles.d/oxfer-relay.conf` | Points `/var/log/lastlog` at `/dev/null`, so no last-login record is kept. |
 | `sshd-oxfer-relay.conf` | `/etc/ssh/sshd_config.d/01-oxfer-relay.conf` | Key-only SSH. |
 | `unattended-upgrades.conf` | `/etc/apt/apt.conf.d/52oxfer-relay` | Automatic security upgrades, reboot at 03:30 when needed. |
-| `oxfer-relay-ban` | `/usr/local/sbin/oxfer-relay-ban` | Adds, lists and lifts IP bans, and keeps them with their expiry in `/etc/nftables.d/bans.nft`. |
+| `oxfer-relay-ban` | `/usr/local/sbin/oxfer-relay-ban` | Adds, lists and lifts IP bans, each for 1 to 365 days (30 by default), and keeps them with their expiry in `/etc/nftables.d/bans.nft`. |
 | `oxfer-relay-ban.service`, `oxfer-relay-ban.timer` | `/etc/systemd/system/` | Hourly removal of expired bans. |
 | `setup.sh` | `/opt/oxfer-relay/setup.sh` | Idempotent installer for all of the above. `setup.sh --denylist` applies only `/etc/oxfer-relay/denylist.txt`. |
 | `cloud-init.yaml` | provider "user data" | Generated: writes the kit to `/opt/oxfer-relay/` and runs `setup.sh` on first boot. |
@@ -50,9 +50,11 @@ This repository is public. Some state lives only on the server, and
   host rules such as `ssh.nft`.
 - The ACME account and certificate in `/var/lib/private/iroh-relay/certs/`.
 
-Reasons and reports go in the private abuse log, which is kept off the
-server and out of this repository. A rebuild must carry the denylist and
-the bans across ("Yearly rebuild rehearsal").
+Each block is recorded in the private abuse log, which is kept off the
+server and out of this repository. It holds only the date and time, the
+kind of report, the endpoint ID or address blocked, and the outcome. A
+rebuild must carry the denylist and the bans across ("Yearly rebuild
+rehearsal").
 
 ## What the relay exposes
 
@@ -295,23 +297,46 @@ and a paired diagnostic session should register with the relay.
 
 ## Switching production to the relay
 
-Production uses n0's public relays until the repository variable
-`P2P_RELAY_URL` is set. The browser build reads it at compile time
+Production builds use n0's public relays while the repository variable
+`P2P_RELAY_URL` is unset. The browser build reads it at compile time
 (`option_env!` in `src/node.rs`). A non-empty value selects
 `RelayChoice::Custom`, which uses iroh's `presets::Minimal`: no n0 relay map,
 and no pkarr publishing or lookup at `dns.iroh.link`. The deploy job also
 renders the CSP `connect-src` from the same variable.
 
+No deploy succeeds until every placeholder in the legal pages is filled:
+`build-web.sh` refuses to package while any `[[...]]` token remains, and
+once they are filled it refuses to package unless `P2P_RELAY_URL` lists
+`https://relay.oxfer.app`
+([relay go-live guard](../../docs/cloudflare-workers.md#relay-go-live-guard)).
+Filling the pages and setting the variable are therefore one step.
+
 1. Complete "First-boot verification".
-2. Set the variable, in GitHub under Settings, Secrets and variables, Actions,
+2. Check the relay from the app with a local build, which is never
+   deployed. From `p2p-transfer/`:
+   ```sh
+   OXFER_ALLOW_PLACEHOLDERS=1 P2P_RELAY_URL=https://relay.oxfer.app npm run build
+   ```
+   `OXFER_ALLOW_PLACEHOLDERS=1` lets it package the pages with their
+   placeholders; never deploy that output. `P2P_RELAY_URL=https://relay.oxfer.app trunk serve`
+   gives a debug build at `http://127.0.0.1:8080` whose **Diags** page probes
+   the relay.
+3. Set the variable, in GitHub under Settings, Secrets and variables, Actions,
    Variables, or with the CLI:
    ```sh
    gh variable set P2P_RELAY_URL --repo radumarias/syncoxiders --body https://relay.oxfer.app
    ```
-3. Re-run the deploy: Actions, `oxfer-web`, "Run workflow" on `main`, or
+4. Push the commit that fills every placeholder (owner actions 1 and 3 in
+   [`docs/compliance/README.md`](../../docs/compliance/README.md#owner-actions)).
+   That push deploys, and it is the first deploy that can succeed. If the
+   pages were filled before the variable was set, that deploy failed at the
+   relay go-live guard; re-run it now: Actions, `oxfer-web`, "Run workflow"
+   on `main`, or
    `gh workflow run oxfer-web.yml --repo radumarias/syncoxiders --ref main`.
-4. When the deploy job's own verification has passed, check `https://oxfer.app/diags`
-   and do one real transfer between two different networks.
+5. When the deploy job's own verification has passed (it checks that the
+   served policy names the relay in `connect-src`), check
+   `https://oxfer.app/diags` and do one real transfer between two different
+   networks.
 
 Share links created before the switch name the relay that was current when
 they were created. Let in-flight transfers finish, or share again after the
@@ -319,26 +344,35 @@ switch.
 
 ## Rollback
 
-Returning production to n0's relays takes two changes that must land
-together:
+Returning production to n0's relays takes a commit and the variable, which
+must change together
+([relay selection](../../docs/cloudflare-workers.md#relay-selection-p2p_relay_url)):
 
-1. **The legal pages.** Once they are filled, they describe
-   `relay.oxfer.app`, and the build's relay go-live guard refuses to package
-   pages that mention it while `P2P_RELAY_URL` is unset
+1. **The rollback commit.** Once the pages are filled, `build-web.sh`
+   refuses to package unless `P2P_RELAY_URL` lists `https://relay.oxfer.app`,
+   whatever the pages say
    ([relay go-live guard](../../docs/cloudflare-workers.md#relay-go-live-guard)).
-   Edit `privacy.html`, and any other page that names `relay.oxfer.app`, to
-   describe n0's relays, and update the records in `docs/compliance/` to
-   match.
-2. **The variable.** Delete it:
+   The guard does not read the page text. The rollback commit must:
+   - edit `privacy.html`, and any other page or record that names
+     `relay.oxfer.app` (in `docs/compliance/` too), to describe n0's relays;
+   - change or remove the relay go-live guard: `operator_relay` in
+     `build-web.sh`, between the `# BEGIN legal-page guards` and
+     `# END legal-page guards` markers, and `OPERATOR_RELAY` in
+     `package-cf-output.mjs`;
+   - update its test in `tests/web-pages.test.mjs`, which fails when
+     `privacy.html` stops naming `relay.oxfer.app`.
+2. **The variable.** Delete it before the commit reaches `main`:
    ```sh
    gh variable delete P2P_RELAY_URL --repo radumarias/syncoxiders
    ```
-   Then push the page change to `main`, which deploys, or run
+   Then push the commit to `main`, which deploys, or run
    `gh workflow run oxfer-web.yml --repo radumarias/syncoxiders --ref main`
-   after it has landed.
+   after it has landed. If the commit deployed while the variable still
+   listed the relay, production would keep using it while the pages
+   describe n0's relays.
 
-If the deploy runs with the variable deleted but the pages still name
-`relay.oxfer.app`, it fails at the guard and production stays on the
+If the deploy runs with the variable deleted while the pages are filled and
+the guard is unchanged, it fails at the guard and production stays on the
 self-hosted relay. Deleting the variable alone therefore rolls nothing back.
 The VPS can keep running while you investigate.
 
@@ -387,8 +421,10 @@ had tags `v1.2.0` and `v1.3.0`. The workspace is on 1.1.0, so the kit pins 1.1.0
 The relay forwards end-to-end encrypted traffic. It cannot see file contents
 or share links, and it logs no addresses or endpoint IDs (see "What is
 logged"). There are two ways to block, and both survive reboots, firewall
-reloads, `setup.sh` reruns and upgrades. Record every action (date, endpoint
-ID or address, reason, expiry) in the private abuse log, not here.
+reloads, `setup.sh` reruns and upgrades. Record every block in the private
+abuse log, not here: the date and time, the kind of report, the endpoint ID
+or address blocked, and the outcome. Commands typed in an interactive shell
+on the host also stay in its shell history (see "What is logged").
 
 ### A reported share: by endpoint ID
 
@@ -443,10 +479,14 @@ including connections that are already open.
 ```sh
 oxfer-relay-ban add 203.0.113.7                  # 30 days
 oxfer-relay-ban add 2001:db8:1:2::/64 90         # a prefix, 90 days
-oxfer-relay-ban add 203.0.113.7 permanent
 oxfer-relay-ban list                             # address and expiry (UTC)
 oxfer-relay-ban del 203.0.113.7
 ```
+
+Every ban expires. `DAYS` is a whole number from 1 to 365, and there is no
+permanent ban. To extend a ban, run `oxfer-relay-ban add ADDRESS DAYS` again:
+the new expiry counts from then. Record the extension in the abuse log like
+the ban itself.
 
 `oxfer-relay-ban` adds the element to the `banned_v4` or `banned_v6` set
 with a timeout and writes it, with its absolute expiry, to
@@ -457,8 +497,9 @@ with the timeout it was written with, so `oxfer-relay-ban.timer` runs
 `oxfer-relay-ban prune` hourly to delete lines past their expiry, and their
 elements. A ban therefore ends at its expiry, or at most about an hour later
 if the firewall was reloaded in between. The timer logs only how many bans
-it lifted. Adding an address again sets a new expiry. Do not use a bare
-`nft add element`: such a ban is gone after the next reload.
+it lifted. A ban line in `bans.nft` without an expiry, which the tool never
+writes, counts as expired: `list` marks it and the next `prune` lifts it. Do
+not use a bare `nft add element`: such a ban is gone after the next reload.
 
 ## Monitoring
 
@@ -490,13 +531,15 @@ and how long it lasts:
 | Relay memory | The address and endpoint ID of each connected client. The key cache is off (`key_cache_capacity = 0`), so no endpoint ID stays after its connection ends. | While connected |
 | Relay metrics | Aggregate counters in memory, on 127.0.0.1 only | Until restart |
 | Rate-limit sets in the firewall (`relay_flood_*`, `ssh_flood_*`) | Source address (IPv6: its /64) of recent new connections to TCP 22, 80 and 443 | At most 60 seconds: each element times out one minute after it is created, and `add` never extends it |
-| Ban sets and `/etc/nftables.d/bans.nft` | Addresses you banned, with expiry | Until the expiry (30 days unless you chose otherwise), or until lifted |
+| Ban sets and `/etc/nftables.d/bans.nft` | Addresses you banned, with expiry | Until the expiry, or until lifted. Every ban has one: 30 days by default, 1 to 365 days when given, and a later `add` of the same address sets a new one |
 | `/etc/oxfer-relay/denylist.txt` and the relay config | Endpoint IDs you blocked | Until you remove them |
 | sshd (journal) | Source address and user of SSH logins and failed attempts: administration of the host, not relay users | Three days |
+| sudo (journal), on images where you log in as `debian` or `ubuntu` | Each command run with `sudo`, with its arguments, so the address or endpoint ID of a block command run that way | Three days |
 | Login records: `/var/log/wtmp`, `/var/log/btmp`, and `/var/log/wtmp.db` on Debian 13 | Logins (user, terminal, source address). Debian 12 and Ubuntu 24.04 also write unknown-user attempts to `btmp`. | Emptied at each daily rotation (between 00:00 and 01:00, and at boot after downtime), so about a day; never more than three days |
 | `lastlog` and `lastlog2` | Nothing: `/var/log/lastlog` is a link to `/dev/null`, and `libpam-lastlog2` is removed where present | None |
 | rsyslog files (`/var/log/syslog`, `auth.log` and the rest) | None: `rsyslog` is removed and its old files deleted | None |
 | Firewall log | Nothing: no rule logs | None |
+| Shell history (`~/.bash_history` of root and of the `debian` or `ubuntu` user) | The commands typed in interactive shells on the host, including any address or endpoint ID in a block command typed there. The kit does not change bash's defaults. | No time limit: bash trims the file only by number of lines |
 | Certificate Transparency logs | The certificate for `relay.oxfer.app`, published by Let's Encrypt as all public certificates are | Permanent, public |
 
 sshd logs `lastlog_openseek: /var/log/lastlog is not a file or directory!`
@@ -582,19 +625,28 @@ Deployed on Fly, the relay would make these statements false:
   the relay's processor, with its DPA and a transfer basis (Data Privacy
   Framework or Standard Contractual Clauses), as they do for Cloudflare.
 
-Before using Fly for production, change at least:
+Before using Fly for production, change all of the following; this is the
+complete list:
 
 - `privacy.html`: section 3 ("What data is processed, by whom and why": the
   relay, its blocking and log retention) and section 8 ("International
   transfers").
-- `abuse.html`: section 4 ("What we can do, and how blocking works": IP
-  blocks and connection limits).
-- `terms.html`: 7.1 ("What we can do": IP blocks) and 7.3 ("Repeat
-  infringers": address blocks).
+- `terms.html`: 5.2 ("Child sexual exploitation and abuse content": blocking
+  the network addresses involved), 7.1 ("What we can do": IP blocks) and 7.3
+  ("Repeat infringers": address blocks).
+- `abuse.html`: the summary ("In short": blocking an address at the relay),
+  section 3 ("What happens next": a block of network addresses as an
+  outcome), section 4 ("What we can do, and how blocking works": IP blocks
+  and connection limits), section 7 ("Copyright and other rights": blocking
+  repeat infringers' addresses) and 9.1 ("What we hold": relay logs and
+  blocked addresses).
 - `docs/compliance/ropa.md`: 2.1 (relay logging), 3.2 (P3, rate limits and
   blocking), 4 (processors), 5 (international transfers) and 6 (retention).
-- `docs/compliance/transparency.md`: section 1; and owner action 3 in
-  `docs/compliance/README.md`.
+- `docs/compliance/transparency.md`: sections 1 (what exists per user) and 2
+  (what the operator can provide: address blocks).
+- `docs/compliance/osa-illegal-content.md`: ICU C2 in section 5.1 (take-down
+  by address blocks) and its "Configuration assessed" note.
+- `docs/compliance/README.md`: owner action 3.
 
 The files in `fly/` implement the eight conditions of plan section 4: one
 machine, no auto-stop, raw TCP on 443 and 80 without handlers, a volume for
@@ -726,8 +778,8 @@ beforehand, with its own and planted old log files, and on Debian 13 also
   Ubuntu, with systemd-resolved installed, used
   `resolvectl --synthesize=no`.
 - `oxfer-relay-ban`: add (IPv4, IPv6 prefix with an uppercase spelling,
-  permanent, re-add with a new expiry), refusal of a bad address or day
-  count, list and del. Bans survived `systemctl reload nftables`,
+  re-add with a new expiry), refusal of a bad address or day count, list
+  and del. Bans survived `systemctl reload nftables`,
   `systemctl restart nftables`, a `setup.sh` rerun and a container restart.
   An expired line was loaded, then removed from the file and the set by the
   timer's service, which logged only a count. The DHCPv6 rule is loaded.
@@ -768,6 +820,14 @@ Other checks:
   with 1.0.6, 1.1.3 and 1.0.9.
 - `iroh-relay.service`, `oxfer-relay-ban.service` and `.timer`:
   `systemd-analyze verify`. Shell scripts: shellcheck 0.11.0 clean.
+- `oxfer-relay-ban` without the former `permanent` option, run in a network
+  namespace with nftables 1.0.9 (a copy with its paths pointed at a scratch
+  directory): it refused `DAYS` of 0, 366, 030, 1.5, `permanent` and a
+  20-digit number, and an add while the firewall was not loaded. It added an
+  IPv4 address, an IPv6 prefix written in uppercase and a re-add with a new
+  expiry, then listed and deleted them. A planted line without an expiry
+  was listed as having none and lifted by `prune` together with an expired
+  one, and a reload kept the remaining ban.
 - The rate-limit sets' 60-second bound: in a network namespace, an element
   of a `dynamic, timeout` set under continuous traffic counted down and was
   created again at its timeout, never extended by `add`.
