@@ -24,6 +24,92 @@ and DNS discovery, browser ICE still sends every user's IP to Google STUN, no
 CSP, and no written risk assessments for the online-safety regimes that apply
 to file-sharing services regardless of size.
 
+## Implementation status (30 September 2026)
+
+Everything in this plan that can be done in the repository is implemented on
+branch `ccr-da11c28f-wrlb9h`. The item-by-item status, the owner's checklist
+and the review cadence live in [compliance/README.md](compliance/README.md),
+which is kept current; this plan is the original brief and is not updated line
+by line.
+
+| Area | Where it lives now |
+| --- | --- |
+| Relay list, STUN, debug handle, legal links, report link, browser storage | `src/node.rs`, `src/webrtc.rs`, `src/diagnostics.rs`, `src/app.rs` |
+| Endpoint-ID tool for abuse reports | `examples/ticket-endpoint-id.rs` |
+| No inline scripts, security headers, relay-aware CSP, deploy guards, bundle hashes | `Trunk.toml`, `index.html`, `assets/boot.js`, `assets/app-init.js`, `assets/_headers`, `package-cf-output.mjs`, `build-web.sh`, `verify-deployment.mjs`, `.github/workflows/` |
+| Privacy notice, terms, abuse and safety page | `privacy.html`, `terms.html`, `abuse.html` (served at `/privacy`, `/terms`, `/abuse`) |
+| Relay deploy kit (VPS and Fly.io) | `deploy/relay/` |
+| Assessments and records | `docs/compliance/` |
+
+Decisions taken: D1 self-hosted EU relay, provider still open; D2 comply;
+D3 as recommended; D5 drafts kept in this repository. D4 (natural person or
+company) is still open, so operator details are `[[...]]` placeholders, and
+the deploy refuses to publish the legal pages until they are filled and
+production uses the Oxfer relay.
+
+### What the work changed in this plan
+
+These corrections came out of implementation, verification and an
+adversarial review. Where they conflict with the sections below, they win.
+
+- **Redirects (C4, section 9).** No `_redirects` file is needed. Workers
+  static assets serve `/privacy` from `privacy.html` by default.
+- **CSP (B1).** Trunk's own inline loader also broke `script-src 'self'`, so
+  Trunk no longer injects scripts and `assets/app-init.js` loads the wasm. The
+  policy gained `style-src`, `font-src`, `manifest-src` and `frame-ancestors`,
+  and its `connect-src` is rendered from `P2P_RELAY_URL`. It ships as
+  report-only; the steps to enforce it are in `docs/cloudflare-workers.md`.
+  On n0 builds the Diags legacy dotted-DNS check cannot pass an enforced CSP.
+- **`no-transform`.** Sent only for the three legal pages, so Cloudflare
+  cannot rewrite them while the wasm keeps its compression.
+- **Relay config (section 4).** The config shown below has wrong keys:
+  `https_bind_addr` and `quic_bind_addr` belong under `[tls]`, the rate limit
+  table is `[limits.client.rx]`, and `accept_conn_limit` does nothing in
+  iroh-relay 1.1.0. Use `deploy/relay/config.toml`, which is derived from the
+  1.1.0 source and tested. Connection limits are enforced in nftables.
+- **Relay logging (A3, section 4).** iroh-relay has no access-log switch;
+  only `RUST_LOG` controls it, and at `info` it logs client addresses. The
+  kit's filter logs no addresses, endpoint IDs or connection events, the key
+  cache is off, and host login records are capped at three days.
+- **Blocking (section 4, section 7).** The relay denylist takes endpoint IDs,
+  not addresses, and each share has a fresh ID, so it blocks one share.
+  Address bans live in nftables. Both now survive reboots and upgrades.
+  `cargo run -q -p p2p-transfer --example ticket-endpoint-id -- '<link>'`
+  extracts the ID from a reported link without opening it.
+- **STUN (A4, D7).** Cloudflare's public STUN is used without an account, and
+  its customer DPA may not cover it; the records list it as a separate
+  recipient until Cloudflare confirms.
+- **Browser storage (section 5).** eframe also wrote `app` and
+  `egui_memory_ron`, and the start-up listing created an empty IndexedDB
+  database. Both are fixed: the web build stores only `oxfer.theme.v1` after
+  an explicit choice, and local-copy storage exists only after opting in.
+- **UK Online Safety Act (D1, D2, section 8).** Without age assurance or
+  usage data, Oxfer is treated as likely to be accessed by children, so a
+  children's risk assessment and the Protection of Children Codes apply; the
+  owner must choose a PCU B4 option. A medium risk of image-based CSAM makes
+  the service multi-risk, which adds governance, moderation and appeals
+  measures. The Crime and Policing Act 2026 added intimate-image report duties
+  (48-hour maximum, prescribed declarations, expedited complaints) from
+  29 June 2026. Hash matching (ICU C9) does not apply to private transfers.
+- **Australia (D3).** Oxfer is a designated internet service, but Tier 3 is
+  the result of a documented assessment, not a pre-set status. The 2026
+  Phase 2 code needs its own section (`docs/compliance/esafety.md`).
+- **India (section 7).** IT Rules amendment G.S.R. 120(E) cut grievance
+  resolution to 7 days from 20 February 2026; the abuse page uses 7 days for
+  India. The 2-hour and 36-hour windows are an open owner decision.
+- **Indonesia (E1).** Registration needs sworn translations, so it is not
+  free; stop and revisit D3 if a local representative is required.
+- **New regimes.** The EU e-Evidence Regulation applies from 18 August 2026;
+  whether Oxfer must designate an establishment is an open owner and lawyer
+  question. UK GDPR Art. 27 is not engaged while the UK is not targeted.
+- **Bundle hashes (B4).** Published in each deploy's job summary and as an
+  artifact, which GitHub keeps at most 90 days; copy them to a release.
+- **Cloudflare zone.** Network Error Logging is on by default and must be
+  turned off (verify-deployment checks). The old `oxfer.pages.dev` project
+  still serves an older build and should be deleted.
+- **Native links.** eframe's `links` feature is now enabled so the desktop
+  app can open the legal links.
+
 ## 0. Decisions needed from the owner
 
 | # | Decision | Recommendation |
@@ -150,6 +236,10 @@ cannot use them, and Oxfer's signalling and fallback stream run over iroh.
 See A4 and A7 for STUN and A12 for TURN.
 
 ## 4. Relay runbook
+
+> Superseded by [`deploy/relay/README.md`](../deploy/relay/README.md) and
+> [`deploy/relay/config.toml`](../deploy/relay/config.toml). The config keys
+> below are wrong for iroh-relay 1.1.0; see the corrections at the top.
 
 Config for `iroh-relay` (adjust paths and contact address):
 
