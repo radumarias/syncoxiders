@@ -8,6 +8,11 @@
   to deploy while any token remains in privacy.html, terms.html or abuse.html.
 
     OPERATOR_NAME           Legal name of the person or company that runs Oxfer.
+                            Exception: in section 14.6 (Singapore) it names the
+                            individual responsible for data protection. If the
+                            operator is a company, write that individual's name
+                            there, not the company's (Singapore PDPA s.11(3)
+                            and (5) require a designated individual).
     OPERATOR_ADDRESS        Postal address: domicile (natural person) or
                             registered office (company).
     OPERATOR_REGISTRATION   Trade-register number and tax ID (company only).
@@ -20,6 +25,29 @@
   This notice describes the operator's own relay at relay.oxfer.app. Publish it
   with a build that sets P2P_RELAY_URL to that relay. A build without it uses
   n0's public relays and dns.iroh.link, which this notice does not describe.
+
+  Before publishing, also make these statements true:
+  - Section 8, NCMEC: confirm the Art. 49(1)(d) basis with counsel before the
+    first referral (docs/compliance/ropa.md, section 5).
+  - Section 8, email: choose a mailbox provider that keeps messages in the EEA
+    or relies on an adequacy decision or the EU Standard Contractual Clauses.
+  - Section 3, loading the website: Cloudflare request-log retention (Logpull)
+    stays off.
+
+  RELAY VARIANT. This notice, terms.html, abuse.html and the records in
+  docs/compliance/ describe the VPS variant of deploy/relay/: an EU server we
+  run, with the nftables firewall, rate-limit sets and IP bans, the journal
+  capped at three days, SSH login records kept at most three days, and the
+  endpoint-ID denylist kept on the server. The kit's Fly.io variant makes
+  several statements false: there the relay sees Fly's proxy address instead
+  of the user's, so it cannot rate-limit by address or block IP addresses; Fly.io, Inc.,
+  a United States company, runs the edge that handles every connection; and
+  relay logs go to Fly's log pipeline, not the three-day journal. Before
+  using Fly, change at least: this notice, section 3 (relay row: processor,
+  legal basis for address blocking, retention, SSH) and section 8 (Fly as a
+  US processor and its transfer basis); terms.html sections 5.2, 7.1 and 7.3;
+  abuse.html sections 4, 7 and 9.1; and the records listed in
+  deploy/relay/README.md, "Fly.io variant".
 -->
 <html lang="en">
 <head>
@@ -64,7 +92,7 @@
             <li>Files go from the sender's device to the recipient's device, encrypted. When no direct path works, the encrypted data passes through our relay, which cannot read it. We never store your files.</li>
             <li>To connect the two devices, some parties see your IP address: Cloudflare (which delivers the website and a connection helper called STUN), our relay, and the other device in the transfer.</li>
             <li>The share link is the key. Anyone who has the complete link can download the files while the sender is still sharing.</li>
-            <li>We keep no record of who used Oxfer or what was sent, so we hold no data about you to look up, hand over or delete.</li>
+            <li>We keep no record of who used Oxfer or what was sent. We hold personal data only if you write to us, if a report or a block concerns you, and for as long as <a href="#processing">section 3</a> says.</li>
         </ul>
     </section>
 
@@ -142,7 +170,7 @@
                         <td data-label="Who receives it">Cloudflare, Inc., which hosts oxfer.app for us as our processor.</td>
                         <td data-label="Purpose">Delivering the app and these pages, and protecting the site against attacks and abuse.</td>
                         <td data-label="Legal basis">Art. 6(1)(f): running a working and secure website.</td>
-                        <td data-label="How long">Cloudflare keeps its own logs under its policies. We do not export or keep request logs. Cloudflare's dashboard shows us aggregate statistics, such as requests per country, and limited details of requests its security features block.</td>
+                        <td data-label="How long">We do not export or keep request logs. Cloudflare keeps no request log for us: its request-log retention is off unless a customer turns it on, and we have not. Cloudflare's dashboard shows us aggregate statistics, such as requests per country, and limited details of requests its security features block, which it keeps for the period its plan sets (the last 24 hours on the Free and Pro plans). Cloudflare keeps its own operational and security logs for as long as its purposes require, as its <a href="https://www.cloudflare.com/privacypolicy/">privacy policy</a> describes.</td>
                     </tr>
                     <tr>
                         <th scope="row">Finding a direct path (STUN)</th>
@@ -157,8 +185,8 @@
                         <td data-label="Data">IP address, endpoint ID (a public key created anew for each share and each receiving session), connection times, and the amount of encrypted data relayed. The relay cannot read file names or file contents.</td>
                         <td data-label="Who receives it">Our relay at relay.oxfer.app, which we operate on a server provided by [[RELAY_HOSTING_PROVIDER]] in [[RELAY_LOCATION]]. The provider acts as our processor.</td>
                         <td data-label="Purpose">Lets the two devices find and authenticate each other, carries connection setup, and carries the encrypted transfer when no direct path works.</td>
-                        <td data-label="Legal basis">Art. 6(1)(b). Rate limits and blocking of abusive addresses: Art. 6(1)(f), keeping the relay available and preventing abuse.</td>
-                        <td data-label="How long">Held in the relay's memory only while you are connected. The relay keeps no access log and no record of who connected, when, or how much was sent: it does not log IP addresses, endpoint IDs or connections. It logs only its own operational errors, without the addresses of the devices using it, and the server deletes these logs automatically after at most three days. We keep aggregate counters, such as the total number of connections, which contain no data about any person. Separately, the server's SSH service records our own administrative logins to the server.</td>
+                        <td data-label="Legal basis">Art. 6(1)(b). Rate limits, and blocking of abusive shares and addresses: Art. 6(1)(f), keeping the relay available and preventing abuse.</td>
+                        <td data-label="How long">The relay holds your IP address and endpoint ID in memory only while you are connected. It keeps no access log and no record of who connected, when, or how much was sent: its logs record no IP addresses, endpoint IDs or connections. It logs only its own operational errors, and the server deletes these logs automatically after at most three days. The server's firewall holds the source address of each new connection for at most 60 seconds, to enforce rate limits. Endpoint IDs and IP addresses we block stay in the relay's block lists while the block is in force: an address block lasts a set period, normally 30 days (<a href="/abuse#blocking">abuse and safety page, section 4</a>). We keep aggregate counters, such as the total number of connections, which contain no data about any person. Separately, the server records our own administrative logins and the source addresses of failed attempts to log in to it, and deletes these records after at most three days.</td>
                     </tr>
                     <tr>
                         <th scope="row">Connecting to the other device</th>
@@ -187,7 +215,7 @@
                     <tr>
                         <th scope="row">Abuse reports passed on</th>
                         <td data-label="Data">The content of a report, including any link or endpoint ID in it, and the reporter's contact details where needed.</td>
-                        <td data-label="Who receives it">Competent authorities. Reports about child sexual abuse material go to the National Center for Missing &amp; Exploited Children (NCMEC) in the United States and to Romanian authorities.</td>
+                        <td data-label="Who receives it">Competent authorities. Reports about child sexual abuse material go to the National Center for Missing &amp; Exploited Children (NCMEC) in the United States (<a href="#transfers">section 8</a>) and to Romanian authorities.</td>
                         <td data-label="Purpose">Protecting people from serious harm and cooperating with lawful requests.</td>
                         <td data-label="Legal basis">Art. 6(1)(c) where the law requires it; otherwise Art. 6(1)(f): protecting victims and preventing crime.</td>
                         <td data-label="How long">As for messages you send us.</td>
@@ -195,6 +223,7 @@
                 </tbody>
             </table>
         </div>
+        <p>No law obliges you to give us personal data. Your IP address and the technical data above are needed to provide the service you ask for, delivering the app and connecting the two devices, so Oxfer cannot work without them. You never have to give us your name or email address. If you write to us without a way to reach you, we cannot reply.</p>
     </section>
 
     <section id="on-device" aria-labelledby="on-device-title">
@@ -227,7 +256,7 @@
                     <tr>
                         <th scope="row"><code>oxfer-resume</code></th>
                         <td data-label="Where">A folder in the origin private file system and a database in IndexedDB, both with this name</td>
-                        <td data-label="What it holds">Only if you tick "Keep a copy here so I can continue later": the received file data, file names, sizes, checksums, progress and the time of the last update. When the app starts, it looks in the database for saved copies, so your browser may show an empty <code>oxfer-resume</code> database even if you never kept a copy.</td>
+                        <td data-label="What it holds">Only if you tick "Keep a copy here so I can continue later": the received file data, file names, sizes, checksums, progress and the time of the last update. The folder and the database are created only when you tick that box and start saving. Looking for saved copies, exporting them and deleting them never create either.</td>
                         <td data-label="Kept until">You choose "Delete saved copy" or clear site data. The browser may also remove it when storage runs low.</td>
                     </tr>
                 </tbody>
@@ -275,7 +304,8 @@
             <li><strong>Our relay</strong> runs in the European Union, in [[RELAY_LOCATION]].</li>
             <li><strong>Cloudflare</strong> is a United States company with a global network. Your requests are usually handled by a Cloudflare data centre near you, which may be outside the European Economic Area. Cloudflare states that, for transfers to the United States, it relies on its certification under the EU-U.S. Data Privacy Framework, the UK Extension to it and the Swiss-U.S. Data Privacy Framework, and that its data processing addendum also includes the EU Standard Contractual Clauses. See Cloudflare's <a href="https://www.cloudflare.com/trust-hub/gdpr/">GDPR information</a> and <a href="https://www.cloudflare.com/privacypolicy/">privacy policy</a>.</li>
             <li><strong>The other device.</strong> If the person you exchange files with is outside the European Economic Area, your connection data goes to their device directly. This is part of the transfer you ask for.</li>
-            <li><strong>Email.</strong> Messages you send us pass through Cloudflare Email Routing and our email service provider, which may process them outside the European Economic Area under their own transfer safeguards.</li>
+            <li><strong>Email.</strong> Messages you send us pass through Cloudflare Email Routing, covered by the Cloudflare safeguards above, and then to our email service provider. That provider keeps them in the European Economic Area, or processes them elsewhere only under an adequacy decision of the European Commission or the EU Standard Contractual Clauses. Write to <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a> for the provider's name and a copy of the safeguards.</li>
+            <li><strong>NCMEC.</strong> When we refer child sexual abuse material to the National Center for Missing &amp; Exploited Children (NCMEC) in the United States, we send the report, the link or endpoint ID in it and, only where needed, how to reach the reporter. No adequacy decision covers NCMEC: the EU-U.S. Data Privacy Framework covers only organisations certified under it, and NCMEC, a non-profit organisation, is not. We make these transfers only when necessary for important reasons of public interest (GDPR Art. 49(1)(d)): protecting children from sexual abuse and exploitation, which EU law recognises, for example in Directive 2011/93/EU. We send only what NCMEC needs to act. For more information, write to <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>.</li>
         </ul>
     </section>
 
@@ -341,10 +371,10 @@
         <p>Under the Lei Geral de Proteção de Dados (LGPD) you may ask us to confirm whether we process your data, give you access, correct, anonymise, block or delete it, tell you with whom we share it, and port it. Our communication channel for these requests is <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>. Oxfer is not directed at children or adolescents and does no profiling or advertising. You can also contact the Autoridade Nacional de Proteção de Dados (ANPD): <a href="https://www.gov.br/anpd/pt-br">www.gov.br/anpd</a>.</p>
 
         <h3 id="india">14.5 India</h3>
-        <p>Questions and grievances about personal data can be sent to <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>. We answer within one month. If you are not satisfied with our answer, you may complain to the Data Protection Board of India. For complaints about content or conduct on the service, see the <a href="/abuse#india">Grievance Officer details</a> on the abuse and safety page.</p>
+        <p>Questions and grievances about personal data can be sent to <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>. We answer within one month. Once the provisions of the Digital Personal Data Protection Act, 2023 that allow it are in force (under the current schedule, from May 2027), you may also complain to the Data Protection Board of India if you are not satisfied with our answer. For complaints about content or conduct on the service, see the <a href="/abuse#india">Grievance Officer details</a> on the abuse and safety page.</p>
 
         <h3 id="singapore">14.6 Singapore</h3>
-        <p>The person responsible for data protection at Oxfer is [[OPERATOR_NAME]]. Contact: <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>. You can also contact the Personal Data Protection Commission: <a href="https://www.pdpc.gov.sg/">www.pdpc.gov.sg</a>.</p>
+        <p>The individual responsible for data protection at Oxfer is [[OPERATOR_NAME]]. Contact: <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>. You can also contact the Personal Data Protection Commission: <a href="https://www.pdpc.gov.sg/">www.pdpc.gov.sg</a>.</p>
 
         <h3 id="japan">14.7 Japan</h3>
         <p>When you use Oxfer, your browser sends information to the destinations below. Oxfer contains no advertising, analytics or other third-party tags.</p>

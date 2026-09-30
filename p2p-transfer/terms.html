@@ -14,6 +14,10 @@
                             For a natural person, delete the whole line marked
                             "delete for a natural person".
     EFFECTIVE_DATE          Date this version takes effect, e.g. 1 November 2026.
+
+  These terms describe the VPS variant of the relay kit in deploy/relay/.
+  Sections 5.2, 7.1 and 7.3 (IP address blocks) are false on the Fly.io
+  variant; see "RELAY VARIANT" in privacy.html before using it.
 -->
 <html lang="en">
 <head>
@@ -161,6 +165,13 @@
         <p>All other illegal content is prohibited. When we learn that a share is used for illegal content, we block it at our relay and inform the competent authorities where the law requires it.</p>
         <h3 id="how-long">5.4 How long illegal content can be present, and how we take it down</h3>
         <p>A share lasts only while the sender keeps it open. It ends when the sender stops sharing, closes the app or loses the connection. When we block a share at our relay, new connections to it through the relay stop. Browsers need our relay to connect, so in the browser app a block ends the share for new recipients. A block cannot stop a transfer that is already running on a direct connection, a direct connection between two desktop apps, or copies that recipients have already saved. We act on reports within the times given on the <a href="/abuse">abuse and safety page</a>.</p>
+        <h3 id="intimate-images">5.5 Intimate images shared without consent</h3>
+        <p>Sharing an intimate image or video of a person without their consent is prohibited (<a href="#acceptable-use">section 4</a>). The person shown, or someone acting for them, can report it as described on the <a href="/abuse#intimate-images">abuse and safety page</a>. This is how we meet the take-down duty for intimate image content reports under the UK Online Safety Act 2023 (section 10(3A)):</p>
+        <ul>
+            <li>We take the reported share down by blocking it at our relay as soon as reasonably practicable, and no later than 48 hours after we receive the report.</li>
+            <li>We also take down any other share that we identify as carrying the same, or substantially the same, images. We cannot see files, so we identify such shares only from reports, for example other links given to us.</li>
+            <li>We do not take a share down under this rule if we conclude that the content is not an intimate image shared without consent, or that the person reporting is neither the person shown nor acting for them. We then tell the person reporting, who can use our expedited complaints procedure (<a href="#reports">section 6</a>).</li>
+        </ul>
     </section>
 
     <section id="reports" aria-labelledby="reports-title">
@@ -171,7 +182,7 @@
             <li>complain that we are not following these terms or the law, including our duties on freedom of expression and privacy;</li>
             <li>appeal a block you believe is wrong.</li>
         </ul>
-        <p>A person reads every message. We acknowledge within 24 hours and give our answer within 15 days. We decide appeals promptly. If we find that a block was wrong, we lift it. We never tell the person who shared the content, or any other user, that a report was made or who made it, and you can ask us to send you no further messages about your report. The <a href="/abuse">abuse and safety page</a> explains what to include, what not to send, who learns about a report, and faster handling for urgent cases.</p>
+        <p>A person reads every message. We acknowledge within 24 hours and give our answer within 15 days. We decide appeals promptly. If we find that a block was wrong, we lift it. We never tell the person who shared the content, or any other user, that a report was made or who made it, and you can ask us to send you no further messages about your report. If you reported intimate images of yourself, or of the person you act for (<a href="#intimate-images">section 5.5</a>), a complaint about that content or about how we handled your report goes through our expedited procedure: we handle it before other messages and tell you the outcome within 48 hours. The <a href="/abuse">abuse and safety page</a> explains what to include, what not to send, who learns about a report, and faster handling for urgent cases.</p>
     </section>
 
     <section id="can-cannot" aria-labelledby="can-cannot-title">
@@ -179,7 +190,7 @@
         <h3 id="we-can">7.1 What we can do</h3>
         <ul>
             <li>Block a share at our relay, using the endpoint ID in its link. Each share has a new endpoint ID, so this affects only that share.</li>
-            <li>Block IP addresses from using our relay, for a limited time or permanently.</li>
+            <li>Block IP addresses from using our relay for a set period, normally 30 days, which we can extend or renew for repeated or serious abuse.</li>
             <li>Limit how many connections and how much data our relay accepts.</li>
             <li>Report child sexual abuse material to NCMEC and to Romanian authorities, and cooperate with lawful requests from competent authorities.</li>
         </ul>
@@ -197,7 +208,7 @@
     <section id="markets" aria-labelledby="markets-title">
         <h2 id="markets-title">8. Where Oxfer is offered</h2>
         <p>Oxfer is offered from Romania under EU law, in English. It is not localised, marketed or supported in countries whose laws require foreign online services to register locally or to appoint a local representative. If you use Oxfer from such a country, you do so on your own initiative, and you are responsible for complying with local law, including any rules on encryption tools and file sharing.</p>
-        <p>Authorities outside Romania can reach us through Romanian legal process, as described on the <a href="/abuse#authorities">abuse and safety page</a>.</p>
+        <p>Judicial authorities of other EU Member States can send European Production and Preservation Orders directly to us. Other authorities outside Romania can reach us through the legal channels open to them. The <a href="/abuse#authorities">abuse and safety page</a> explains both.</p>
     </section>
 
     <section id="sanctions" aria-labelledby="sanctions-title">
@@ -250,7 +261,7 @@
         <ul>
             <li>These terms are governed by Romanian law.</li>
             <li>If you are a consumer, this choice of law does not take away the protection of mandatory rules of the law of the country where you normally live.</li>
-            <li>The courts of Romania have jurisdiction. If you are a consumer living in the European Union, you may also bring a claim in the courts of the country where you live.</li>
+            <li>If you are a consumer, wherever you live, you may bring a claim against us in the courts of Romania or in the courts of the place where you live, and we can bring a claim against you only in the courts of the place where you live. Otherwise, the courts of Romania have jurisdiction.</li>
             <li>Please contact us first at <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a>. Most problems can be solved that way.</li>
             <li>You can also complain about our compliance with the EU Digital Services Act to the Digital Services Coordinator of the EU country where you live. In Romania this is ANCOM (<a href="https://www.ancom.ro/en/category/servicii-digitale-en/">ancom.ro</a>).</li>
         </ul>

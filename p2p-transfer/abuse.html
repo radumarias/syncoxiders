@@ -8,8 +8,12 @@
   to deploy while any token remains in privacy.html, terms.html or abuse.html.
 
     OPERATOR_NAME           Legal name of the person or company that runs Oxfer.
-                            Also shown as the Grievance Officer for India.
-    OPERATOR_ADDRESS        Postal address: domicile (natural person) or
+                            Exception: in section 10 it is the name of the
+                            Grievance Officer for India, who must be an
+                            individual (IT Rules 2021, rule 3(2)(a)). If the
+                            operator is a company, write the name of the
+                            individual it appoints there, not the company's.
+    OPERATOR_ADDRESS       Postal address: domicile (natural person) or
                             registered office (company).
     OPERATOR_REGISTRATION   Trade-register number and tax ID (company only).
                             For a natural person, delete the whole line marked
@@ -18,6 +22,16 @@
 
   The response times below are commitments. The abuse@oxfer.app mailbox must
   be monitored so they can be met.
+
+  Section 9.2 tells EU judicial authorities to send European Production and
+  Preservation Orders (Regulation (EU) 2023/1543) directly to the operator.
+  A company operator must designate its addressee for them and notify
+  Romania's central authority (Directive (EU) 2023/1544, Articles 3 and 4);
+  see "EU e-Evidence" in docs/compliance/README.md.
+
+  This page describes the VPS variant of the relay kit in deploy/relay/.
+  Sections 4, 7 and 9.1 (IP address blocks, relay logs) are false on the
+  Fly.io variant; see "RELAY VARIANT" in privacy.html before using it.
 -->
 <html lang="en">
 <head>
@@ -60,8 +74,8 @@
         <ul>
             <li>One address for everything: <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a>, for users, rights holders, authorities and regulators, in English or Romanian. A person reads every message.</li>
             <li>Do not send us files or illegal material. Send the Oxfer link, or the part of it before <code>&amp;cap=</code>, and describe the problem.</li>
-            <li>We acknowledge within 24 hours and answer within 15 days. We act on intimate images shared without consent within 48 hours. We report child sexual abuse material to NCMEC and to Romanian authorities.</li>
-            <li>We hold no files and no records of users or transfers. We can block a share or an address at our relay.</li>
+            <li>We acknowledge within 24 hours and answer within 15 days. We take down intimate images shared without consent as soon as reasonably practicable, and no later than 48 hours after your report. We report child sexual abuse material to NCMEC and to Romanian authorities.</li>
+            <li>We hold no files and no records of transfers. We keep only what people send us and a record of reports and blocks (<a href="#records">section 11</a>). We can block a share or an address at our relay.</li>
             <li>If someone is in immediate danger, contact your local emergency services first.</li>
         </ul>
     </section>
@@ -113,11 +127,11 @@
             <p><strong>Do not send us files, screenshots of illegal images, or any illegal material.</strong> Do not download child sexual abuse material to report it. We do not need the content to act.</p>
             <p>We will not use a link you report to download or open the shared files.</p>
         </div>
-        <p id="who-learns"><strong>Who learns about your report.</strong> We never tell the person who shared the content, or any other user, that a report was made or who made it. Oxfer has no accounts and holds no contact details for the people who share files. The only exception is a referral to NCMEC or to authorities (<a href="#csam">section 5</a> and <a href="#authorities">section 9</a>), which can include your report and, where needed, how to reach you. If the person whose share or address we blocked appeals, our answer explains the decision but does not say whether anyone made a report or who made it.</p>
+        <p id="who-learns"><strong>Who learns about your report.</strong> We never tell the person who shared the content, or any other user, that a report was made or who made it. Oxfer has no accounts and holds no contact details for the people who share files. The only exception is a referral to NCMEC or to authorities (<a href="#csam">section 5</a> and <a href="#authorities">section 9</a>), which can include your report and, where needed, how to reach you. NCMEC is in the United States, so a referral to it transfers your report there (<a href="/privacy#transfers">privacy notice, section 8</a>). If the person whose share or address we blocked appeals, our answer explains the decision but does not say whether anyone made a report or who made it.</p>
         <p>Please include:</p>
         <ul>
             <li>what the problem is, for example the kind of content or behaviour;</li>
-            <li>the Oxfer link. A link looks like <code>https://oxfer.app/#endpoint…&amp;cap=…</code>. We only need the part that starts with <code>endpoint</code> and ends before <code>&amp;cap=</code>. It identifies the share without giving access to the files, so please leave out the <code>&amp;cap=</code> part if you can;</li>
+            <li>the Oxfer link. A link looks like <code>https://oxfer.app/#endpoint…&amp;cap=…</code>. We only need the part that starts with <code>endpoint</code> and ends before <code>&amp;cap=</code>. It identifies the share without giving access to the files, so please leave out the <code>&amp;cap=</code> part if you can. We read the share's endpoint ID from it with an offline tool, without opening the link or contacting the device that shares the files;</li>
             <li>when you received or saw the link, and whether the sender still seemed to be sharing;</li>
             <li>the country you are in, if relevant to the law you are relying on;</li>
             <li>how we can reach you, if you want an answer. You do not have to give your name, but without a way to reach you we cannot tell you the outcome.</li>
@@ -151,6 +165,11 @@
                     <tr>
                         <th scope="row">Intimate images shared without consent</th>
                         <td data-label="What we do">Block the share at our relay (<a href="#intimate-images">section 6</a>).</td>
+                        <td data-label="When">As soon as reasonably practicable, and no later than 48 hours after we receive the report</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Complaint from someone who reported intimate images</th>
+                        <td data-label="What we do">Handle it before other messages and tell you the outcome (<a href="#appeals">section 8</a>).</td>
                         <td data-label="When">Within 48 hours</td>
                     </tr>
                     <tr>
@@ -178,10 +197,10 @@
 
     <section id="blocking" aria-labelledby="blocking-title">
         <h2 id="blocking-title">4. What we can do, and how blocking works</h2>
-        <p>Oxfer does not store files. Files move directly between two devices, encrypted, or through our relay, which only forwards encrypted data. We cannot see, scan or delete files, and we keep no records of users or transfers. What we can do is control access to our relay.</p>
+        <p>Oxfer does not store files. Files move directly between two devices, encrypted, or through our relay, which only forwards encrypted data. We cannot see, scan or delete files, and we keep no records of transfers. What we can do is control access to our relay.</p>
         <ul>
-            <li><strong>Blocking a share.</strong> Every share gets a new endpoint ID, which is part of its link. We can deny that endpoint ID at our relay. Browsers need our relay to connect, so in the browser app this stops new recipients from reaching that share. Because endpoint IDs are new for each share, this block affects only that share. A new share from the same person gets a new endpoint ID.</li>
-            <li><strong>Blocking addresses.</strong> For repeated or serious abuse, we can block IP addresses from using our relay, for a limited time or permanently. Many people can share an IP address, for example on mobile networks or VPNs, so we use address blocks with care and review them on request.</li>
+            <li><strong>Blocking a share.</strong> Every share gets a new endpoint ID, which is part of its link. We read it from the reported link offline, without opening the link, and deny that endpoint ID at our relay. The block stays in force until we lift it, including when we update or restart the relay. Browsers need our relay to connect, so in the browser app this stops new recipients from reaching that share. Because endpoint IDs are new for each share, this block affects only that share. A new share from the same person gets a new endpoint ID.</li>
+            <li><strong>Blocking addresses.</strong> For repeated or serious abuse, we can block IP addresses from using our relay for a set period, normally 30 days, which we can extend or renew if the abuse continues. The block ends automatically when the period is over, and a restart of the relay does not lift it earlier. Many people can share an IP address, for example on mobile networks or VPNs, so we use address blocks with care and review them on request.</li>
             <li><strong>Limits.</strong> Our relay limits how many connections and how much data it accepts.</li>
         </ul>
         <p>A block cannot stop a transfer already running on a direct connection, a direct connection between two desktop apps, or copies that recipients have already saved. The rules users agree to are in our <a href="/terms#acceptable-use">terms of use</a>.</p>
@@ -201,7 +220,15 @@
 
     <section id="intimate-images" aria-labelledby="intimate-images-title">
         <h2 id="intimate-images-title">6. Intimate images shared without consent</h2>
-        <p>Sharing intimate or sexual images or videos of a person without their consent is prohibited, including fake or altered images. If you are the person shown, or you act for them, email us with the link and <strong>URGENT</strong> in the subject. Do not send the images. We block the share at our relay within 48 hours of receiving your report, and sooner when we can.</p>
+        <p>Sharing intimate or sexual images or videos of a person without their consent is prohibited, including fake or altered images. If you are the person shown, or you act for them, email us with <strong>URGENT</strong> in the subject. Do not send the images. In your report, please:</p>
+        <ul>
+            <li>say that the content is an intimate image or video of a person shared without their consent;</li>
+            <li>say whether you are the person shown or act on their behalf;</li>
+            <li>declare that you make the report in good faith and that, to the best of your knowledge and belief, it is true;</li>
+            <li>give the Oxfer link, or the part before <code>&amp;cap=</code>, and any other Oxfer links you know of that share the same images;</li>
+            <li>give contact details, such as an email address, so we can reach you.</li>
+        </ul>
+        <p>This makes your report an intimate image content report under the UK Online Safety Act 2023 (section 20A). We block the share at our relay as soon as reasonably practicable, and no later than 48 hours after we receive your report. We also block the other shares of the same images that you tell us about. If something is missing from your report, we still act on what you give us and may ask you for the rest. If we decide not to block, we tell you why, and you can use the expedited complaints procedure in <a href="#appeals">section 8</a>.</p>
         <p>Oxfer does not store files, so there are no copies for us to find or delete. If the images are also posted on sites that store content, <a href="https://stopncii.org/">StopNCII.org</a> helps adults stop them being shared on participating platforms.</p>
     </section>
 
@@ -224,6 +251,7 @@
         <ul>
             <li><strong>Appeals.</strong> If we blocked your share or your address and you believe we were wrong, email us with <strong>Appeal</strong> in the subject and explain why. We review the decision again promptly. If it was wrong, we lift the block and tell you. Our answer explains the decision, but does not say whether anyone reported you or who did (<a href="#who-learns">section 2</a>).</li>
             <li><strong>Complaints.</strong> You can complain if you think we did not handle a report properly, or did not follow our terms or the law, including our duties on freedom of expression and privacy. Email us with <strong>Complaint</strong> in the subject.</li>
+            <li><strong>Expedited complaints about intimate images.</strong> If you reported intimate images under <a href="#intimate-images">section 6</a>, you can complain about that content or about how we handled your report, for example if the share can still be reached, if we did not act within 48 hours, or if we decided not to act. Email us with <strong>URGENT Complaint</strong> in the subject. We handle these complaints before other messages and tell you the outcome within 48 hours of receiving them.</li>
             <li><strong>Other options.</strong> You can complain about our compliance with the EU Digital Services Act to the Digital Services Coordinator of the EU country where you live. In Romania this is ANCOM (<a href="https://www.ancom.ro/en/category/servicii-digitale-en/">ancom.ro</a>). You can also go to court.</li>
         </ul>
     </section>
@@ -233,16 +261,18 @@
         <h3 id="what-we-hold">9.1 What we hold</h3>
         <ul>
             <li>No files, file names or file contents. Transfers are encrypted between the two devices and we cannot decrypt them.</li>
-            <li>No accounts, and no records of users, share links or transfers.</li>
-            <li>No access logs at our relay. The relay does not log IP addresses, endpoint IDs or connections. It logs only its own operational errors, without the addresses of the devices using it, and these logs are deleted automatically after at most three days. The server's SSH service records our own administrative logins to the server.</li>
-            <li>No request logs of our own for the website. Cloudflare, our hosting provider, keeps its own logs under its policies.</li>
+            <li>No accounts and no records of transfers. We hold share links and endpoint IDs only when a report gives them to us.</li>
+            <li>No access logs at our relay. The relay holds IP addresses and endpoint IDs in memory only while a device is connected, and its logs record no IP addresses, endpoint IDs or connections. It logs only its own operational errors, and these logs are deleted automatically after at most three days. The server's firewall holds the source address of each new connection for at most 60 seconds, to enforce rate limits. The server records our own administrative logins and the source addresses of failed attempts to log in to it, and deletes these records after at most three days.</li>
+            <li>The endpoint IDs and IP addresses we block, in the relay's block lists while the block is in force (<a href="#blocking">section 4</a>).</li>
+            <li>No request logs of our own for the website. Cloudflare, our hosting provider, keeps its own logs under its policies (<a href="/privacy#processing">privacy notice, section 3</a>).</li>
             <li>Correspondence with us, and our record of reports and the actions we took (<a href="#records">section 11</a>).</li>
         </ul>
         <p>Legal process therefore cannot obtain from us any information about past transfers, because none exists. Going forward, we can block a share or an address at our relay (<a href="#blocking">section 4</a>).</p>
         <h3 id="how-to-send">9.2 How to send a request</h3>
         <ul>
             <li><strong>Romanian authorities:</strong> email <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a> or write to the postal address in <a href="#contact-point">section 1</a>.</li>
-            <li><strong>Authorities outside Romania:</strong> please use the legal channels available to you, such as mutual legal assistance (MLAT) or the EU instruments for cross-border cooperation in criminal matters, which reach us through Romanian authorities. You may contact us first at <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a> to check what exists before you start formal process.</li>
+            <li><strong>Judicial authorities of other EU Member States:</strong> European Production Orders and European Preservation Orders under Regulation (EU) 2023/1543 come to us directly, not through Romanian authorities. Where the Regulation's decentralised IT system cannot be used, send them to <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a> or to the postal address in <a href="#contact-point">section 1</a>. We act within the Regulation's deadlines: we preserve the requested data without undue delay, and we produce it within the 10-day period, or within 8 hours in an emergency. <a href="#what-we-hold">Section 9.1</a> explains what we hold.</li>
+            <li><strong>Other authorities outside Romania:</strong> please use the legal channels available to you, such as mutual legal assistance (MLAT) or, within the EU, a European Investigation Order. These reach us through Romanian authorities. You may contact us first at <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a> to check what exists before you start formal process.</li>
             <li><strong>Emergencies:</strong> if there is an imminent risk to someone's life or safety, email us with <strong>URGENT</strong> in the subject. We will help as far as the law allows.</li>
         </ul>
         <p>We check every request for legal validity and answer within the deadline it sets.</p>
@@ -252,7 +282,7 @@
 
     <section id="india" aria-labelledby="india-title">
         <h2 id="india-title">10. Grievance Officer for India</h2>
-        <p>For users in India, the Grievance Officer is the operator:</p>
+        <p>For users in India, our Grievance Officer is:</p>
         <address class="identity">
             <dl>
                 <dt>Name</dt>
