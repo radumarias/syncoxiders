@@ -2,18 +2,21 @@
 // Usage: node verify-deployment.mjs https://oxfer.app/
 // Run with the same P2P_RELAY_URL as the build: the expected
 // Content-Security-Policy-Report-Only is rendered from assets/_headers with it.
+// The expected Cache-Control of each path comes from the same file.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
     CACHE_CONTROL,
     CSP_REPORT_ONLY,
+    NO_TRANSFORM_PATHS,
     PERMISSIONS_POLICY,
     X_FRAME_OPTIONS,
+    cacheControlDirectives,
+    isMainModule,
     renderHeaders,
     securityHeaders,
+    splitDirectives,
 } from "./package-cf-output.mjs";
 
 // Headers that make browsers send reports to a third party. Cloudflare Network
@@ -71,12 +74,13 @@ export function reportingHeaders(headers) {
  * Assert the hosting headers of one response.
  * @param {string} path
  * @param {Headers} headers
- * @param {Record<string, string>} expected `securityHeaders()` of the rendered `_headers`
+ * @param {string} rendered the rendered `_headers` file the deployment should apply
  * @param {{ enforceNoReporting: boolean }} options when false, reporting headers
  *   are returned instead of failing the check
  * @returns {string[]} reporting headers present and not enforced
  */
-export function checkHeaders(path, headers, expected, { enforceNoReporting }) {
+export function checkHeaders(path, headers, rendered, { enforceNoReporting }) {
+    const expected = securityHeaders(rendered);
     const reporting = reportingHeaders(headers);
     if (reporting.length > 0 && enforceNoReporting) {
         assert.fail(
@@ -86,14 +90,23 @@ export function checkHeaders(path, headers, expected, { enforceNoReporting }) {
         );
     }
     const cacheControl = headers.get("cache-control") ?? "";
-    const directives = cacheControl.split(",").map(directive => directive.trim().toLowerCase());
-    for (const directive of CACHE_CONTROL.split(",").map(part => part.trim())) {
+    const directives = splitDirectives(cacheControl);
+    const wanted = cacheControlDirectives(rendered, path);
+    for (const directive of wanted) {
         assert.ok(
             directives.includes(directive),
             `${path}: Cache-Control "${cacheControl}" lacks ${directive}` +
                 (directive === "no-transform"
-                    ? "; without it Cloudflare features such as Email Address Obfuscation may rewrite the response"
+                    ? "; without it Cloudflare features such as Email Address Obfuscation may rewrite the page"
                     : ""),
+        );
+    }
+    // no-transform also stops Cloudflare compressing the response.
+    if (!wanted.includes("no-transform")) {
+        assert.ok(
+            !directives.includes("no-transform"),
+            `${path}: Cache-Control "${cacheControl}" has no-transform, which stops Cloudflare compressing ` +
+                `the response; assets/_headers sets it only for ${NO_TRANSFORM_PATHS.join(", ")}`,
         );
     }
     if (path === "/sw.js") {
@@ -111,10 +124,31 @@ export function checkHeaders(path, headers, expected, { enforceNoReporting }) {
     return enforceNoReporting ? [] : reporting;
 }
 
+/**
+ * Assert that a rendered `_headers` file gives every checked path the `/*`
+ * Cache-Control, and `no-transform` exactly on the legal pages.
+ * @param {string} rendered
+ */
+export function checkLocalCacheControl(rendered) {
+    for (const [path] of checks) {
+        const directives = cacheControlDirectives(rendered, path);
+        for (const directive of splitDirectives(CACHE_CONTROL)) {
+            assert.ok(directives.includes(directive), `assets/_headers: ${path} lacks Cache-Control ${directive}`);
+        }
+        assert.equal(
+            directives.includes("no-transform"),
+            NO_TRANSFORM_PATHS.includes(path),
+            `assets/_headers: no-transform belongs on ${NO_TRANSFORM_PATHS.join(", ")} only (${path})`,
+        );
+    }
+}
+
+export const checkedPaths = checks.map(([path]) => path);
+
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function verifyOnce(origin, expected, enforceNoReporting) {
+async function verifyOnce(origin, rendered, enforceNoReporting) {
     const unenforced = new Set();
     for (const [path, file, mime, canonical = false] of checks) {
         const response = await fetch(new URL(path, origin), {
@@ -129,7 +163,7 @@ async function verifyOnce(origin, expected, enforceNoReporting) {
             assert.equal(response.redirected, false, `${path}: served without a redirect (got ${response.url})`);
         }
         assert.ok(response.headers.get("content-type")?.includes(mime), `${path}: MIME type`);
-        for (const name of checkHeaders(path, response.headers, expected, { enforceNoReporting })) {
+        for (const name of checkHeaders(path, response.headers, rendered, { enforceNoReporting })) {
             unenforced.add(name);
         }
         // Also catches any Cloudflare feature that rewrites HTML.
@@ -153,18 +187,21 @@ async function main(argument) {
     assert.equal(origin.protocol, "https:", "deployment must use HTTPS");
     assert.equal(origin.href, `${origin.origin}/`, "pass an origin, not a path or share link");
 
-    const expected = securityHeaders(
-        renderHeaders(await readFile(new URL("./assets/_headers", import.meta.url), "utf8"), process.env.P2P_RELAY_URL),
+    const rendered = renderHeaders(
+        await readFile(new URL("./assets/_headers", import.meta.url), "utf8"),
+        process.env.P2P_RELAY_URL,
     );
+    const expected = securityHeaders(rendered);
     assert.equal(expected["Permissions-Policy"], PERMISSIONS_POLICY, "assets/_headers: Permissions-Policy");
     assert.equal(expected["X-Frame-Options"], X_FRAME_OPTIONS, "assets/_headers: X-Frame-Options");
+    checkLocalCacheControl(rendered);
     const enforceNoReporting = operatorControlsZone(origin.hostname);
 
     let lastError;
     let unenforced = [];
     for (let attempt = 1; attempt <= 10; attempt += 1) {
         try {
-            unenforced = await verifyOnce(origin, expected, enforceNoReporting);
+            unenforced = await verifyOnce(origin, rendered, enforceNoReporting);
             lastError = undefined;
             break;
         } catch (error) {
@@ -187,6 +224,6 @@ async function main(argument) {
     }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
     await main(process.argv[2]);
 }

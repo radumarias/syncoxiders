@@ -1,15 +1,22 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
     CACHE_CONTROL,
     CSP_REPORT_ONLY,
     N0_CONNECT_SRC,
+    NO_TRANSFORM_PATHS,
+    OPERATOR_RELAY,
     PERMISSIONS_POLICY,
     RELAY_CONNECT_SRC_TOKEN,
     X_FRAME_OPTIONS,
+    cacheControlDirectives,
+    headerRuleMatches,
+    listsRelay,
     packageCfOutput,
     parseHeaders,
     parseRelayList,
@@ -19,7 +26,14 @@ import {
     securityHeaders,
     workerConfig,
 } from "../package-cf-output.mjs";
-import { NEL_REMEDY, checkHeaders, operatorControlsZone, reportingHeaders } from "../verify-deployment.mjs";
+import {
+    NEL_REMEDY,
+    checkHeaders,
+    checkLocalCacheControl,
+    checkedPaths,
+    operatorControlsZone,
+    reportingHeaders,
+} from "../verify-deployment.mjs";
 
 const read = path => readFile(new URL(path, import.meta.url), "utf8");
 
@@ -54,8 +68,8 @@ test("the crate has no Wrangler config; Cloudflare hosting is cf-only", async ()
     assert.equal("wrangler" in (pkg.devDependencies ?? {}), false);
 });
 
-test("an unset, empty or whitespace-only P2P_RELAY_URL keeps n0's relays", () => {
-    for (const value of [undefined, null, "", " ", "\t\n "]) {
+test("an unset, empty or ASCII-whitespace-only P2P_RELAY_URL keeps n0's relays", () => {
+    for (const value of [undefined, null, "", " ", "\t\n ", "\r\n\v\f"]) {
         assert.deepEqual(parseRelayList(value), [], JSON.stringify(value));
         assert.equal(relayConnectSources(value), N0_CONNECT_SRC);
     }
@@ -114,14 +128,74 @@ test("malformed relay lists are rejected with the entry position and reason", ()
     assert.throws(() => parseRelayList(42), TypeError);
 });
 
+// src/node.rs trims with Rust's str::trim (Unicode White_Space), JS trim() strips
+// a different set that includes U+FEFF. A value one parser accepts and the other
+// rejects would make the wasm fall back to n0's relays at run time, so this
+// parser rejects everything outside printable ASCII and trims only spaces.
+test("relay lists with a character outside printable ASCII fail, naming invisible ones", () => {
+    const cases = [
+        ["\uFEFFhttps://relay.oxfer.app", 1, "U+FEFF"],
+        ["https://relay.oxfer.app\uFEFF", 1, "U+FEFF"],
+        ["https://a.example,\uFEFFhttps://relay.oxfer.app", 2, "U+FEFF"],
+        ["\uFEFF", 1, "U+FEFF"],
+        ["\u00A0https://relay.oxfer.app", 1, "U+00A0"],
+        ["https://relay.oxfer.app,\u00A0", 2, "U+00A0"],
+        ["https://relay\u200B.oxfer.app", 1, "U+200B"],
+        ["\u200Bhttps://relay.oxfer.app", 1, "U+200B"],
+        ["https://relay.oxfer.app\n", 1, "U+000A"],
+        ["https://a.example,\thttps://relay.oxfer.app", 2, "U+0009"],
+        ["https://a.example\u0085", 1, "U+0085"],
+        ["https://a.example,https://b.example,https://c.example\u2028", 3, "U+2028"],
+        ["https://relay.oxfer.app\u{E0020}", 1, "U+E0020"],
+    ];
+    for (const [value, entry, code] of cases) {
+        const label = JSON.stringify(value);
+        assert.throws(
+            () => parseRelayList(value),
+            new RegExp(`^Error: P2P_RELAY_URL entry ${entry} contains the invisible character ${code.replace("+", "\\+")}; retype the value$`),
+            label,
+        );
+        assert.throws(() => relayConnectSources(value), /invisible character/, label);
+        assert.throws(() => renderHeaders(minimalHeaders, value), /invisible character/, label);
+        assert.throws(() => listsRelay(value, OPERATOR_RELAY), /invisible character/, label);
+    }
+    // A visible non-ASCII character is not repeated: it could be part of a credential.
+    for (const value of ["https://relé.oxfer.app", "https://user:sécret@relay.oxfer.app", "https://relay.oxfer.app/ü"]) {
+        assert.throws(
+            () => parseRelayList(value),
+            error => error.message === "P2P_RELAY_URL entry 1 contains a character outside printable ASCII",
+            value,
+        );
+    }
+    // Spaces around entries are still trimmed, exactly as src/node.rs does.
+    assert.equal(relayConnectSources("  https://relay.oxfer.app ,https://b.example  "),
+        "https://relay.oxfer.app wss://relay.oxfer.app https://b.example wss://b.example");
+});
+
+test("listsRelay finds the operator relay in a relay list", () => {
+    assert.equal(OPERATOR_RELAY, "https://relay.oxfer.app");
+    for (const value of [
+        "https://relay.oxfer.app",
+        "https://relay.oxfer.app/",
+        "HTTPS://Relay.Oxfer.App:443",
+        " https://eu.relay.example , https://relay.oxfer.app ",
+    ]) {
+        assert.equal(listsRelay(value, OPERATOR_RELAY), true, value);
+    }
+    for (const value of [undefined, "", "  ", "https://eu.relay.example", "http://relay.oxfer.app", "https://relay.oxfer.app:8443", "https://relay.oxfer.app.example"]) {
+        assert.equal(listsRelay(value, OPERATOR_RELAY), false, String(value));
+    }
+    assert.throws(() => listsRelay("https://relay.oxfer.app/relay", OPERATOR_RELAY), /path/);
+});
+
 test("assets/_headers carries the report-only CSP, Permissions-Policy and X-Frame-Options", async () => {
     const source = await read("../assets/_headers");
     assert.equal(source.split(RELAY_CONNECT_SRC_TOKEN).length, 2, "exactly one relay token");
     const rules = parseHeaders(source);
-    assert.deepEqual(rules.map(([pattern]) => pattern), ["/*", "/sw.js"]);
+    assert.deepEqual(rules.map(([pattern]) => pattern), ["/*", "/sw.js", ...NO_TRANSFORM_PATHS]);
     const all = Object.fromEntries(rules[0][1]);
     assert.equal(all["Cache-Control"], CACHE_CONTROL);
-    assert.equal(CACHE_CONTROL, "public, max-age=0, must-revalidate, no-transform");
+    assert.equal(CACHE_CONTROL, "public, max-age=0, must-revalidate");
     assert.equal(all["Referrer-Policy"], "no-referrer");
     assert.equal(all["X-Content-Type-Options"], "nosniff");
     assert.equal(all[CSP_REPORT_ONLY], expectedCsp(RELAY_CONNECT_SRC_TOKEN));
@@ -135,12 +209,51 @@ test("assets/_headers carries the report-only CSP, Permissions-Policy and X-Fram
     // Enforcement waits for the manual cross-browser matrix (plan B1).
     assert.equal("Content-Security-Policy" in all, false);
     assert.deepEqual(rules[1][1], [["Cache-Control", "no-cache, no-store, must-revalidate"]]);
-    // /sw.js also matches /*, and Cloudflare comma-joins a header that several
-    // matching rules set, so the service worker gets no-transform and no-store.
-    const sw = `${all["Cache-Control"]}, ${rules[1][1][0][1]}`.split(", ");
-    for (const directive of ["no-transform", "no-store", "no-cache"]) {
-        assert.ok(sw.includes(directive), directive);
+    for (const [, headers] of rules.slice(2)) {
+        assert.deepEqual(headers, [["Cache-Control", "no-transform"]]);
     }
+});
+
+// Cloudflare joins the values of every matching rule with a comma
+// (https://developers.cloudflare.com/workers/static-assets/headers/).
+test("assets/_headers sets no-transform on the legal pages only, so the wasm and JS stay compressed", async () => {
+    const rendered = renderHeaders(await read("../assets/_headers"), "");
+    assert.deepEqual(NO_TRANSFORM_PATHS, ["/privacy", "/terms", "/abuse"]);
+    checkLocalCacheControl(rendered);
+    for (const path of NO_TRANSFORM_PATHS) {
+        assert.deepEqual(cacheControlDirectives(rendered, path), ["public", "max-age=0", "must-revalidate", "no-transform"], path);
+    }
+    for (const path of ["/", "/diags", "/p2p-transfer.js", "/p2p-transfer_bg.wasm", "/theme.html", "/assets/app-init.js", "/privacy.html", "/privacy/"]) {
+        assert.deepEqual(cacheControlDirectives(rendered, path), ["public", "max-age=0", "must-revalidate"], path);
+    }
+    assert.deepEqual(cacheControlDirectives(rendered, "/sw.js"), ["public", "max-age=0", "must-revalidate", "no-cache", "no-store"]);
+    for (const path of NO_TRANSFORM_PATHS) {
+        assert.ok(checkedPaths.includes(path), `verify-deployment.mjs checks ${path}`);
+    }
+    assert.throws(
+        () => checkLocalCacheControl(`${rendered}\n/assets/*\n  Cache-Control: no-transform\n`),
+        /no-transform belongs on \/privacy, \/terms, \/abuse only \(\/assets\/legal\.css\)/,
+    );
+    assert.throws(() => checkLocalCacheControl(rendered.replace("\n/abuse\n  Cache-Control: no-transform", "")), /\(\/abuse\)/);
+});
+
+test("headerRuleMatches follows Cloudflare's splat and placeholder rules", () => {
+    for (const [pattern, path, expected] of [
+        ["/*", "/", true],
+        ["/*", "/assets/app-init.js", true],
+        ["/sw.js", "/sw.js", true],
+        ["/sw.js", "/swxjs", false],
+        ["/privacy", "/privacy", true],
+        ["/privacy", "/privacy.html", false],
+        ["/privacy", "/privacy/", false],
+        ["/assets/*", "/assets/legal.css", true],
+        ["/assets/*", "/privacy", false],
+        ["/files/:name/raw", "/files/a/raw", true],
+        ["/files/:name/raw", "/files/a/b/raw", false],
+    ]) {
+        assert.equal(headerRuleMatches(pattern, path), expected, `${pattern} ${path}`);
+    }
+    assert.throws(() => headerRuleMatches("https://oxfer.app/*", "/"), /only path patterns/);
 });
 
 test("renderHeaders fills the relay sources for the n0 default and a custom relay", async () => {
@@ -298,11 +411,17 @@ test("production packaging keeps custom domains so cf deploy cannot drop oxfer.a
     }
 });
 
-// The headers package-cf-output.mjs renders for the n0 default, as served.
+// The headers package-cf-output.mjs renders for the n0 default, as served:
+// Cloudflare joins the Cache-Control values of every matching rule.
 async function servedHeaders(path, extra = {}) {
-    const expected = securityHeaders(renderHeaders(await read("../assets/_headers"), ""));
+    const rendered = renderHeaders(await read("../assets/_headers"), "");
+    const expected = securityHeaders(rendered);
+    const cacheControl = parseHeaders(rendered)
+        .filter(([pattern]) => headerRuleMatches(pattern, path))
+        .flatMap(([, headers]) => headers.filter(([name]) => name === "Cache-Control").map(([, value]) => value))
+        .join(", ");
     const headers = new Headers({
-        "Cache-Control": path === "/sw.js" ? `${CACHE_CONTROL}, no-cache, no-store, must-revalidate` : CACHE_CONTROL,
+        "Cache-Control": cacheControl,
         "Referrer-Policy": "no-referrer",
         "X-Content-Type-Options": "nosniff",
         "Permissions-Policy": PERMISSIONS_POLICY,
@@ -310,7 +429,7 @@ async function servedHeaders(path, extra = {}) {
         [CSP_REPORT_ONLY]: expected[CSP_REPORT_ONLY],
         ...extra,
     });
-    return { expected, headers };
+    return { rendered, headers };
 }
 
 // As served by oxfer.app and oxfer.42dev.workers.dev on 30 September 2026.
@@ -320,17 +439,21 @@ const nelHeaders = {
 };
 
 test("verify-deployment accepts the headers assets/_headers produces", async () => {
-    for (const path of ["/", "/privacy", "/sw.js"]) {
-        const { expected, headers } = await servedHeaders(path);
-        assert.deepEqual(checkHeaders(path, headers, expected, { enforceNoReporting: true }), []);
+    for (const path of checkedPaths) {
+        const { rendered, headers } = await servedHeaders(path);
+        assert.deepEqual(checkHeaders(path, headers, rendered, { enforceNoReporting: true }), [], path);
     }
+    const legal = (await servedHeaders("/privacy")).headers.get("cache-control");
+    assert.equal(legal, "public, max-age=0, must-revalidate, no-transform");
+    assert.equal((await servedHeaders("/sw.js")).headers.get("cache-control"),
+        "public, max-age=0, must-revalidate, no-cache, no-store, must-revalidate");
 });
 
 test("verify-deployment fails while Cloudflare Network Error Logging is on", async () => {
-    const { expected, headers } = await servedHeaders("/privacy", nelHeaders);
+    const { rendered, headers } = await servedHeaders("/privacy", nelHeaders);
     assert.deepEqual(reportingHeaders(headers), ["NEL", "Report-To"]);
     assert.throws(
-        () => checkHeaders("/privacy", headers, expected, { enforceNoReporting: true }),
+        () => checkHeaders("/privacy", headers, rendered, { enforceNoReporting: true }),
         error =>
             error.message.startsWith("/privacy: the response carries NEL and Report-To headers") &&
             error.message.includes("privacy notice does not describe") &&
@@ -340,7 +463,7 @@ test("verify-deployment fails while Cloudflare Network Error Logging is on", asy
     assert.match(NEL_REMEDY, /PATCH \/zones\/\{zone_id\}\/settings\/nel with \{"value":\{"enabled":false\}\}/);
     for (const [name, value] of Object.entries({ nel: nelHeaders.NEL, "report-to": "{}", "Reporting-Endpoints": 'default="https://r.example"' })) {
         const single = (await servedHeaders("/", { [name]: value })).headers;
-        assert.throws(() => checkHeaders("/", single, expected, { enforceNoReporting: true }), /Network Error Logging/, name);
+        assert.throws(() => checkHeaders("/", single, rendered, { enforceNoReporting: true }), /Network Error Logging/, name);
     }
 });
 
@@ -352,27 +475,98 @@ test("verify-deployment only reports NEL on workers.dev, outside the oxfer.app z
         assert.equal(operatorControlsZone(host), false, host);
     }
     assert.equal(operatorControlsZone("workers.dev.example"), true);
-    const { expected, headers } = await servedHeaders("/", nelHeaders);
-    assert.deepEqual(checkHeaders("/", headers, expected, { enforceNoReporting: false }), ["NEL", "Report-To"]);
+    const { rendered, headers } = await servedHeaders("/", nelHeaders);
+    assert.deepEqual(checkHeaders("/", headers, rendered, { enforceNoReporting: false }), ["NEL", "Report-To"]);
 });
 
-test("verify-deployment requires no-transform on every path and no-store on /sw.js", async () => {
-    for (const path of ["/", "/sw.js"]) {
-        const { expected } = await servedHeaders(path);
-        const old = (await servedHeaders(path, {
-            "Cache-Control": path === "/sw.js"
-                ? "public, max-age=0, must-revalidate, no-cache, no-store, must-revalidate"
-                : "public, max-age=0, must-revalidate",
-        })).headers;
+test("verify-deployment requires no-transform on the legal pages, nowhere else, and no-store on /sw.js", async () => {
+    for (const path of NO_TRANSFORM_PATHS) {
+        const { rendered } = await servedHeaders(path);
+        const old = (await servedHeaders(path, { "Cache-Control": CACHE_CONTROL })).headers;
         assert.throws(
-            () => checkHeaders(path, old, expected, { enforceNoReporting: true }),
-            /lacks no-transform; without it Cloudflare features such as Email Address Obfuscation/,
+            () => checkHeaders(path, old, rendered, { enforceNoReporting: true }),
+            /lacks no-transform; without it Cloudflare features such as Email Address Obfuscation may rewrite the page/,
+            path,
         );
     }
-    const { expected, headers } = await servedHeaders("/sw.js", { "Cache-Control": CACHE_CONTROL });
-    assert.throws(() => checkHeaders("/sw.js", headers, expected, { enforceNoReporting: true }), /no-store/);
+    // The previous deployment sent no-transform everywhere, which stops compression.
+    for (const path of ["/", "/p2p-transfer_bg.wasm", "/p2p-transfer.js", "/sw.js"]) {
+        const { rendered, headers } = await servedHeaders(path);
+        const everywhere = new Headers(headers);
+        everywhere.set("Cache-Control", `${headers.get("cache-control")}, no-transform`);
+        assert.throws(
+            () => checkHeaders(path, everywhere, rendered, { enforceNoReporting: true }),
+            /has no-transform, which stops Cloudflare compressing the response; assets\/_headers sets it only for \/privacy, \/terms, \/abuse/,
+            path,
+        );
+    }
+    for (const path of ["/", "/privacy"]) {
+        const { rendered, headers } = await servedHeaders(path);
+        const bare = new Headers(headers);
+        bare.set("Cache-Control", "max-age=0, must-revalidate, no-transform");
+        assert.throws(() => checkHeaders(path, bare, rendered, { enforceNoReporting: true }), /lacks public/, path);
+    }
+    const { rendered, headers } = await servedHeaders("/sw.js", { "Cache-Control": CACHE_CONTROL });
+    assert.throws(() => checkHeaders("/sw.js", headers, rendered, { enforceNoReporting: true }), /no-store|no-cache/);
     const relay = (await servedHeaders("/", { [CSP_REPORT_ONLY]: expectedCsp("https://relay.oxfer.app wss://relay.oxfer.app") })).headers;
-    assert.throws(() => checkHeaders("/", relay, expected, { enforceNoReporting: true }), /check P2P_RELAY_URL/);
+    assert.throws(() => checkHeaders("/", relay, rendered, { enforceNoReporting: true }), /check P2P_RELAY_URL/);
+});
+
+// Node resolves symlinks in import.meta.url but not in process.argv[1]; the CLI
+// entry checks compare real paths so a symlinked checkout still runs them.
+test("the CLIs run when started through a symlinked path", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "oxfer-link-"));
+    const crate = fileURLToPath(new URL("..", import.meta.url));
+    try {
+        const link = join(dir, "p2p-transfer");
+        await symlink(crate, link, "dir");
+        const run = (script, args, env = {}) => {
+            const { P2P_RELAY_URL: _unset, ...base } = process.env;
+            return spawnSync(process.execPath, [join(link, script), ...args], {
+                cwd: dir,
+                encoding: "utf8",
+                env: { ...base, ...env },
+            });
+        };
+        const usage = run("verify-deployment.mjs", []);
+        assert.equal(usage.status, 1, usage.stderr);
+        assert.match(usage.stderr, /usage: node verify-deployment\.mjs/);
+        const bad = run("package-cf-output.mjs", ["--check-relay"], { P2P_RELAY_URL: "bad url" });
+        assert.equal(bad.status, 1);
+        assert.match(bad.stderr, /^package-cf-output: P2P_RELAY_URL entry 1 contains whitespace$/m);
+        const bom = run("package-cf-output.mjs", ["--check-relay"], { P2P_RELAY_URL: "\uFEFFhttps://relay.oxfer.app" });
+        assert.equal(bom.status, 1);
+        assert.match(bom.stderr, /entry 1 contains the invisible character U\+FEFF/);
+        const good = run("package-cf-output.mjs", ["--check-relay"], { P2P_RELAY_URL: "https://relay.oxfer.app" });
+        assert.equal(good.status, 0, good.stderr);
+        assert.equal(good.stdout, "connect-src relay sources: https://relay.oxfer.app wss://relay.oxfer.app\n");
+    } finally {
+        await rm(dir, { recursive: true, force: true });
+    }
+});
+
+test("--check-relay --require-relay fails unless the list includes that relay", () => {
+    const script = fileURLToPath(new URL("../package-cf-output.mjs", import.meta.url));
+    const run = value => {
+        const { P2P_RELAY_URL: _unset, ...env } = process.env;
+        if (value !== undefined) {
+            env.P2P_RELAY_URL = value;
+        }
+        return spawnSync(process.execPath, [script, "--check-relay", `--require-relay=${OPERATOR_RELAY}`], { encoding: "utf8", env });
+    };
+    for (const value of ["https://relay.oxfer.app", "https://eu.relay.example,https://relay.oxfer.app/"]) {
+        assert.equal(run(value).status, 0, value);
+    }
+    for (const [value, message] of [
+        [undefined, /P2P_RELAY_URL is not set, so the build uses n0's public relays, not https:\/\/relay\.oxfer\.app/],
+        ["", /is not set/],
+        ["https://eu.relay.example", /P2P_RELAY_URL does not list https:\/\/relay\.oxfer\.app/],
+        ["\uFEFFhttps://relay.oxfer.app", /invisible character U\+FEFF/],
+    ]) {
+        const result = run(value);
+        assert.equal(result.status, 1, String(value));
+        assert.match(result.stderr, message, String(value));
+    }
 });
 
 test("CI runs every node and browser suite that check.sh runs", async () => {

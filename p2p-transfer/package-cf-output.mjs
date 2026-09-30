@@ -5,8 +5,9 @@
 // `assets/_headers`): the `{{RELAY_CONNECT_SRC}}` token in the
 // Content-Security-Policy becomes the relay origins the wasm build talks to,
 // taken from the same compile-time `P2P_RELAY_URL` that `src/node.rs` reads.
+import { realpathSync } from "node:fs";
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -27,11 +28,20 @@ export const RELAY_CONNECT_SRC_TOKEN = "{{RELAY_CONNECT_SRC}}";
 // n0's public relays (*.relay.n0.iroh.link, HTTPS latency probes) and pkarr
 // discovery at https://dns.iroh.link/pkarr, used while P2P_RELAY_URL is unset.
 export const N0_CONNECT_SRC = "https://*.iroh.link wss://*.iroh.link";
-// Exact values `verify-deployment.mjs` expects on every response.
-// `no-transform` stops Cloudflare features that rewrite responses, such as Email
-// Address Obfuscation, so the served bytes stay those of the release build.
-// `/sw.js` also matches `/*`; Cloudflare comma-joins its no-store rule onto this.
-export const CACHE_CONTROL = "public, max-age=0, must-revalidate, no-transform";
+// The `/*` Cache-Control that `verify-deployment.mjs` expects on every response.
+// Other rules add to it: Cloudflare joins the values of every matching rule with
+// a comma, so `/sw.js` gets its no-store rule appended.
+export const CACHE_CONTROL = "public, max-age=0, must-revalidate";
+// The legal pages add `no-transform`, which stops Cloudflare features that
+// rewrite responses, such as Email Address Obfuscation of their contact
+// addresses, so they are served byte for byte as built. It is set nowhere else
+// because it also stops Cloudflare compressing responses, and the wasm and
+// JavaScript should stay compressed. Only the legal pages contain addresses.
+// https://developers.cloudflare.com/waf/tools/scrape-shield/email-address-obfuscation/
+// https://developers.cloudflare.com/speed/optimization/content/compression/
+export const NO_TRANSFORM_PATHS = ["/privacy", "/terms", "/abuse"];
+// The operator's relay, which the filled legal pages describe.
+export const OPERATOR_RELAY = "https://relay.oxfer.app";
 export const PERMISSIONS_POLICY =
     "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), midi=(), screen-wake-lock=(self)";
 export const X_FRAME_OPTIONS = "SAMEORIGIN";
@@ -41,11 +51,31 @@ const HEADERS_MAX_LINE = 2000;
 const HEADERS_MAX_RULES = 100;
 // Only names a CSP host-source can express: no IPv6 literal, no trailing dot.
 const CSP_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*$/;
+// A value of only ASCII whitespace means unset, as in build-web.sh; src/node.rs
+// trims it too.
+const UNSET_RELAY = /^[\t\n\v\f\r ]*$/;
+// Any other character outside printable ASCII fails the build. JS `trim` and
+// Rust `str::trim` strip different characters (JS strips U+FEFF, Rust keeps
+// it and then falls back to n0's relays at run time), so this parser must not
+// trim anything the Rust one keeps.
+const NOT_PRINTABLE_ASCII = /[^\x20-\x7E]/u;
+// Characters that cannot be seen; the error names them by code point.
+const INVISIBLE = /^[\p{Cc}\p{Cf}\p{Z}]$/u;
 
 // Name the entry by position only: a mistyped value may hold a credential, and
 // CI logs are not the place to repeat it (src/node.rs does the same).
 function relayError(index, reason) {
     return new Error(`P2P_RELAY_URL entry ${index + 1} ${reason}`);
+}
+
+function nonAsciiError(value, offset) {
+    const index = value.slice(0, offset).split(",").length - 1;
+    const code = value.codePointAt(offset);
+    // A visible character could be part of a mistyped credential: do not repeat it.
+    const reason = INVISIBLE.test(String.fromCodePoint(code))
+        ? `contains the invisible character U+${code.toString(16).toUpperCase().padStart(4, "0")}; retype the value`
+        : "contains a character outside printable ASCII";
+    return relayError(index, reason);
 }
 
 function parseRelayEntry(entry, index) {
@@ -84,8 +114,9 @@ function parseRelayEntry(entry, index) {
 
 /**
  * Parse a comma-separated `P2P_RELAY_URL` value. `undefined`, `null`, an empty
- * string and whitespace-only strings mean "unset" (n0's default relays) and
- * return `[]`. Otherwise every entry must be `http(s)://host[:port][/]`.
+ * string and strings of only ASCII whitespace mean "unset" (n0's default
+ * relays) and return `[]`. Otherwise the value must be printable ASCII, and
+ * every entry `http(s)://host[:port][/]`, optionally surrounded by spaces.
  * @param {string | undefined | null} value
  * @returns {URL[]}
  */
@@ -96,10 +127,24 @@ export function parseRelayList(value) {
     if (typeof value !== "string") {
         throw new TypeError("P2P_RELAY_URL must be a string");
     }
-    if (value.trim() === "") {
+    if (UNSET_RELAY.test(value)) {
         return [];
     }
+    const offset = value.search(NOT_PRINTABLE_ASCII);
+    if (offset >= 0) {
+        throw nonAsciiError(value, offset);
+    }
     return value.split(",").map((entry, index) => parseRelayEntry(entry.trim(), index));
+}
+
+/**
+ * Whether a `P2P_RELAY_URL` value lists the relay at `origin`.
+ * @param {string | undefined | null} value
+ * @param {string} origin such as `https://relay.oxfer.app`
+ */
+export function listsRelay(value, origin) {
+    const wanted = new URL(origin).origin;
+    return parseRelayList(value).some(url => url.origin === wanted);
 }
 
 /**
@@ -147,6 +192,62 @@ export function parseHeaders(text) {
         rules.at(-1)[1].push([match[1], match[2]]);
     }
     return rules;
+}
+
+/**
+ * Whether a `_headers` URL pattern matches a request path. Cloudflare matches
+ * rules against the request URL: `*` (one per pattern) matches anything, and a
+ * `:name` placeholder matches one path segment.
+ * @param {string} pattern
+ * @param {string} path
+ */
+export function headerRuleMatches(pattern, path) {
+    if (!pattern.startsWith("/")) {
+        throw new Error(`_headers rule ${pattern}: only path patterns are supported here`);
+    }
+    const source = pattern
+        .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+        .replace(/\*/g, ".*")
+        .replace(/:[A-Za-z]\w*/g, "[^/]+");
+    return new RegExp(`^${source}$`).test(path);
+}
+
+/**
+ * The Cache-Control directives Cloudflare serves for `path`: the values of
+ * every matching rule, joined in file order, lower-cased and without repeats.
+ * @param {string} rendered a rendered `_headers` file
+ * @param {string} path
+ * @returns {string[]}
+ */
+export function cacheControlDirectives(rendered, path) {
+    const directives = [];
+    for (const [pattern, headers] of parseHeaders(rendered)) {
+        if (!headerRuleMatches(pattern, path)) {
+            continue;
+        }
+        for (const [name, value] of headers) {
+            if (name.toLowerCase() !== "cache-control") {
+                continue;
+            }
+            for (const directive of splitDirectives(value)) {
+                if (!directives.includes(directive)) {
+                    directives.push(directive);
+                }
+            }
+        }
+    }
+    return directives;
+}
+
+/**
+ * @param {string} value a Cache-Control header value
+ * @returns {string[]} its directives, trimmed and lower-cased
+ */
+export function splitDirectives(value) {
+    return value
+        .split(",")
+        .map(directive => directive.trim().toLowerCase())
+        .filter(directive => directive !== "");
 }
 
 /**
@@ -241,11 +342,41 @@ export async function packageCfOutput(options = {}) {
     return { assets, config, headers };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/**
+ * Whether the module at `moduleUrl` is the script Node was started with.
+ * Compares real paths: Node resolves symlinks in `import.meta.url` but not in
+ * `process.argv[1]`, so a symlinked checkout would otherwise skip the CLI.
+ * @param {string} moduleUrl `import.meta.url` of the module
+ */
+export function isMainModule(moduleUrl) {
+    if (!process.argv[1]) {
+        return false;
+    }
+    try {
+        return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(moduleUrl));
+    } catch {
+        return false;
+    }
+}
+
+if (isMainModule(import.meta.url)) {
     try {
         if (process.argv.includes("--check-relay")) {
-            // build-web.sh validates P2P_RELAY_URL before the Trunk build.
-            console.log(`connect-src relay sources: ${relayConnectSources(process.env.P2P_RELAY_URL)}`);
+            // build-web.sh validates P2P_RELAY_URL before the Trunk build, and
+            // with --require-relay=ORIGIN checks that the list includes ORIGIN.
+            const value = process.env.P2P_RELAY_URL;
+            console.log(`connect-src relay sources: ${relayConnectSources(value)}`);
+            const required = process.argv.find(argument => argument.startsWith("--require-relay="));
+            if (required) {
+                const origin = required.slice("--require-relay=".length);
+                if (!listsRelay(value, origin)) {
+                    throw new Error(
+                        parseRelayList(value).length === 0
+                            ? `P2P_RELAY_URL is not set, so the build uses n0's public relays, not ${origin}`
+                            : `P2P_RELAY_URL does not list ${origin}`,
+                    );
+                }
+            }
         } else {
             await packageCfOutput({
                 includeDomains: !process.argv.includes("--no-domains"),

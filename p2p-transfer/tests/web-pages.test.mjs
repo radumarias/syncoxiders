@@ -2,12 +2,14 @@
 // script-src 'self' 'wasm-unsafe-eval' allows no inline script, no inline event
 // handler attribute, no javascript: URL and no cross-origin subresource.
 import assert from "node:assert/strict";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import vm from "node:vm";
+import { OPERATOR_RELAY } from "../package-cf-output.mjs";
 
 const read = path => readFile(new URL(path, import.meta.url), "utf8");
 const crateFile = path => new URL(`../${path}`, import.meta.url);
@@ -284,15 +286,86 @@ test("boot.js #dev clears workers and caches, then restores the captured URL onc
     assert.deepEqual(fresh.events, [["getRegistrations"], ["unregister"], ["deleteCache", "oxfer-v3"]]);
 });
 
-test("build-web.sh's relay go-live guard keys on the relay the legal pages describe", async () => {
+/** The lines of build-web.sh between `# BEGIN name` and `# END name`. */
+function block(build, name) {
+    const begin = build.indexOf(`\n# BEGIN ${name}`);
+    const end = build.indexOf(`\n# END ${name}\n`);
+    assert.ok(begin >= 0 && end > begin, `build-web.sh has a "${name}" block`);
+    return build.slice(begin + 1, end + 1);
+}
+
+// Runs build-web.sh's relay-list check and legal-page guards (not the Trunk
+// build) in a scratch directory holding dist/ copies of the legal pages.
+test("build-web.sh packages filled legal pages only with a relay list that includes relay.oxfer.app", async () => {
     const build = await read("../build-web.sh");
-    // Filled pages that name relay.oxfer.app must not ship in a build for n0's relays.
-    assert.match(build, /"\$placeholders" -eq 0 && -z "\$\{P2P_RELAY_URL\+set\}"/);
-    assert.match(build, /grep -q -F 'relay\.oxfer\.app' dist\/privacy\.html dist\/terms\.html dist\/abuse\.html/);
-    assert.match(build, /set P2P_RELAY_URL or edit the pages to describe the relay in use/);
+    assert.match(build, new RegExp(`^operator_relay=${OPERATOR_RELAY.replaceAll(".", "\\.")}$`, "m"));
+    const script = `set -euo pipefail\n${block(build, "relay-list check")}${block(build, "legal-page guards")}echo "guards passed"\n`;
     const privacy = await read("../privacy.html");
     assert.ok(
         privacy.replace(/<!--[\s\S]*?-->/g, "").includes("relay.oxfer.app"),
         "privacy.html no longer names relay.oxfer.app in its text; update the relay guard in build-web.sh to match the relay it describes",
     );
+    const dir = await mkdtemp(join(tmpdir(), "oxfer-build-guards-"));
+    try {
+        await symlink(fileURLToPath(crateFile("package-cf-output.mjs")), join(dir, "package-cf-output.mjs"));
+        await writeFile(join(dir, "guards.sh"), script);
+        const pages = Object.fromEntries(await Promise.all(legalPages.map(async page => [page, await read(`../${page}`)])));
+        const run = async ({ filled, relay, allow = false }) => {
+            await rm(join(dir, "dist"), { recursive: true, force: true });
+            await mkdir(join(dir, "dist"));
+            for (const [page, html] of Object.entries(pages)) {
+                await writeFile(join(dir, "dist", page), filled ? html.replace(/\[\[[A-Z][A-Z0-9_]*\]\]/g, "Filled") : html);
+            }
+            const { P2P_RELAY_URL: _relay, OXFER_ALLOW_PLACEHOLDERS: _allow, ...env } = process.env;
+            if (relay !== undefined) env.P2P_RELAY_URL = relay;
+            if (allow) env.OXFER_ALLOW_PLACEHOLDERS = "1";
+            const result = spawnSync("bash", ["guards.sh"], { cwd: dir, encoding: "utf8", env });
+            return { ...result, output: `${result.stdout}${result.stderr}` };
+        };
+        const passes = (result, label) => {
+            assert.equal(result.status, 0, `${label}: ${result.output}`);
+            assert.match(result.stdout, /guards passed/, label);
+        };
+        const fails = (result, pattern, label) => {
+            assert.equal(result.status, 1, `${label}: ${result.output}`);
+            assert.match(result.stderr, pattern, label);
+            assert.doesNotMatch(result.stdout, /guards passed/, label);
+        };
+
+        // Unfilled pages never package, whatever the relay, unless explicitly allowed.
+        fails(await run({ filled: false, relay: OPERATOR_RELAY }), /still contains the placeholder \[\[OPERATOR_NAME\]\]/, "placeholders");
+        const allowed = await run({ filled: false, relay: undefined, allow: true });
+        passes(allowed, "placeholders allowed");
+        assert.match(allowed.stderr, /OXFER_ALLOW_PLACEHOLDERS=1: packaging anyway\. Do not deploy this build\./);
+
+        // Filled pages need the relay they describe.
+        const missing = /The filled legal pages describe the relay at https:\/\/relay\.oxfer\.app, so P2P_RELAY_URL must list it/;
+        for (const relay of [undefined, "", " \t\n", "https://eu.relay.example", "http://relay.oxfer.app", "https://relay.oxfer.app:8443"]) {
+            fails(await run({ filled: true, relay }), missing, `filled, relay ${JSON.stringify(relay)}`);
+        }
+        for (const relay of [OPERATOR_RELAY, "https://relay.oxfer.app/", " https://eu.relay.example , https://relay.oxfer.app "]) {
+            passes(await run({ filled: true, relay }), `filled, relay ${JSON.stringify(relay)}`);
+        }
+        const override = await run({ filled: true, relay: undefined, allow: true });
+        passes(override, "filled, n0, allowed");
+        assert.match(override.stderr, /does not list it\. Do not deploy this build\./);
+
+        // Invisible characters fail the relay-list check before the build, and a
+        // value of only non-ASCII spaces is not mistaken for "unset".
+        for (const [relay, code] of [
+            ["\uFEFFhttps://relay.oxfer.app", "U\\+FEFF"],
+            ["https://relay.oxfer.app\u00A0", "U\\+00A0"],
+            ["https://relay\u200B.oxfer.app", "U\\+200B"],
+            ["\u00A0", "U\\+00A0"],
+            ["\u3000", "U\\+3000"],
+        ]) {
+            for (const allow of [false, true]) {
+                const result = await run({ filled: true, relay, allow });
+                fails(result, new RegExp(`entry 1 contains the invisible character ${code}`), `${JSON.stringify(relay)} allow=${allow}`);
+                assert.doesNotMatch(result.output, /placeholder|filled legal pages/);
+            }
+        }
+    } finally {
+        await rm(dir, { recursive: true, force: true });
+    }
 });

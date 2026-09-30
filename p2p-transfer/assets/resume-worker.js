@@ -3,6 +3,10 @@
 // Data becomes acknowledged only after:
 //   write -> flush OPFS -> commit IndexedDB checkpoint.
 // Recovery truncates any tail beyond that checkpoint before hashing it.
+//
+// The IndexedDB database and the OPFS directory (both `oxfer-resume`) are
+// created only by `prepare`, when the receiver has ticked "Keep a copy" and
+// starts saving. Listing, exporting and deleting never create either.
 
 'use strict';
 
@@ -65,21 +69,45 @@ function validateGroup(group, requested) {
   }
 }
 
-function database() {
+// Opens the metadata database. Only saving passes `create`: every other path
+// (listing, exporting, deleting) resolves null for a missing database instead
+// of creating it. It asks indexedDB.databases() first, because opening a
+// missing database leaves its name on disk even when the open is undone. Where
+// that is unavailable, or another tab deleted the database meanwhile, it aborts
+// the version-change transaction that would create it.
+async function database(create) {
+  if (!create && typeof indexedDB.databases === 'function') {
+    const existing = await indexedDB.databases();
+    if (!existing.some(info => info.name === DB_NAME)) return null;
+  }
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => {
+    let missing = false;
+    request.onupgradeneeded = event => {
+      if (!create && event.oldVersion === 0) {
+        missing = true;
+        request.transaction.abort();
+        return;
+      }
       if (!request.result.objectStoreNames.contains(STORE)) {
         request.result.createObjectStore(STORE, { keyPath: 'id' });
       }
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('could not open resume metadata'));
+    request.onerror = event => {
+      if (missing) {
+        event.preventDefault();
+        resolve(null);
+        return;
+      }
+      reject(request.error || new Error('could not open resume metadata'));
+    };
   });
 }
 
-async function transact(mode, body) {
-  const db = await database();
+async function transact(mode, body, { create = false } = {}) {
+  const db = await database(create);
+  if (!db) return undefined;
   try {
     return await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, mode);
@@ -101,8 +129,10 @@ async function transact(mode, body) {
   }
 }
 
+// Reads never create the database: a missing one holds no group.
 async function getGroup(id) {
-  const db = await database();
+  const db = await database(false);
+  if (!db) return undefined;
   try {
     return await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readonly');
@@ -115,17 +145,20 @@ async function getGroup(id) {
   }
 }
 
+// Saving is the only path that creates the database (see `prepare`).
 async function putGroup(group) {
   group.updated = Date.now();
-  await transact('readwrite', store => store.put(group));
+  await transact('readwrite', store => store.put(group), { create: true });
 }
 
-async function rootDirectory() {
+// The OPFS directory that holds kept copies. Only saving passes `create`;
+// without it a missing directory rejects with NotFoundError.
+async function rootDirectory(create) {
   if (!navigator.storage?.getDirectory) {
     throw new Error('this browser does not support resumable file storage');
   }
   const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle(ROOT, { create: true });
+  return root.getDirectoryHandle(ROOT, { create });
 }
 
 async function call(handle, method, ...args) {
@@ -159,7 +192,7 @@ async function prepare(message) {
 
   const opened = [];
   try {
-    const base = await rootDirectory();
+    const base = await rootDirectory(true);
     const directory = await base.getDirectoryHandle(message.id, { create: true });
     for (let index = 0; index < group.files.length; index++) {
       const file = await directory.getFileHandle(`${index}.part`, { create: true });
@@ -272,7 +305,8 @@ async function release(message) {
 }
 
 async function list() {
-  const db = await database();
+  const db = await database(false);
+  if (!db) return [];
   try {
     const groups = await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readonly');
@@ -286,13 +320,14 @@ async function list() {
   }
 }
 
+// Deleting a copy that does not exist is a no-op and creates nothing.
 async function discard(message) {
   if (!validId(message.id)) throw new Error('invalid resumable transfer id');
   if ([...openFiles.values()].some(entry => entry.id === message.id)) {
     throw new Error('cancel or close the active transfer before deleting this copy');
   }
-  const base = await rootDirectory();
   try {
+    const base = await rootDirectory(false);
     await base.removeEntry(message.id, { recursive: true });
   } catch (error) {
     if (error?.name !== 'NotFoundError') throw error;

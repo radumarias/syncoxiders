@@ -3,11 +3,13 @@
 #
 # P2P_RELAY_URL (optional): comma-separated relay URLs compiled into the wasm
 # by src/node.rs and rendered into the packaged Content-Security-Policy. Unset,
-# empty or whitespace-only means n0's public relays. CI passes the repository
-# variable, which is an empty string until the owner sets it.
+# empty or ASCII-whitespace-only means n0's public relays; any other character
+# outside printable ASCII fails the build. CI passes the repository variable,
+# which is an empty string until the owner sets it. Once the legal pages are
+# filled, it must list https://relay.oxfer.app, the relay they describe.
 # OXFER_ALLOW_PLACEHOLDERS=1: package even though the legal pages still contain
-# [[PLACEHOLDER]] tokens, or describe relay.oxfer.app in a build for n0's
-# relays. For local test builds only; never deploy the result.
+# [[PLACEHOLDER]] tokens, or are filled but P2P_RELAY_URL does not list
+# https://relay.oxfer.app. For local test builds only; never deploy the result.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -16,10 +18,14 @@ if [[ -f Cargo.lock ]]; then
     exit 1
 fi
 
+# BEGIN relay-list check (tests/web-pages.test.mjs runs this block on its own)
 # Validate the relay list before the long build, with the parser that renders
-# the CSP. Empty or whitespace-only means unset, as in src/node.rs; unset it so
-# the wasm build sees no value at all.
-if [[ -n "${P2P_RELAY_URL+set}" && -z "${P2P_RELAY_URL//[[:space:]]/}" ]]; then
+# the CSP. It is stricter than src/node.rs, so a value it accepts never makes
+# the wasm fall back to n0's relays. Empty or ASCII-whitespace-only means
+# unset, as in src/node.rs and package-cf-output.mjs; unset it so the wasm
+# build sees no value at all. The set is spelled out rather than [[:space:]],
+# whose meaning depends on the locale.
+if [[ -n "${P2P_RELAY_URL+set}" && -z "${P2P_RELAY_URL//[$' \t\n\v\f\r']/}" ]]; then
     unset P2P_RELAY_URL
 fi
 if [[ -n "${P2P_RELAY_URL+set}" ]]; then
@@ -28,6 +34,7 @@ if [[ -n "${P2P_RELAY_URL+set}" ]]; then
 else
     echo "P2P_RELAY_URL is not set: building for n0's public relays."
 fi
+# END relay-list check
 
 tools="$PWD/target/pages-tools"
 mkdir -p "$tools"
@@ -75,6 +82,8 @@ if grep -q -E '<script( type="module")?>' dist/index.html; then
     exit 1
 fi
 
+# BEGIN legal-page guards (tests/web-pages.test.mjs runs this block against
+# scratch dist copies)
 # Legal pages ship with [[OPERATOR_NAME]]-style tokens until the operator's
 # details are filled in. Refuse to package them unless explicitly allowed.
 placeholders=0
@@ -95,17 +104,22 @@ if [[ "$placeholders" -ne 0 ]]; then
     fi
 fi
 
-# The filled pages describe the operator's relay at relay.oxfer.app, not n0's
-# public relays. Refuse to publish them from a build that uses n0's relays.
-if [[ "$placeholders" -eq 0 && -z "${P2P_RELAY_URL+set}" ]] &&
-    grep -q -F 'relay.oxfer.app' dist/privacy.html dist/terms.html dist/abuse.html; then
+# Relay go-live guard. The filled legal pages describe the operator's relay at
+# https://relay.oxfer.app, so they may only ship in a build whose relay list
+# includes it: not with n0's public relays, and not with only another relay.
+# If the pages ever describe another relay, change operator_relay and
+# OPERATOR_RELAY in package-cf-output.mjs with them.
+operator_relay=https://relay.oxfer.app
+if [[ "$placeholders" -eq 0 ]] &&
+    ! node package-cf-output.mjs --check-relay --require-relay="$operator_relay" >/dev/null; then
     if [[ "${OXFER_ALLOW_PLACEHOLDERS:-}" == 1 ]]; then
-        echo "OXFER_ALLOW_PLACEHOLDERS=1: packaging legal pages that describe relay.oxfer.app in a build for n0's relays. Do not deploy this build." >&2
+        echo "OXFER_ALLOW_PLACEHOLDERS=1: packaging filled legal pages that describe $operator_relay in a build whose P2P_RELAY_URL does not list it. Do not deploy this build." >&2
     else
-        echo "P2P_RELAY_URL is not set, so this build uses n0's public relays, but the filled privacy notice describes the Oxfer relay; set P2P_RELAY_URL or edit the pages to describe the relay in use." >&2
+        echo "The filled legal pages describe the relay at $operator_relay, so P2P_RELAY_URL must list it; set P2P_RELAY_URL or edit the pages and this guard to describe the relay in use." >&2
         echo "For a local test build only, set OXFER_ALLOW_PLACEHOLDERS=1." >&2
         exit 1
     fi
 fi
+# END legal-page guards
 
 node package-cf-output.mjs
