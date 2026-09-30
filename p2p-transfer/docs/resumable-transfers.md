@@ -65,22 +65,33 @@ refresh both tabs before testing against a running older share.
 
 ## Recovery after closing the browser
 
-Before receiving, select **Keep a resumable copy on this device**, then
-**Receive / resume local copy**. This is opt-in because it retains plaintext
-file data and metadata in this browser's private site storage. It is not an
+Open the sender's link (**Open link**). When the receive screen lists the
+files, tick **Keep a copy here so I can continue later**, then press
+**Save a copy in this browser** (the button reads **Choose where to save**
+while the box is unticked). This is opt-in because it retains plaintext file
+data and metadata in this browser's private site storage. It is not an
 encrypted local vault.
+
+The `oxfer-resume` IndexedDB database and OPFS directory are created only
+then, when saving starts with the box ticked. Looking for saved copies,
+**Download file** and deleting a copy never create either
+([what the browser stores](diagnostics.md#what-the-browser-stores)).
 
 1. The receiver stages files in the origin-private file system (OPFS).
 2. Each acknowledged checkpoint represents flushed file data and committed
    metadata, not merely bytes queued for writing.
-3. When the receiver returns, **Copies on this device** lists retained progress.
-4. Reopen/paste a sender link and select the resumable-copy option again. The
-   storage key covers the complete manifest: names, sizes, BLAKE3 hashes and
-   ordering. A matching copy resumes; a different manifest is a separate copy.
+3. When the receiver returns, **Saved files in this browser** lists retained
+   progress, marking each file **UNFINISHED** or **READY TO SAVE**.
+4. Reopen or paste the sender's link and tick
+   **Keep a copy here so I can continue later** again, or press
+   **Continue download** on the unfinished copy, which ticks it and asks for
+   the link. The storage key covers the
+   complete manifest: names, sizes, BLAKE3 hashes and ordering. A matching
+   copy resumes; a different manifest is a separate copy.
 5. Recovery reads the checkpointed prefix in bounded chunks to reconstruct its
    BLAKE3 state. Excess uncheckpointed bytes are not trusted.
 6. Only a file whose full hash matches the sender's manifest is marked verified.
-   Use **Download copy** to export it to the browser's normal Downloads/Files
+   Use **Download file** to export it to the browser's normal Downloads/Files
    flow. The local copy remains until explicitly deleted.
 
 If the sender stayed open, use the original private link. If the sender also
@@ -108,8 +119,10 @@ to reconnect without a valid link.
   can require additional disk space for the destination copy.
 - Exclusive file locks prevent two tabs from writing/deleting the same active
   copy. Close or cancel the other transfer before retrying.
-- Cancelling a resumable receive preserves its checkpoints. **Delete local
-  copy**, followed by confirmation, removes both progress and completed copies.
+- Cancelling a resumable receive preserves its checkpoints.
+  **Delete saved copy**, confirmed with **Delete permanently**, removes both
+  progress and completed copies. The database and directory stay, empty, after the last
+  copy is deleted; clearing site data removes them.
 - File-backed Blob export avoids explicit whole-file buffering in Oxfer.
   Browser-internal buffering and the iOS Files/download UI are browser-owned;
   large-file export still requires real-device validation.
@@ -131,7 +144,8 @@ wasm-pack test --headless --firefox -- --test webrtc_wasm
 
 For an end-to-end browser/device check:
 
-1. Share a large fixture and receive with local-copy retention enabled.
+1. Share a large fixture and receive with
+   **Keep a copy here so I can continue later** ticked.
 2. Interrupt the control connection after some bytes are committed. Verify the
    retry counter, restored progress, successful hash verification and a single
    completed receipt.

@@ -5,6 +5,7 @@
 | Status | **DRAFT.** Not adopted until dated and signed below. Section 6 needs an owner decision first. |
 | Service | Oxfer: web app at `oxfer.app`, relay at `relay.oxfer.app`, desktop app built from this crate |
 | Provider | [[OPERATOR_NAME]], [[OPERATOR_ADDRESS]] |
+| Named individuals | PCU A2 and D13 (section 4) and the sign-off (section 8) name a natural person. If the provider is a company, they name the individual it appoints, not the company. |
 | Why this exists | The [children's access assessment](osa-children-access.md) treats Oxfer as likely to be accessed by children. A children's risk assessment is then due within three months [OSA Sch. 3 para 5]. |
 | Assessment date | [[EFFECTIVE_DATE]] |
 | Method | Ofcom's four-step method in its *Children's Risk Assessment Guidance and Children's Risk Profiles* [K1] |

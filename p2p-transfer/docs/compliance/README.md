@@ -111,7 +111,10 @@ which unlocks the deploy guard) only when production builds use that relay.
 them unless `P2P_RELAY_URL` lists `https://relay.oxfer.app`
 ([relay go-live guard](../cloudflare-workers.md#relay-go-live-guard)).
 Otherwise the published privacy notice would describe a relay the production
-build does not use.
+build does not use. `build-web.sh` also refuses to package while any
+placeholder remains, so no deploy succeeds with some placeholders filled and
+others not. Prepare the fills in actions 1 and 3, then set the variable and
+push them all in one commit (action 3, step 6).
 
 ### 1. Decide D4 and fill the placeholders
 
@@ -144,10 +147,34 @@ build does not use.
   (trade-register number and tax ID for a company; delete the line for a natural
   person), `[[EFFECTIVE_DATE]]`, `[[RELAY_HOSTING_PROVIDER]]` and
   `[[RELAY_LOCATION]]` in `privacy.html`, `terms.html`, `abuse.html` and every
-  file in this directory. List what is left with:
+  file in this directory. Keep the fills in a local commit and push it only in
+  action 3, step 6, once `P2P_RELAY_URL` is set: pushed earlier, the deploy
+  fails at one of the two guards above. List what is left with:
 
   ```sh
   grep -rnoE '\[\[[A-Z][A-Z0-9_]*\]\]' p2p-transfer/*.html p2p-transfer/docs/compliance
+  ```
+
+- Where a record names a person, a company operator writes the name of the
+  individual it appoints, not the company's, as the legal pages' checklists
+  already require for India and Singapore. Those places are ICU A2 (and the
+  header's accountable individual), ICU A3 and ICU D12 in
+  [osa-illegal-content.md](osa-illegal-content.md), including its statement
+  of responsibilities in section 5.2; PCU A2 and PCU D13 in
+  [osa-children-risk.md](osa-children-risk.md); who carried out the
+  assessment in [esafety.md](esafety.md) section 5.1; and the "approved by"
+  rows of every sign-off, which name the individual who signs for the company.
+  The provider, controller, operator and owner rows keep the company's name.
+- Confirm that Cloudflare's request-log retention (Logpull) is off for the
+  `oxfer.app` zone, and leave it off: section 3 of the privacy notice says
+  Cloudflare keeps no request log for the operator. Retention is off by
+  default and Logpull exists only on the Enterprise plan [L27]. On that plan,
+  check it with a token that has *Logs Read* and expect the flag to be
+  `false`:
+
+  ```sh
+  curl -sS "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/logs/control/retention/flag" \
+    -H "Authorization: Bearer $TOKEN"
   ```
 
 - Complete the lines marked *to be completed by the operator*, then date and
@@ -189,12 +216,17 @@ in Let's Encrypt mode without one, so create it before action 3.
    processor and transfer (Fly.io, Inc. is a US company), address blocking and
    per-address limits (the relay sees Fly's proxy address, not the client's),
    and log retention (Fly's log pipeline, not a three-day host journal). The
-   list of sections to change is in
-   [ropa.md](ropa.md#1-configuration-covered).
+   complete list of pages and records to change is "Before using Fly" in the
+   relay runbook's
+   ["Fly.io variant"](../../deploy/relay/README.md#flyio-variant) section;
+   [ropa.md](ropa.md#1-configuration-covered) gives the reasons.
 2. Cloudflare DNS: add `A` and `AAAA` records for `relay.oxfer.app`, proxy status
    **DNS only** (A2).
 3. Check the relay from the app's Diags page with a local build that sets
-   `P2P_RELAY_URL=https://relay.oxfer.app`.
+   `P2P_RELAY_URL=https://relay.oxfer.app`, and never deploy it. While
+   placeholders remain, `build-web.sh` packages only with
+   `OXFER_ALLOW_PLACEHOLDERS=1`:
+   `OXFER_ALLOW_PLACEHOLDERS=1 P2P_RELAY_URL=https://relay.oxfer.app npm run build`.
 4. Monitoring (A10), alerting by email:
    - an external uptime monitor for `https://relay.oxfer.app/healthz`,
      expecting status 200 and the text `"ok"`, with certificate-expiry
@@ -204,11 +236,16 @@ in Let's Encrypt mode without one, so create it before action 3.
      that supports it or a scheduled job running the `node -e` command in the
      relay runbook's
      ["First-boot verification"](../../deploy/relay/README.md#first-boot-verification).
-5. GitHub repository, Settings, Secrets and variables, Actions, **Variables**:
-   create `P2P_RELAY_URL` with value `https://relay.oxfer.app` [L2]. Run the
-   `oxfer-web` workflow. The deploy job checks that the served
-   `Content-Security-Policy-Report-Only` names the relay in `connect-src`.
-6. Fill `[[RELAY_HOSTING_PROVIDER]]` and `[[RELAY_LOCATION]]`.
+5. Fill `[[RELAY_HOSTING_PROVIDER]]` and `[[RELAY_LOCATION]]`, in the same
+   local commit as the fills of action 1. Do not push it yet.
+6. GitHub repository, Settings, Secrets and variables, Actions, **Variables**:
+   create `P2P_RELAY_URL` with value `https://relay.oxfer.app` [L2]. Then push
+   the commit that fills every placeholder (action 1 and step 5). That push
+   deploys: `build-web.sh` refuses to package while any placeholder remains,
+   and once they are all filled it requires this variable. The deploy job
+   then checks that the served `Content-Security-Policy-Report-Only` names the
+   relay in `connect-src`. Until this push succeeds, production keeps the
+   previous build.
 
 ### 4. Accept and file the DPAs
 
@@ -324,10 +361,36 @@ attach it to a GitHub release. Verification steps:
   decision and any action will be sent, and the timeframe (15 days; 7 days for
   India). Keep it with the private records. The
   [incident runbook](incident-runbook.md#4-abuse-report) covers opt-outs.
+- **India IT Rules timelines.** The abuse page (section 10) promises
+  acknowledgement within 24 hours and resolution within 7 days
+  [L28, r.3(2)(a)(i)], and says only that complaints about intimate or
+  impersonating content are handled first. The rules as amended on
+  10 February 2026 set two shorter windows [L28]: under r.3(2)(b), reasonable
+  and practicable measures to remove or disable access within 2 hours of a
+  complaint by the person shown, or by someone on their behalf, about content
+  showing their private areas, nudity or sexual acts, or impersonating them
+  (including morphed images); and under the proviso to r.3(2)(a)(i),
+  resolution within 36 hours of a complaint asking for removal of content
+  under r.3(1)(b), except its sub-clauses (i), (iv) and (xi). Decide whether
+  to commit to both. If yes, state them in `abuse.html` section 10 and in the
+  [incident runbook](incident-runbook.md) (section 4, step 10, and the India
+  row of section 9.2). If no, record the reason in that India row, for
+  example that Oxfer is not offered to India specifically (the position in
+  the runbook's section 9.1).
 - **Measures for a multi-risk service.** The illegal content risk assessment
   rates Oxfer multi-risk, which adds ICU A3, A5 to A7, C3 to C8 and D8. They
   are written into its section 5.2 for a one-person service; they need no
   setup beyond signing the record and holding the quarterly review below.
+- **Shell history on the relay host.** Block commands typed in an
+  interactive shell on the relay (`oxfer-relay-ban add ADDRESS DAYS`, edits to
+  `/etc/oxfer-relay/denylist.txt`) stay in that account's shell history with no
+  time limit, and `sudo` records them in the journal for three days
+  ([relay README, What is logged](../../deploy/relay/README.md#what-is-logged)).
+  The privacy notice (section 3) and abuse page (section 9.1) describe block
+  lists only. Decide how to keep the two aligned: for example run block
+  commands non-interactively from your own machine, change the host's shell
+  history settings yourself, or add shell history to those sections. The kit
+  deliberately does not change audit or history settings on your behalf.
 
 ## Review cadence
 
@@ -364,12 +427,14 @@ over from the plan.
 Keep outside this public repository, in a private repository or encrypted
 storage that only the operator can open:
 
-- the abuse log (date, kind of report, endpoint ID or address blocked, outcome;
-  never content and never a link's `cap=` part) and the relay denylist history;
+- the abuse log (date and time, kind of report, endpoint ID or address
+  blocked, outcome; never content and never a link's `cap=` part) and the
+  relay denylist history;
 - the quarterly review notes (ICU A5 counts, performance against targets) and
   the acknowledgement template;
 - the incident log;
-- correspondence with authorities, regulators and NCMEC;
+- correspondence with reporters, authorities, regulators and NCMEC, which
+  alone holds a reported link and a reporter's contact details;
 - signed or accepted DPAs, with dates and versions;
 - bundle hash files for production deploys;
 - filled-in versions of these records, if the operator prefers not to publish
@@ -414,4 +479,6 @@ Australian DIS Standard requires [L19, s.38], and review what is kept every year
 - [L24] Directive (EU) 2023/1544 on designated establishments and legal representatives for gathering electronic evidence, EUR-Lex: <https://eur-lex.europa.eu/eli/dir/2023/1544/oj>
 - [L25] Ofcom, draft amendments (No. 2) to the Illegal content Codes of Practice for user-to-user services (crisis response), GOV.UK: <https://www.gov.uk/government/publications/online-safety-act-draft-amendments-no2-to-the-illegal-content-codes-of-practice/draft-amendments-no-2-to-the-illegal-content-codes-of-practice-for-user-to-user-services>
 - [L26] OSA s.20A (as inserted by the Crime and Policing Act 2026): <https://www.legislation.gov.uk/ukpga/2023/50/section/20A>
+- [L27] Cloudflare, enabling log retention (Logpull; "By default, your HTTP request logs are not retained"): <https://developers.cloudflare.com/logs/logpull/enabling-log-retention/>; Logpull is available on the Enterprise plan: <https://developers.cloudflare.com/logs/logpull/>
+- [L28] Information Technology (Intermediary Guidelines and Digital Media Ethics Code) Rules, 2021, as updated on 10 February 2026 (G.S.R. 120(E)), MeitY: <https://www.meity.gov.in/static/uploads/2026/02/550681ab908f8afb135b0ad42816a1c9.pdf>
 - OSA s.36: <https://www.legislation.gov.uk/ukpga/2023/50/section/36>

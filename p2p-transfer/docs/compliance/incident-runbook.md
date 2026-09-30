@@ -114,12 +114,17 @@ targets, are in section 5.2 of the
 [illegal content risk assessment](osa-illegal-content.md#52-responsibilities-code-of-conduct-and-moderation-policies)
 (ICU C4, C5).
 
-1. **Log it** in the private abuse log: date and time received, kind of report,
-   the link part before `&cap=`, and the reporter's contact if given. Never
-   record the `cap=` part of a link, and never any content.
+1. **Log it** in the private abuse log: the date and time received and the
+   kind of report. Later steps add the endpoint ID or address blocked (steps
+   7 and 8) and the outcome (steps 10 and 11). The log holds nothing else
+   (the code of conduct in section 5.2 and the list in
+   [section 6](osa-illegal-content.md#6-step-4-records-reporting-and-review)
+   of the illegal content risk assessment): the link part and the reporter's
+   contact stay only in the correspondence. Never record the `cap=` part of a
+   link, and never any content.
 2. **Opt-out.** If the reporter asks for no further messages, in the report or
-   later (for example by replying "No further messages"), note it in the log
-   and from then on send nothing about the report, not even the
+   later (for example by replying "No further messages"), note it with the
+   correspondence and from then on send nothing about the report, not even the
    acknowledgement or the decision. Handle the report in the same way
    otherwise (abuse page, section 3; ICU D6).
 3. **Acknowledge within 24 hours** (unless the reporter opted out), from the
@@ -154,12 +159,16 @@ targets, are in section 5.2 of the
    kept through relay restarts, upgrades and reruns of `setup.sh`
    ([relay runbook, "Abuse blocking"](../../deploy/relay/README.md#abuse-blocking)).
 8. **To block an address,** for repeated or serious abuse only, use the relay
-   host's firewall: `oxfer-relay-ban add ADDRESS` bans it for 30 days (a
-   number of days can be given), puts it in the nftables sets `banned_v4` or
+   host's firewall: `oxfer-relay-ban add ADDRESS` bans it for 30 days (another
+   number of days can be given; every ban expires, and running the command
+   again sets a new expiry), puts it in the nftables sets `banned_v4` or
    `banned_v6`, and writes it with its expiry to `/etc/nftables.d/bans.nft`,
    so it survives reboots, firewall reloads and reruns of `setup.sh`. Addresses
    can be blocked only there: the relay's denylist accepts endpoint IDs, not
-   addresses. Record the address, reason and expiry in the abuse log.
+   addresses
+   ([relay runbook, "Abuse blocking"](../../deploy/relay/README.md#abuse-blocking)).
+   Record the address in the abuse log, and the block with its expiry as the
+   outcome.
 9. **Intimate images shared without consent** (an intimate image content
    report, abuse page section 6): block the reported share as soon as
    reasonably practicable and no later than 48 hours after the report was
@@ -171,13 +180,21 @@ targets, are in section 5.2 of the
    record the reasons, tell the reporter, and point to the expedited
    complaints procedure [K18, s.10(3B)].
 10. **Answer** with the decision and any action taken, within 15 days, and
-    record it. A complaint from India is resolved within 7 days of receipt
-    [K19, rule 3(2)(a)(i)], and one about content showing a person's private
-    areas, nudity or sexual acts, or impersonating a person, is handled first
-    (abuse page, section 10).
+    record the outcome. A complaint from India is resolved within 7 days of
+    receipt [K19, rule 3(2)(a)(i)], and one about content showing a person's
+    private areas, nudity or sexual acts, or impersonating a person, is
+    handled first (abuse page, section 10). Two shorter Indian windows are an
+    open owner decision
+    ([README, section 10](README.md#10-other-items-that-need-the-owner)):
+    2 hours for such a complaint made by the person shown or on their behalf
+    [K19, rule 3(2)(b)], and 36 hours for a request to remove content under
+    rule 3(1)(b), except its sub-clauses (i), (iv) and (xi)
+    [K19, proviso to rule 3(2)(a)(i)]. Until the owner decides, the abuse
+    page promises neither.
 11. **Appeals** (subject "Appeal"): review promptly and within 15 days; lift a
-    wrong block and say so; record it. The answer explains the decision but
-    never says whether anyone made a report or who (abuse page, section 8).
+    wrong block and say so; record the outcome. The answer explains the
+    decision but never says whether anyone made a report or who (abuse page,
+    section 8).
 12. **Expedited complaints** (subject "URGENT Complaint") from a person who
     made an intimate image content report, about that content or how the
     report was handled: handle before other messages and send the outcome
@@ -197,8 +214,11 @@ targets, are in section 5.2 of the
    content. Registration as an electronic service provider (`espteam@ncmec.org`)
    is needed only to upload content with a report [K3].
 4. Report to the Romanian police, and point the reporter to the national hotline
-   in the INHOPE network (in Romania, esc_ABUZ run by Salvați Copiii) [K5][K6].
-5. Record what was reported, to whom and when. Keep the report itself as
+   in the INHOPE network (in Romania, Ora de Net, run by Salvați Copiii:
+   <https://oradenet.ro/linia-de-raportare/>, as on the abuse page, section 5)
+   [K5][K6].
+5. Record the referrals (to whom and when) as the outcome in the abuse log.
+   Keep the report itself, and what was sent, with the correspondence as
    evidence, access-restricted.
 6. Before the first report, confirm with counsel the GDPR transfer basis for
    sending report data to NCMEC in the United States. The privacy notice relies
@@ -314,7 +334,7 @@ domain hijack serving code (section 3) is a high-risk breach; a relay compromise
 | NCMEC CyberTipline | As soon as reasonably possible after actual knowledge | Apparent child sexual abuse material | [K3], [K4] |
 | Take-down after an intimate image content report (UK) | As soon as reasonably practicable, and no later than 48 hours after receiving the report | Block the reported share, and other shares identified as carrying the same or substantially the same content (section 4, step 9) | [K18, s.10(3A), (3B)] |
 | Expedited complaint from a person who made an intimate image content report (UK) | Handled before other messages; outcome within 48 hours (the abuse page's promise; the Act requires an expedited procedure but sets no time) | Complaints about that content or how the report was handled (section 4, step 12) | [K18, s.21(2A)]; abuse page, section 8 |
-| Complaints from users in India | Acknowledge within 24 hours; resolve within 7 days of receipt | Grievances to the Grievance Officer (abuse page, section 10) | [K19, rule 3(2)(a)(i)] |
+| Complaints from users in India | Acknowledge within 24 hours; resolve within 7 days of receipt. Open owner decision ([README, section 10](README.md#10-other-items-that-need-the-owner)): 2 hours for a complaint by the person shown, or on their behalf, about content showing their private areas, nudity or sexual acts, or impersonating them; 36 hours for a request to remove content under rule 3(1)(b), except its sub-clauses (i), (iv) and (xi) | Grievances to the Grievance Officer (abuse page, section 10) | [K19, rule 3(2)(a)(i) and its proviso, rule 3(2)(b)] |
 | Ofcom | As set in the notice | Answers to information notices | [K14] |
 | eSafety Commissioner | 24 hours for a class 1 removal notice; as set for other notices | Removal notices and document requests | [K15] |
 | EU issuing authority | 10 days, or 8 hours in an emergency; preservation for 60 days, extendable by 30 | European Production Orders and European Preservation Orders, sent directly to the provider, from 18 August 2026 | [K16] |
@@ -331,7 +351,7 @@ authorities anyway.
 - [K3] NCMEC CyberTipline: <https://www.missingkids.org/gethelpnow/cybertipline>; report form: <https://report.cybertip.org/>
 - [K4] 18 U.S.C. § 2258A: <https://www.law.cornell.edu/uscode/text/18/2258A>
 - [K5] INHOPE: <https://inhope.org/>
-- [K6] Ora de Net / esc_ABUZ (Salvați Copiii and the Romanian Police): <https://safernet.politiaromana.ro/>
+- [K6] Ora de Net reporting line (Salvați Copiii): <https://oradenet.ro/linia-de-raportare/>
 - [K7] Ofcom, fine on a file-sharing service for failing to answer information requests: <https://www.ofcom.org.uk/online-safety/illegal-and-harmful-content/ofcom-fines-online-file-sharing-service-20000>
 - [K8] GitHub, artifact and log retention: <https://docs.github.com/en/github/administering-a-repository/managing-repository-settings/configuring-the-retention-period-for-github-actions-artifacts-and-logs-in-your-repository>
 - [K9] Regulation (EU) 2016/679 (GDPR): <https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=celex%3A32016R0679>

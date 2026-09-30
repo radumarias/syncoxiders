@@ -21,7 +21,8 @@ updated before that variant is used.
 
 ## 1. What exists per user or per transfer
 
-Nothing held by the operator. In detail:
+The operator holds no record of transfers or users. What exists, and for how
+long:
 
 | Item | Exists? | Where and for how long |
 | --- | --- | --- |
@@ -32,12 +33,12 @@ Nothing held by the operator. In detail:
 | IP addresses and endpoint IDs at the relay | Only while connected | The relay holds each connection's address and endpoint ID in memory while it lasts. Its key cache is turned off, so endpoint IDs are not kept after a connection ends. With the shipped configuration it logs no client IP addresses, endpoint IDs or connection events. |
 | Source addresses in the relay host's firewall | For at most 60 seconds | The firewall's rate-limit sets hold the source address of each new connection for at most 60 seconds, to enforce per-address connection limits. The firewall logs nothing. |
 | Relay error log | Yes, without client addresses | The relay logs only its own operational errors (startup, certificate and task failures, and one line per malformed request on port 80), without client addresses. The host's journal deletes them after at most three days. |
-| Relay host administration | Yes, briefly | The server records the operator's own administrative SSH logins and the source addresses of failed login attempts, in its journal and its login records (`wtmp`, `btmp`). These concern the host, not relay users. All are deleted after at most three days, and the last-login record (`lastlog`) keeps nothing persistent. No other log store exists on the host: rsyslog is removed and its old files deleted. |
+| Relay host administration | Yes, briefly | The server records the operator's own administrative SSH logins and the source addresses of failed login attempts, in its journal and its login records (`wtmp`, `btmp`). These concern the host, not relay users. All are deleted after at most three days, and the last-login record (`lastlog`) keeps nothing persistent. Block commands leave no shell history on the host. No other log store exists on the host: rsyslog is removed and its old files deleted. |
 | Aggregate relay metrics | Yes | Counters such as total connections, in memory and bound to the relay host's localhost. No per-user data. |
 | Relay TLS certificate | Public | Let's Encrypt publishes the certificate for `relay.oxfer.app` in public Certificate Transparency logs, as it does every certificate. It names the host only. |
-| Website request logs | With Cloudflare, not the operator | Cloudflare processes requests to `oxfer.app` under its own log retention. The operator exports no logs; the dashboard shows aggregates. |
+| Website request logs | No request log kept for the operator | Cloudflare serves `oxfer.app`. Its request-log retention (Logpull) is off by default and stays off, so no request log is kept for the operator. The dashboard shows aggregates, and details of requests Cloudflare's security features block for the period the plan sets (24 hours on the Free and Pro plans). Cloudflare keeps its own operational and security logs under its privacy policy. The operator exports no logs. |
 | STUN requests | With Cloudflare | `stun.cloudflare.com` sees the IP address and port of browsers that try a direct path. The operator receives nothing. |
-| Abuse records | Yes, per report | Date, kind of report, the endpoint ID or address blocked, and the outcome; never content. Kept privately, reviewed yearly. |
+| Abuse records | Yes, per report | Date and time, kind of report, the endpoint ID or address blocked, and the outcome; never content, and never a link's `cap=` part. The link a reporter sends and their contact details stay only in the correspondence about the report. Kept privately, reviewed yearly. |
 | Relay blocks | Yes, while in force | Denied endpoint IDs in `/etc/oxfer-relay/denylist.txt` on the relay host, merged into the relay's configuration; banned IP addresses in `/etc/nftables.d/bans.nft`, each with an expiry (normally 30 days). Both are kept through restarts, reboots, upgrades and reruns of the setup script. Each block is traced to a report in the abuse log. |
 
 ## 2. What the operator can provide

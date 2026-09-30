@@ -41,7 +41,10 @@ has a VPS variant, set up by `setup.sh`, and a Fly.io variant
 page and the [transparency statement](transparency.md) describe the VPS
 variant, with an EU-headquartered provider and the server in the EU. On the
 Fly.io variant several of their statements would be false, so these must change
-before it is used:
+before it is used. The complete list of pages and records to change is
+"Before using Fly" in the relay runbook's
+["Fly.io variant"](../../deploy/relay/README.md#flyio-variant) section; the
+reasons, and the sections each one affects, are:
 
 - **Processor and transfer.** Fly.io, Inc. is a United States company, and
   its edge proxies, which can be outside the EU, receive every client
@@ -51,21 +54,23 @@ before it is used:
   notice [T2][T21].
 - **Address blocking.** Behind Fly's proxy the relay sees the proxy's address,
   not the client's, and there is no host firewall, so IP addresses cannot be
-  blocked or rate-limited per client. Change section 3.2 and section 6 here,
-  section 4 of the abuse page, sections 7.1 and 7.3 of the terms, sections 1
-  and 2 of the transparency statement, and measure ICU C2 in the
+  blocked or rate-limited per client. Change the P3 row of section 2, section
+  3.2 and section 6 here; section 3 of the privacy notice; sections 5.2, 7.1
+  and 7.3 of the terms; the summary and sections 3, 4 and 7 of the abuse page;
+  sections 1 and 2 of the transparency statement; and measure ICU C2 and the
+  "Configuration assessed" note in the
   [illegal content risk assessment](osa-illegal-content.md#51-codes-measures-that-apply).
 - **Logs.** The relay's output goes to Fly's log pipeline, whose log search
   keeps logs for 7 days [T22], not to a host journal capped at three days, and
-  the Fly image runs no SSH service. Change sections 2.1 and 6 here, section 3
-  of the privacy notice, section 9.1 of the abuse page and section 1 of the
-  transparency statement.
+  the Fly image runs no SSH service. Change the P3 row of section 2, sections
+  2.1, 6 and 7 here, section 3 of the privacy notice, section 9.1 of the abuse
+  page and section 1 of the transparency statement.
 
 ## 2. Processing activities
 
 | # | Activity and purpose | Data subjects | Personal data | Legal basis | Recipients | Retention |
 | --- | --- | --- | --- | --- | --- | --- |
-| P1 | Serving the app shell and legal pages from Cloudflare; protecting the site | Visitors | IP address, user agent, request line without the URL fragment, time, TLS and connection data; security cookies such as `__cf_bm` when Cloudflare bot protection is active; Network Error Logging reports until the owner turns them off (section 2.2) | Art. 6(1)(f), LIA 3.1 | Cloudflare, Inc. (processor) | Cloudflare's own log retention. The operator exports no logs; the dashboard shows aggregates. |
+| P1 | Serving the app shell and legal pages from Cloudflare; protecting the site | Visitors | IP address, user agent, request line without the URL fragment, time, TLS and connection data; security cookies such as `__cf_bm` when Cloudflare bot protection is active; Network Error Logging reports until the owner turns them off (section 2.2) | Art. 6(1)(f), LIA 3.1 | Cloudflare, Inc. (processor) | No request log is kept for the operator: Cloudflare's request-log retention (Logpull) is off by default and stays off [T24] ([README](README.md#owner-actions), action 1). The dashboard shows aggregates, and details of requests Cloudflare's security features block for the period the plan sets (24 hours on the Free and Pro plans). Cloudflare keeps its own operational and security logs under its privacy policy [T3]. The operator exports no logs. |
 | P2 | STUN, so browsers can find a direct path | Senders and recipients using the browser app | Public IP address and port, time | Art. 6(1)(b) | Cloudflare, Inc. (see section 4 on its role) | Cloudflare's policy. The operator receives nothing. |
 | P3 | Relay: authenticating endpoints, carrying connection setup, forwarding encrypted traffic when no direct path works | Senders and recipients | IP address and port, endpoint ID (a public key new for each share and each receiving session), connection times, traffic volume. The relay forwards ciphertext it cannot read. | Art. 6(1)(b); rate limits and blocking: Art. 6(1)(f), LIA 3.2 | [[RELAY_HOSTING_PROVIDER]] (processor, infrastructure only) | Held in memory only while connected: the relay's key cache is turned off, so endpoint IDs are not kept after a connection ends (section 2.1). No access log: with the shipped configuration the relay logs no client IP addresses, endpoint IDs or connection events. Its own operational errors are logged without client addresses and deleted by journald after at most 3 days. The host firewall's rate-limit sets hold a source address for at most 60 seconds. Aggregate metrics contain no personal data. Blocked endpoint IDs and IP addresses: while the block is in force (section 6). |
 | P4 | Peer connection: exchanging addresses (ICE candidates; direct addresses in native tickets) and transferring the files | Senders and recipients | IP addresses and candidates, endpoint IDs, file names, sizes, checksums, file contents | Art. 6(1)(b) | The other party to the transfer, chosen by the user who shares the link. The operator receives none of it. | Held by the peers for the session; saved files are under the recipient's control. |
@@ -108,7 +113,8 @@ per-connection targets off. With that configuration:
   `/var/log/btmp`, sessions in `/var/log/wtmp`. The kit rotates `btmp` and
   `wtmp` daily and keeps at most three days, and `lastlog` (and `lastlog2`
   where present) keeps no persistent record. These records concern the
-  operator's own administration of the host, not relay users;
+  operator's own administration of the host, not relay users. Block commands
+  (section 6) leave no shell history on the host;
 - metrics are aggregate counters in memory, bound to `127.0.0.1`;
 - the firewall has no logging rules. Its rate-limit sets hold a source address
   for at most 60 seconds; its ban sets hold only addresses the operator bans,
@@ -206,7 +212,7 @@ notice therefore does not describe it.
 
 | Data | Where | Retention |
 | --- | --- | --- |
-| HTTP request logs | Cloudflare | Cloudflare's policy; none kept by the operator |
+| HTTP request logs | Cloudflare | No request log kept for the operator: Cloudflare's request-log retention (Logpull) is off by default and stays off; security-event details for the period the plan sets (24 hours on Free and Pro); Cloudflare's own operational and security logs under its privacy policy [T3]; the operator exports none |
 | Relay connection state (IP addresses, endpoint IDs) | Relay memory; key cache off | While connected |
 | Rate-limit state (source addresses of new connections) | Relay host firewall sets | At most 60 seconds |
 | Relay operational error log (no client addresses) | Relay host journald | At most 3 days |
@@ -365,4 +371,5 @@ Reviewed with the other records at the cadence in the
 - [T21] Fly.io, compliance documents (DPA): <https://fly.io/documents/>; Fly.io, Data Privacy Framework privacy policy: <https://fly.io/legal/data-privacy-framework/>
 - [T22] Fly.io, logging overview (log search keeps logs for 7 days): <https://docs.fly.io/monitoring/logging-overview/>
 - [T23] Directive 2011/93/EU on combating the sexual abuse and sexual exploitation of children and child pornography: <https://eur-lex.europa.eu/eli/dir/2011/93/oj>
+- [T24] Cloudflare, enabling log retention (Logpull; "By default, your HTTP request logs are not retained"): <https://developers.cloudflare.com/logs/logpull/enabling-log-retention/>
 - OSA s.4: <https://www.legislation.gov.uk/ukpga/2023/50/section/4>

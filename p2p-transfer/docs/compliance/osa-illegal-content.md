@@ -6,6 +6,7 @@
 | Service | Oxfer: web app at `oxfer.app`, relay at `relay.oxfer.app`, desktop app built from this crate |
 | Provider | [[OPERATOR_NAME]], [[OPERATOR_ADDRESS]] |
 | Accountable individual (Codes measure ICU A2) | [[OPERATOR_NAME]] |
+| Named individuals | The accountable individual, ICU A2, A3 and D12 (section 5.1), the statement of responsibilities (section 5.2) and the sign-off (section 8) name a natural person. If the provider is a company, they name the individual it appoints, not the company. |
 | Assessment date | [[EFFECTIVE_DATE]] |
 | Next scheduled review | 12 months after [[EFFECTIVE_DATE]], or earlier on a trigger in section 7 |
 | Method | Ofcom's four-step method in its *Risk Assessment Guidance and Risk Profiles* [R1] |
@@ -426,9 +427,11 @@ that s.23(5) requires for alternative measures does not arise.
 - **Records.** This document is the written record under s.23(2) and (3): the
   assessment, and the Codes measures taken. It records no alternative
   measures (s.23(4)). Operational records are kept privately: the abuse log
-  (date, kind of report, endpoint ID or address blocked, outcome, never
-  content), relay denylist changes, the quarterly review notes (ICU A5 and the
-  targets in section 5.2), and correspondence with authorities. See
+  (date and time, kind of report, endpoint ID or address blocked, outcome;
+  never content and never a link's `cap=` part), relay denylist changes, the
+  quarterly review notes (ICU A5 and the targets in section 5.2), and
+  correspondence with reporters and authorities, which alone holds a
+  reported link and a reporter's contact details. See
   [README](README.md#private-records).
 - **Reporting to Ofcom.** Ofcom can require information, including this record,
   by an information notice that sets the deadline [OSA s.102]. Ofcom has fined a
