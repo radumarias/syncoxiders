@@ -1,2 +1,7 @@
 [build]
 filehash = false
+# No inline <script> in the output, so the Content-Security-Policy can use
+# script-src 'self' without 'unsafe-inline' or a nonce. index.html loads
+# assets/app-init.js (and its preload links) itself instead of Trunk's
+# injected inline loader.
+inject_scripts = false

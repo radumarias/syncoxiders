@@ -18,6 +18,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      # Self-hosted relay list compiled into the wasm and rendered into the
+      # CSP (build-web.sh, verify-deployment.mjs). Empty until the repository
+      # variable is set, which keeps n0's public relays.
+      P2P_RELAY_URL: ${{ vars.P2P_RELAY_URL }}
     defaults:
       run:
         working-directory: p2p-transfer
@@ -36,6 +41,31 @@ jobs:
       - name: Build browser app
         run: npm run build
 
+      # Publish the SHA-256 of every served file so anyone can compare it with
+      # what oxfer.app serves. _headers is excluded: Cloudflare applies it
+      # rather than serving it, and the package renders its relay token.
+      - name: Record bundle hashes
+        run: |
+          set -o pipefail
+          (cd dist && find . -type f ! -path ./_headers -printf '%P\0' | LC_ALL=C sort -z | xargs -0 sha256sum --) > oxfer-web-sha256.txt
+          test -s oxfer-web-sha256.txt
+          {
+            echo "### Oxfer web bundle SHA-256"
+            echo
+            echo "Commit: \`${GITHUB_SHA}\`"
+            echo
+            echo '```text'
+            cat oxfer-web-sha256.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bundle hashes
+        uses: actions/upload-artifact@v4
+        with:
+          name: oxfer-web-sha256-${{ github.sha }}
+          path: p2p-transfer/oxfer-web-sha256.txt
+          if-no-files-found: error
+
       - name: Deploy with cf
         env:
           CI: true
@@ -49,6 +79,9 @@ jobs:
           fi
           npx cf deploy --prebuilt
 
+      # Besides bytes and headers, verify-deployment.mjs fails while Cloudflare
+      # Network Error Logging (NEL/Report-To headers) is on for the oxfer.app
+      # zone. workers.dev is outside that zone, so there it only warns.
       - name: Verify production
         run: |
           node verify-deployment.mjs https://oxfer.42dev.workers.dev/

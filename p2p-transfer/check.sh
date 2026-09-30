@@ -17,6 +17,7 @@ node --test tests/wake_lock.test.mjs
 node --test tests/theme.test.mjs
 node --test tests/favicon.test.mjs
 node --test tests/package-cf-output.test.mjs
+node --test tests/web-pages.test.mjs
 wasm-pack test --headless --firefox -- --test webrtc_wasm
 wasm-pack test --headless --firefox -- --test relay_wasm
 wasm-pack test --headless --firefox -- --test resume_wasm
@@ -25,3 +26,17 @@ cmp assets/theme.js dist/assets/theme.js
 cmp assets/favicon.js dist/assets/favicon.js
 cmp assets/oxfer-favicon-light.svg dist/assets/oxfer-favicon-light.svg
 cmp assets/oxfer-favicon-dark.svg dist/assets/oxfer-favicon-dark.svg
+cmp assets/_headers dist/_headers
+cmp assets/boot.js dist/assets/boot.js
+cmp assets/app-init.js dist/assets/app-init.js
+cmp assets/theme-lab.js dist/assets/theme-lab.js
+cmp assets/legal.css dist/assets/legal.css
+cmp theme.html dist/theme.html
+cmp privacy.html dist/privacy.html
+cmp terms.html dist/terms.html
+cmp abuse.html dist/abuse.html
+# Trunk.toml inject_scripts = false: no inline loader for the CSP to block.
+if grep -q -E '<script( type="module")?>' dist/index.html; then
+    echo "dist/index.html contains an inline <script>; the CSP would block it." >&2
+    exit 1
+fi
