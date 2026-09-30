@@ -43,15 +43,15 @@ to file-sharing services regardless of size.
 | A1 | Provision one EU VPS for the relay | OVH VPS-1 in Gravelines, Strasbourg or Frankfurt; IONOS VPS S+ in Germany as the month-to-month fallback; Hetzner CX23 when its cost-optimised tier is orderable again | Smallest instance is enough; the relay needs well under 100 MB of RAM and idles at zero CPU. Traffic matters more than compute. Accept the provider's DPA in the account settings and keep a copy. Prices in section 4. |
 | A2 | DNS `relay.oxfer.app` A and AAAA records, DNS-only | Cloudflare DNS | Do not proxy this hostname. The relay needs long-lived WebSockets and UDP for QUIC address discovery, and proxying would add a US processor to the relay path. |
 | A3 | Run the official `iroh-relay` 1.1 binary or container image | VPS, systemd | Config in section 4. ACME TLS is built in. Open TCP 80 and 443, UDP 7842. Bind metrics to localhost. Disable access logging; set journald retention to a few days. |
-| A4 | Run a STUN-only server next to it | VPS, `coturn` with `stun-only` | iroh-relay 1.x no longer serves STUN, and browser WebRTC needs classic STUN. STUN is a few packets per session, negligible load. Open UDP and TCP 3478. |
+| A4 | STUN: use Cloudflare's, run none | `stun:stun.cloudflare.com:3478` | Documented as free and unlimited, no account needed. Cloudflare already serves the app shell under a DPA, so its STUN adds no recipient. A single STUN server is standard practice: if it is unreachable, direct WebRTC fails for NATed peers and the transfer takes the iroh relay. coturn returns only if A12 adopts TURN. |
 | A5 | Rate limits and access control on the relay | relay config `[limits]` | Per-connection byte rate and connection-accept limits. Keep `access = "everyone"` because shares use fresh keys, so allowlists cannot work. |
 | A6 | Point production builds at the relay | `.github/workflows/oxfer-web.yml`, `build-web.sh` | Export `P2P_RELAY_URL=https://relay.oxfer.app` before `trunk build`. `RelayChoice::from_env` in `src/node.rs` then selects `RelayChoice::Custom`, which uses `presets::Minimal`: no relay map from n0 and no publishing or lookup at `dns.iroh.link`. `tests/relay_wasm.rs` already tolerates the variable. |
-| A7 | Replace the ICE server list | `src/webrtc.rs` `ICE_SERVERS` | `stun:stun.oxfer.app:3478` first, then `stun:stun.cloudflare.com:3478` under the existing Cloudflare DPA, then `stun:stun.relay.metered.ca:80`. Metered's STUN is unlimited and free, needs no credentials, and the company is in Ontario, which the EU adequacy decision for Canada covers. Remove `stun.l.google.com`. Until A4 exists, ship Cloudflare plus Metered. |
+| A7 | Replace the ICE server list | `src/webrtc.rs` `ICE_SERVERS` | Cloudflare only: `stun:stun.cloudflare.com:3478`. Remove `stun.l.google.com`. Every listed STUN server receives the user's IP on every session, so the list stays at one name that is already a processor. |
 | A8 | Support several relays for later regions | `src/node.rs` `RelayChoice::Custom` | Parse a comma-separated `P2P_RELAY_URL` into `RelayMap::from_iter`. Not needed on day one. A non-EU relay you operate is still your infrastructure; the provider's DPA and SCCs cover the location. |
 | A9 | Update diagnostics and docs | `src/diagnostics.rs`, `docs/diagnostics.md`, `docs/cloudflare-workers.md` | The diagnostics probe already handles `RelayChoice::Custom`. Docs still describe the n0 preset. |
 | A10 | Monitoring | External uptime probe | A WebSocket probe against `wss://relay.oxfer.app/relay` with the `iroh-relay-v1` subprotocol, the same check `assets/diagnostics.js` performs. |
 | A11 | Upgrade policy | VPS | Unattended security upgrades for the OS. Relay upgrades follow the crate's iroh version; the protocol is versioned, so track `Cargo.lock`. |
-| A12 | TURN, only if measured | coturn on the VPS | TURN services such as Metered's Open Relay are WebRTC relays, not iroh relays, so they cannot replace A3. A TURN path would only add relayed WebRTC behind symmetric NATs. Enable it on the existing coturn instance if diagnostics show many transfers falling back to the iroh relay with poor throughput. Do not use hosted TURN: its credentials cannot be hidden in a static site, and the free 20 GB is two or three large transfers. |
+| A12 | TURN, only if measured | coturn on the VPS, or Cloudflare TURN | TURN services are WebRTC relays, not iroh relays, so they cannot replace A3. A TURN path only adds relayed WebRTC behind symmetric NATs; issue #53 holds the measurement plan. If adopted: coturn on the VPS with quotas, or Cloudflare TURN, which has a 1,000 GB free tier per its FAQ. Either way TURN needs credentials a static site cannot hide, so it also needs a small credential-minting Worker. |
 
 ### B. Client and deployment hardening
 
@@ -82,10 +82,10 @@ to file-sharing services regardless of size.
 | D1 | UK OSA illegal-content risk assessment | `docs/compliance/osa-illegal-content.md` | Outline in section 8. Ofcom's small-service tool produces the skeleton. Dated and signed by the operator. |
 | D2 | UK OSA children's access assessment | `docs/compliance/osa-children-access.md` | General-audience tool, no child-directed content, no discovery, no feed. Record the conclusion and revisit yearly. |
 | D3 | Australia DIS Standard tier self-assessment | `docs/compliance/esafety-dis.md` | Tier 3 low-risk profile: terms prohibit class 1A and 1B material, report channel exists, eSafety notices are answered. |
-| D4 | GDPR Article 30 record and DPIA screening | `docs/compliance/ropa.md` | Processing activities: web hosting logs at Cloudflare, relay and STUN connection metadata on own infrastructure, peer address exchange. Screening note: no high-risk criteria, so no DPIA. |
+| D4 | GDPR Article 30 record and DPIA screening | `docs/compliance/ropa.md` | Processing activities: web hosting logs at Cloudflare, relay connection metadata on own infrastructure, peer address exchange. Screening note: no high-risk criteria, so no DPIA. |
 | D5 | Transparency and no-logs statement | `docs/compliance/transparency.md` and a section in `privacy.html` | What exists: nothing per user or per transfer. What a lawful request can obtain: nothing retroactively. |
 | D6 | Incident runbook | `docs/compliance/incident-runbook.md` | Primary scenario: compromised build or deploy pipeline. Steps: revoke tokens, redeploy a verified build, compare hashes, notify. Deadlines: GDPR 72 hours to ANSPDCP; India DPDP 72 hours to the Board from May 2027; CERT-In 6 hours on a best-effort basis. |
-| D7 | Processor list | inside `ropa.md` | Cloudflare (hosting, STUN), Metered (STUN, Canada, adequacy decision), VPS provider (relay, STUN), GitHub (build). Link to each DPA. |
+| D7 | Processor list | inside `ropa.md` | Cloudflare (hosting, STUN), VPS provider (relay), GitHub (build). Link to each DPA. |
 
 ### E. Registrations and market posture
 
@@ -109,7 +109,7 @@ to file-sharing services regardless of size.
 
 | Phase | Items | Time |
 | --- | --- | --- |
-| 0. Quick fixes | A7 (Cloudflare and Metered STUN until A4 exists), B3, B4, C5 draft | Days |
+| 0. Quick fixes | A7 (Cloudflare STUN only), B3, B4, C5 draft | Days |
 | 1. Relay | A1 to A6, A9, A10, then redeploy | 1 to 2 weeks |
 | 2. Pages | C1 to C4, B6, C6 | 1 week, parallel with phase 1 |
 | 3. Hardening and records | B1 report-only then enforce, B2, B5, D1 to D7, E1 | 2 weeks |
@@ -134,7 +134,7 @@ Why Cloudflare Workers and Containers do not fit:
 
 | Option | UDP for QAD | Region control | Long-lived WebSockets | Cost order | Data-protection position | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| EU VPS with `iroh-relay` and `coturn` (OVH, IONOS, Hetzner when in stock) | Yes | Yes | Yes | About EUR 4 to 6 per month, traffic included | You are the controller, EU provider under a DPA | Recommended |
+| EU VPS with `iroh-relay` (OVH, IONOS, Hetzner when in stock) | Yes | Yes | Yes | About EUR 4 to 6 per month, traffic included | You are the controller, EU provider under a DPA | Recommended |
 | n0 managed relays | Yes | Yes | Yes | Quote from n0 | Needs a DPA with n0 and confirmation of regions | Acceptable if you prefer not to operate a server |
 | Fly.io machine in an EU region (fra, ams, cdg, arn) | Yes, with a dedicated IPv4 | Yes, one machine per relay hostname | Yes, raw TCP passthrough on 443 | About USD 5 to 8 per month plus USD 0.02 per GB egress | US company (Fly.io Inc.), EU region, pre-signed DPA | Viable second choice; conditions in section 4 |
 | Cloudflare Workers or Containers | No | No | Limited | USD 5 plan plus usage | US processor on the relay hop | Not viable |
@@ -147,7 +147,7 @@ native builds are distributed.
 Hosted STUN/TURN services (Metered Open Relay, Cloudflare TURN, Twilio) are
 not candidates for this table. They relay WebRTC only; an iroh endpoint
 cannot use them, and Oxfer's signalling and fallback stream run over iroh.
-See A7 for their STUN role and A12 for TURN.
+See A4 and A7 for STUN and A12 for TURN.
 
 ## 4. Relay runbook
 
@@ -183,21 +183,12 @@ Check the key names against the `iroh-relay` version pinned by the
 workspace before deploying; the server config schema is versioned with the
 crate.
 
-STUN-only `coturn`:
+STUN is Cloudflare's (A4); nothing else runs on this host.
 
-```
-# /etc/turnserver.conf
-stun-only
-listening-port=3478
-no-cli
-no-tls
-no-dtls
-```
+Firewall: allow TCP 80 and 443, UDP 7842, plus SSH from your addresses.
+Everything else closed.
 
-Firewall: allow TCP 80, 443 and 3478, UDP 3478 and 7842, plus SSH from your
-addresses. Everything else closed.
-
-Logging: run both services under systemd with `StandardOutput=journal`, set
+Logging: run the relay under systemd with `StandardOutput=journal`, set
 `SystemMaxUse=200M` and `MaxRetentionSec=3day` in `journald.conf`, and do
 not enable any access log. The relay's metrics are aggregate counters and
 stay on localhost.
@@ -232,8 +223,7 @@ plain VPS:
    `quic_bind_addr` takes an IP, so an entrypoint script resolves
    `fly-global-services` and writes the config before start. Skip until native
    builds ship; browsers never use UDP against the relay.
-6. **STUN.** Run coturn as a second small app with its own dedicated IPv4, or
-   use Cloudflare STUN alone. One STUN server is enough for WebRTC.
+6. **STUN.** Nothing to run: STUN is Cloudflare's (A4).
 7. **Egress is metered from the first byte**, USD 0.02 per GB in Europe and
    North America. A relayed 5 GB transfer costs about ten cents. A VPS with
    included traffic has no such line item.
@@ -301,9 +291,9 @@ that, plus half an hour whenever iroh is upgraded.
 | OS patches | `unattended-upgrades` with a nightly reboot window when a kernel update needs it | Automatic; glance at it monthly | Minutes |
 | Relay version | Pin the `n0computer/iroh-relay` image tag or release binary. Upgrade when the workspace's iroh version moves or n0 publishes a security fix. Verify with the app's Diags page afterwards. | Quarterly, or on advisories | 30 minutes |
 | TLS | ACME renewal is built into the relay. Nothing to do unless the uptime probe reports a certificate error. | Automatic | None |
-| Uptime and certificate monitoring | A free external monitor on `https://relay.oxfer.app/` (the relay serves a plain page) and TCP 443, alerting by email. Same for STUN on UDP 3478 if the monitor supports it. | Automatic | None |
+| Uptime and certificate monitoring | A free external monitor on `https://relay.oxfer.app/` (the relay serves a plain page) and TCP 443, alerting by email. | Automatic | None |
 | Traffic and capacity | Read the provider's traffic graph. Unlimited plans remove the overage worry; on Hetzner set an alert at 80 percent of 20 TB. The relay handles tens of thousands of concurrent connections on this hardware. | Monthly | Minutes |
-| Security hygiene | SSH keys only, password auth off, firewall allowing only 80, 443, 3478 and 7842, no other services on the box. Rotate SSH keys yearly. | Yearly | 15 minutes |
+| Security hygiene | SSH keys only, password auth off, firewall allowing only 80, 443 and 7842, no other services on the box. Rotate SSH keys yearly. | Yearly | 15 minutes |
 | Logs and retention | journald capped at a few days, no access logs, metrics bound to localhost. Set once. | Once | None |
 | Abuse response | Block an offending IP at the firewall or via the relay's denylist access mode, and record it in the abuse log. | On demand | Minutes |
 | Rebuild capability | Keep the config, systemd units and a cloud-init file under `deploy/relay/` in this repo, so a fresh box is live in ten minutes. Rehearse once a year. | Yearly | 30 minutes |
@@ -324,8 +314,8 @@ What is processed, by whom, and why:
 | Data | Who sees it | Purpose | Retention |
 | --- | --- | --- | --- |
 | IP address, user agent, request metadata for the app shell | Cloudflare, as processor | Serving and protecting the site | Cloudflare's own edge-log retention; none by the operator |
-| IP addresses, endpoint IDs, timing and volume of relayed connections | The operator's relay and STUN servers | Establishing and, if needed, relaying encrypted transfers | Not logged; aggregate counters only |
-| IP address in STUN binding requests | Operator's STUN server; Cloudflare and Metered STUN as backups | NAT traversal | Not logged by the operator; backups under their own policies |
+| IP addresses, endpoint IDs, timing and volume of relayed connections | The operator's relay | Establishing and, if needed, relaying encrypted transfers | Not logged; aggregate counters only |
+| IP address in STUN binding requests | Cloudflare, as processor | NAT traversal | Cloudflare's own policy; none by the operator |
 | Peer IP addresses exchanged through ICE | The other party to the transfer | Direct connection | Held by the peer's browser for the session |
 | Theme preference, service-worker app cache | The user's browser only | Convenience, offline shell | Until cleared |
 | Opt-in local copies: file bytes, names, sizes, hashes | The user's browser only, OPFS and IndexedDB | Resumable receives | Until the user deletes them |
@@ -340,7 +330,7 @@ the sender keeps sharing. No sale of data, no advertising, no profiling.
 Regional annex, one or two lines each: California (no sale, no tracking,
 Do Not Track not applicable), Brazil (LGPD contact channel), India (grievance
 contact and timelines), Singapore (data protection officer contact), Japan
-(list of third-party transmission destinations: relay, STUN, Cloudflare),
+(list of third-party transmission destinations: relay, Cloudflare),
 Switzerland and UK (rights mirror GDPR).
 
 ## 6. Terms of use: content checklist
@@ -401,7 +391,7 @@ Switzerland and UK (rights mirror GDPR).
 
 | File | Change |
 | --- | --- |
-| `src/webrtc.rs` | New `ICE_SERVERS`: own STUN, Cloudflare, Metered; Google removed. Gate the `__p2p` handle |
+| `src/webrtc.rs` | New `ICE_SERVERS`: Cloudflare only, Google removed. Gate the `__p2p` handle |
 | `src/node.rs` | Optional: comma-separated relay list in `RelayChoice::Custom` |
 | `src/app.rs` | Footer links; native ticket IP note; updated relay sentence |
 | `src/diagnostics.rs` | No change required; verify probe against the custom relay |
