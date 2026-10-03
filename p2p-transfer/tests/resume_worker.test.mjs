@@ -8,9 +8,21 @@ const workerSource = await readFile(
   'utf8',
 );
 
-const DB_NAME = 'oxfer-resume';
-const STORE = 'groups';
-const ROOT = 'oxfer-resume';
+// Runs the worker script in a fresh context with these globals and returns an
+// evaluator for that context.
+function runWorker(globals) {
+  const context = vm.createContext({
+    console,
+    self: { postMessage() {} },
+    structuredClone,
+    ...globals,
+  });
+  vm.runInContext(workerSource, context, { filename: 'resume-worker.js' });
+  return source => vm.runInContext(source, context);
+}
+
+// The worker's own names for its database, object store and directory.
+const { DB_NAME, STORE, ROOT } = runWorker({})('({ DB_NAME, STORE, ROOT })');
 
 const domError = name => new DOMException(name, name);
 const later = callback => setTimeout(callback, 0);
@@ -228,15 +240,10 @@ function workerContext({ group, access = memoryAccess, enumerable = true } = {})
   const idb = new FakeIndexedDB({ enumerable });
   if (group) idb.seed(group);
   const opfs = new FakeDirectory(access);
-  const context = vm.createContext({
-    console,
-    self: { postMessage() {} },
-    structuredClone,
+  const fn = runWorker({
     indexedDB: idb,
     navigator: { storage: { getDirectory: async () => opfs } },
   });
-  vm.runInContext(workerSource, context, { filename: 'resume-worker.js' });
-  const fn = name => vm.runInContext(name, context);
   return {
     idb,
     opfs,
@@ -248,8 +255,8 @@ function workerContext({ group, access = memoryAccess, enumerable = true } = {})
     discard: fn('discard'),
     exportFile: fn('exportFile'),
     // The worker checks `instanceof Uint8Array` in its own realm.
-    bytes: (length, value) => vm.runInContext(`new Uint8Array(${length}).fill(${value})`, context),
-    openCount: () => vm.runInContext('openFiles.size', context),
+    bytes: (length, value) => fn(`new Uint8Array(${length}).fill(${value})`),
+    openCount: () => fn('openFiles.size'),
   };
 }
 
@@ -509,6 +516,27 @@ test('a database deleted by another tab after databases() listed it is not recre
   assert.deepEqual(structuredClone(await worker.list()), []);
   assert.deepEqual([...worker.idb.stored.keys()], []);
   assert.equal(worker.idb.unhandledErrors, 0);
+});
+
+test('a write after another tab deleted the database fails without listing or recreating it', async () => {
+  const worker = workerContext();
+  const group = manifest('0');
+  await worker.prepare(prepareMessage(group));
+  let listed = 0;
+  const { databases } = worker.idb;
+  worker.idb.databases = async () => {
+    listed += 1;
+    return databases();
+  };
+  worker.idb.stored.clear();
+  await assert.rejects(
+    worker.write({ id: group.id, index: 0, bytes: worker.bytes(10, 7) }),
+    /resume checkpoint changed unexpectedly/,
+  );
+  assert.equal(listed, 0, 'the write path listed databases although prepare found it');
+  assert.deepEqual([...worker.idb.stored.keys()], []);
+  assert.equal(worker.idb.unhandledErrors, 0);
+  await worker.release({ id: group.id, index: 0 });
 });
 
 test('the IndexedDB fake drops a database whose creation is aborted, as browsers do', async () => {

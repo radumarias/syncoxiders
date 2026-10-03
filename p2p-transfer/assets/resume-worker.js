@@ -69,16 +69,19 @@ function validateGroup(group, requested) {
   }
 }
 
-// Opens the metadata database. Only saving passes `create`: every other path
-// (listing, exporting, deleting) resolves null for a missing database instead
-// of creating it. It asks indexedDB.databases() first, because opening a
-// missing database leaves its name on disk even when the open is undone. Where
-// that is unavailable, or another tab deleted the database meanwhile, it aborts
-// the version-change transaction that would create it. `known` skips that
-// listing on the write path, where `prepare` has already found or created the
-// database: the abort still keeps a deleted one from being recreated.
-async function database(create, { known = false } = {}) {
-  if (!create && !known && typeof indexedDB.databases === 'function') {
+// Opens the metadata database. `mode` says what to do when it is missing:
+//   'create'   creates it. Only saving uses this (see `putGroup`).
+//   'probe'    resolves null and creates nothing: listing, exporting, deleting
+//              and `prepare`'s first read. It asks indexedDB.databases() first,
+//              because opening a missing database leaves its name on disk even
+//              when the open is undone.
+//   'existing' resolves null and creates nothing, without that listing: the
+//              write path, where `prepare` has already found or created it.
+// Where databases() is unavailable, or another tab deleted the database
+// meanwhile, the non-creating modes abort the version-change transaction that
+// would create it.
+async function database(mode) {
+  if (mode === 'probe' && typeof indexedDB.databases === 'function') {
     const existing = await indexedDB.databases();
     if (!existing.some(info => info.name === DB_NAME)) return null;
   }
@@ -86,7 +89,7 @@ async function database(create, { known = false } = {}) {
     const request = indexedDB.open(DB_NAME, 1);
     let missing = false;
     request.onupgradeneeded = event => {
-      if (!create && event.oldVersion === 0) {
+      if (mode !== 'create' && event.oldVersion === 0) {
         missing = true;
         request.transaction.abort();
         return;
@@ -107,23 +110,26 @@ async function database(create, { known = false } = {}) {
   });
 }
 
-async function transact(mode, body, { create = false } = {}) {
-  const db = await database(create);
+// Runs the one request `body` makes on the store and resolves with its result
+// once the transaction commits. A database that `database(open)` finds missing
+// holds nothing: `body` does not run and this resolves undefined.
+async function transact(open, access, body) {
+  const db = await database(open);
   if (!db) return undefined;
   try {
     return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, mode);
-      const store = tx.objectStore(STORE);
-      let result;
+      const tx = db.transaction(STORE, access);
+      let request;
       try {
-        result = body(store);
+        request = body(tx.objectStore(STORE));
       } catch (error) {
         tx.abort();
         reject(error);
         return;
       }
-      tx.oncomplete = () => resolve(result);
-      tx.onerror = () => reject(tx.error || new Error('resume metadata transaction failed'));
+      tx.oncomplete = () => resolve(request.result);
+      tx.onerror = event =>
+        reject(event?.target?.error || tx.error || new Error('resume metadata transaction failed'));
       tx.onabort = () => reject(tx.error || new Error('resume metadata transaction was aborted'));
     });
   } finally {
@@ -131,27 +137,15 @@ async function transact(mode, body, { create = false } = {}) {
   }
 }
 
-// Reads never create the database: a missing one holds no group. Pass
-// `{ known: true }` once `prepare` has found or created it.
-async function getGroup(id, options) {
-  const db = await database(false, options);
-  if (!db) return undefined;
-  try {
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readonly');
-      const request = tx.objectStore(STORE).get(id);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error || new Error('could not read resume metadata'));
-    });
-  } finally {
-    db.close();
-  }
+// `open` is 'probe' unless `prepare` has already found or created the database.
+async function getGroup(id, open = 'probe') {
+  return transact(open, 'readonly', store => store.get(id));
 }
 
 // Saving is the only path that creates the database (see `prepare`).
 async function putGroup(group) {
   group.updated = Date.now();
-  await transact('readwrite', store => store.put(group), { create: true });
+  await transact('create', 'readwrite', store => store.put(group));
 }
 
 // The OPFS directory that holds kept copies. Only saving passes `create`;
@@ -215,7 +209,7 @@ async function prepare(message) {
     // checkpoint read before lock acquisition was only sufficient to locate those files:
     // another tab may have advanced it while this worker waited. Reread it now, then perform
     // recovery from this authoritative snapshot.
-    group = await getGroup(message.id, { known: true });
+    group = await getGroup(message.id, 'existing');
     validateGroup(group, requested);
     for (const entry of opened) {
       const meta = group.files[entry.index];
@@ -279,7 +273,7 @@ async function write(message) {
   }
   await call(entry.access, 'flush');
   const next = entry.written + consumed;
-  const group = await getGroup(entry.id, { known: true });
+  const group = await getGroup(entry.id, 'existing');
   if (!group || group.files[entry.index].written !== String(entry.written)) {
     throw new Error('resume checkpoint changed unexpectedly');
   }
@@ -295,7 +289,7 @@ async function finish(message) {
   if (entry.written !== entry.size) throw new Error('download is incomplete');
   await call(entry.access, 'flush');
   await closeEntry(entry);
-  const group = await getGroup(message.id, { known: true });
+  const group = await getGroup(message.id, 'existing');
   if (!group || group.files[message.index].written !== group.files[message.index].size) {
     throw new Error('resume checkpoint changed unexpectedly');
   }
@@ -308,19 +302,8 @@ async function release(message) {
 }
 
 async function list() {
-  const db = await database(false);
-  if (!db) return [];
-  try {
-    const groups = await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readonly');
-      const request = tx.objectStore(STORE).getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error || new Error('could not list resume metadata'));
-    });
-    return groups.sort((a, b) => b.updated - a.updated);
-  } finally {
-    db.close();
-  }
+  const groups = await transact('probe', 'readonly', store => store.getAll());
+  return (groups ?? []).sort((a, b) => b.updated - a.updated);
 }
 
 // Deleting a copy that does not exist is a no-op and creates nothing.
@@ -335,7 +318,7 @@ async function discard(message) {
   } catch (error) {
     if (error?.name !== 'NotFoundError') throw error;
   }
-  await transact('readwrite', store => store.delete(message.id));
+  await transact('probe', 'readwrite', store => store.delete(message.id));
 }
 
 async function exportFile(message) {
