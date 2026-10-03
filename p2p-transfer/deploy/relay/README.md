@@ -21,8 +21,9 @@ server: `setup.sh` installs the prebuilt release binary and checks its SHA-256.
 | File | Installed as | Purpose |
 | --- | --- | --- |
 | `config.toml` | `/etc/iroh-relay/config.toml` | Relay configuration, with the server's denylist merged in by `setup.sh`. Every key has a comment naming the iroh-relay 1.1.0 source lines it comes from. |
-| `iroh-relay.service` | `/etc/systemd/system/iroh-relay.service` | Hardened systemd unit: dynamic user, only `CAP_NET_BIND_SERVICE`, read-only system, no per-connection logging. |
-| `nftables.conf` | `/etc/nftables.conf` | Firewall: inbound dropped except SSH, TCP 80 and 443, UDP 7842, DHCPv6 replies and essential ICMP; ban sets; per-source connection limits. |
+| `iroh-relay.service` | `/etc/systemd/system/iroh-relay.service` | Hardened systemd unit: dynamic user, only `CAP_NET_BIND_SERVICE`, read-only system. |
+| `relay.env` | `/etc/iroh-relay/relay.env` | The relay's environment, read by the unit and by the Fly entrypoint: the `RUST_LOG` filter that keeps per-connection events out of its log ("What is logged"). |
+| `nftables.conf` | `/etc/nftables.conf` | Firewall: inbound dropped except SSH, TCP 80 and 443, UDP 7842, DHCPv6 replies and essential ICMP; ban sets; per-source connection limits. Mode 0755, as the nftables package ships the file: it is an `nft -f` script. |
 | `journald-oxfer-relay.conf` | `/etc/systemd/journald.conf.d/zz-oxfer-relay.conf` | Journal capped at 200 MB and three days. |
 | `logrotate-oxfer-relay.conf` | `/etc/logrotate.d/oxfer-relay` | Empties the login records `wtmp`, `btmp` and, on Debian 13, `wtmp.db` every day. |
 | `tmpfiles-oxfer-relay.conf` | `/etc/tmpfiles.d/oxfer-relay.conf` | Points `/var/log/lastlog` at `/dev/null`, so no last-login record is kept. |
@@ -31,16 +32,18 @@ server: `setup.sh` installs the prebuilt release binary and checks its SHA-256.
 | `oxfer-relay-ban` | `/usr/local/sbin/oxfer-relay-ban` | Adds, lists and lifts IP bans, each for 1 to 365 days (30 by default), and keeps them with their expiry in `/etc/nftables.d/bans.nft`. |
 | `oxfer-relay-ban.service`, `oxfer-relay-ban.timer` | `/etc/systemd/system/` | Hourly removal of expired bans. |
 | `setup.sh` | `/opt/oxfer-relay/setup.sh` | Idempotent installer for all of the above. `setup.sh --denylist` applies only `/etc/oxfer-relay/denylist.txt`. |
+| `denylist.sh` | `/opt/oxfer-relay/denylist.sh` | Merges endpoint IDs into the relay config and has the relay binary parse them; used by `setup.sh` and the Fly entrypoint. |
 | `cloud-init.yaml` | provider "user data" | Generated: writes the kit to `/opt/oxfer-relay/` and runs `setup.sh` on first boot. |
-| `render.sh` | not installed | Regenerates `cloud-init.yaml` and `fly/config.toml`; `--check` detects drift. |
-| `fly/` | Fly.io | `fly.toml`, `Dockerfile`, `entrypoint.sh` and a generated copy of `config.toml`. |
+| `render.sh` | not installed | Regenerates `cloud-init.yaml`; `--check` detects drift. |
+| `fly/` | Fly.io | `fly.toml`, `Dockerfile` and `entrypoint.sh`. The image is built from the kit directory, so it takes `config.toml`, `relay.env` and `denylist.sh` as they are. |
 
 Edit the source files, then run `sh render.sh`. Never edit `cloud-init.yaml`
-or `fly/config.toml` by hand; `sh render.sh --check` fails when they are stale.
+by hand; `sh render.sh --check` fails when it is stale.
 `cloud-init.yaml` holds each kit file gzip-compressed and base64-encoded
 (cloud-init's `encoding: gz+b64`): as plain text the kit is over Hetzner's
 32 KiB user-data limit. `--check` decodes every embedded file and compares it
-with its source.
+with its source. Both fail if the kit files `setup.sh` requires
+(`KIT_FILES`) differ from the files `render.sh` embeds (`FILES`).
 
 This repository is public. Some state lives only on the server, and
 `setup.sh` never overwrites it, so upgrades and reruns keep it:
@@ -185,7 +188,7 @@ limits which CA may issue for this name. It affects only this hostname.
 2. Create the server: Debian 12, Debian 13 or Ubuntu 24.04, your SSH key, and
    the whole of `cloud-init.yaml` pasted into the user-data field.
    - Hetzner Cloud: "Cloud config" field; the documented limit is 32 KiB
-     (`cloud-init.yaml` is about 26 KB).
+     (`cloud-init.yaml` is about 30 KB).
    - IONOS: Cloud Panel, Server, Create, Advanced options, "Cloud-Init User Data".
    - Scaleway: the cloud-init field when creating the Instance.
    - OVH: Public Cloud instances accept user data. Check the VPS order form;
@@ -221,9 +224,10 @@ tar -cf - . | ssh root@SERVER_IP \
    mismatch aborts without installing anything.
 3. Creates `/etc/oxfer-relay/denylist.txt` if missing and installs the relay
    config with that denylist merged in (see "Abuse blocking"). Installs the
-   unit, journald and apt files. Replaces the packages' monthly or yearly
-   logrotate entries for `wtmp`, `btmp` and `wtmp.db` with its own daily one,
-   and empties those files the first time. Links `/var/log/lastlog` to
+   unit with its environment file `relay.env`, and the journald and apt
+   files. Replaces the packages' monthly or yearly logrotate entries for
+   `wtmp`, `btmp` and `wtmp.db` with its own daily one, and empties those
+   files the first time. Links `/var/log/lastlog` to
    `/dev/null`. Installs `oxfer-relay-ban` and its hourly timer.
 4. Checks `nftables.conf`, together with `/etc/nftables.d/*.nft`, with
    `nft -c`. It reloads the firewall only when `/etc/nftables.conf` changed
@@ -305,8 +309,8 @@ and no pkarr publishing or lookup at `dns.iroh.link`. The deploy job also
 renders the CSP `connect-src` from the same variable.
 
 No deploy succeeds until every placeholder in the legal pages is filled:
-`build-web.sh` refuses to package while any `[[...]]` token remains, and
-once they are filled it refuses to package unless `P2P_RELAY_URL` lists
+`build-web.sh` refuses to build while any `[[...]]` token remains, and
+once they are filled it refuses to build unless `P2P_RELAY_URL` lists only
 `https://relay.oxfer.app`
 ([relay go-live guard](../../docs/cloudflare-workers.md#relay-go-live-guard)).
 Filling the pages and setting the variable are therefore one step.
@@ -349,17 +353,16 @@ must change together
 ([relay selection](../../docs/cloudflare-workers.md#relay-selection-p2p_relay_url)):
 
 1. **The rollback commit.** Once the pages are filled, `build-web.sh`
-   refuses to package unless `P2P_RELAY_URL` lists `https://relay.oxfer.app`,
-   whatever the pages say
+   refuses to build unless `P2P_RELAY_URL` lists only
+   `https://relay.oxfer.app`, whatever the pages say
    ([relay go-live guard](../../docs/cloudflare-workers.md#relay-go-live-guard)).
    The guard does not read the page text. The rollback commit must:
    - edit `privacy.html`, and any other page or record that names
      `relay.oxfer.app` (in `docs/compliance/` too), to describe n0's relays;
-   - change or remove the relay go-live guard: `operator_relay` in
-     `build-web.sh`, between the `# BEGIN legal-page guards` and
-     `# END legal-page guards` markers, and `OPERATOR_RELAY` in
-     `package-cf-output.mjs`;
-   - update its test in `tests/web-pages.test.mjs`, which fails when
+   - change or remove the relay go-live guard: `OPERATOR_RELAY` and
+     `checkLegalPages` in `package-cf-output.mjs` (`build-web.sh` only
+     calls it, with `node package-cf-output.mjs --check-relay --check-legal`);
+   - update its tests in `tests/web-pages.test.mjs`, one of which fails when
      `privacy.html` stops naming `relay.oxfer.app`.
 2. **The variable.** Delete it before the commit reaches `main`:
    ```sh
@@ -400,7 +403,7 @@ relay and the app together.
    `config.toml`. Unknown keys are ignored silently, so a renamed key (for
    example `key_cache_capacity` or `access`) does not produce an error. Check
    that the new version still accepts `access.denylist` and parses it at
-   start, which `setup.sh`'s denylist check relies on.
+   start, which the denylist check in `denylist.sh` relies on.
 3. For Fly, update the digest in `fly/Dockerfile` from
    `docker buildx imagetools inspect n0computer/iroh-relay:vX.Y.Z` (the
    "Digest" line of the index).
@@ -457,13 +460,15 @@ relay; the address block below is the remaining measure there.
    sh /opt/oxfer-relay/setup.sh --denylist
    ```
    The file takes one ID per line; `#` starts a comment. `--denylist` checks
-   every entry with the relay binary itself (a throwaway relay on a loopback
-   port parses the list), then installs the config with
-   `access.denylist = [...]` in place of `access = "everyone"` and restarts
-   the relay. All relay connections drop for a few seconds and reconnect;
-   the denied endpoint cannot. If an entry is not a valid endpoint ID,
-   nothing changes and the relay keeps running. If the relay does not come
-   back after a change, the previous config is put back.
+   that every entry has the form of an endpoint ID and builds the config with
+   `access.denylist = [...]` in place of `access = "everyone"`. If that
+   differs from the installed config, the relay binary itself parses the list
+   first (a throwaway relay on a loopback port, for 2 seconds); then the new
+   config is installed and the relay restarts. All relay connections drop for
+   a few seconds and reconnect; the denied endpoint cannot. If an entry is not
+   a valid endpoint ID, nothing changes and the relay keeps running; the
+   message names its line, never the entry. If the relay does not come back
+   after a change, the previous config is put back.
 3. **Lift it** by deleting the line and running `setup.sh --denylist` again.
 
 A full `setup.sh` run merges the same file, so upgrades, reruns and the
@@ -561,8 +566,9 @@ only log control is `RUST_LOG` (`src/main.rs:568-571`). Tested with 1.1.0:
   `info_span!("conn", peer = %peer_addr)` (`src/server/http_server.rs:499`).
 - At `warn`, the address disappears, but each failed or probed connection
   (an uptime probe, a scanner, a TLS error) still writes one line.
-- The filter in `iroh-relay.service` keeps the targets that report failures
-  of the server itself and turns off the per-connection ones. A span-scoped
+- The filter in `relay.env`, which `iroh-relay.service` reads, keeps the
+  targets that report failures of the server itself and turns off the
+  per-connection ones. The Fly entrypoint reads the same file. A span-scoped
   filter such as `[conn]=off` cannot do this: tracing-subscriber's EnvFilter
   enables an event if a span directive *or* a target directive allows it
   (`tracing-subscriber-0.3.23 src/filter/env/mod.rs:498-540`).
@@ -573,7 +579,10 @@ only log control is `RUST_LOG` (`src/main.rs:568-571`). Tested with 1.1.0:
   a target the filter turns off.
 
 Do not raise `RUST_LOG` on production except briefly while debugging. If you
-do, clear the journal afterwards with `journalctl --rotate && journalctl --vacuum-time=1s`.
+do, edit `/etc/iroh-relay/relay.env` (a unit drop-in's `Environment=` does
+not override it), restart the relay, and afterwards rerun `setup.sh`, which
+puts the kit's file back, and clear the journal with
+`journalctl --rotate && journalctl --vacuum-time=1s`.
 
 ## Yearly rebuild rehearsal
 
@@ -661,41 +670,47 @@ machine, no auto-stop, raw TCP on 443 and 80 without handlers, a volume for
 the certificate, `SIGINT` on stop, and QUIC address discovery available but
 off. The image is the official `n0computer/iroh-relay:v1.1.0` pinned by
 digest. Its `/iroh-relay` is byte-identical to the GitHub musl binary that
-`setup.sh` installs, and `fly/config.toml` is the same config, key cache
-off included.
+`setup.sh` installs. The image is built from `p2p-transfer/deploy/relay`, so
+it takes the kit's own `config.toml` (key cache off included), `relay.env`
+(the log filter) and `denylist.sh`.
 
 ```sh
-cd p2p-transfer/deploy/relay/fly
+cd p2p-transfer/deploy/relay           # the build context, not fly/
 fly auth login
-fly config validate --strict           # needs the login
+fly config validate --strict --config fly/fly.toml   # needs the login
 fly apps create oxfer-relay-eu
 fly volumes create relay_certs --region fra --size 1 -a oxfer-relay-eu
 fly ips allocate-v4 -a oxfer-relay-eu  # dedicated IPv4, billed monthly; needed for raw TCP and UDP
 fly ips allocate-v6 -a oxfer-relay-eu
 fly ips list -a oxfer-relay-eu         # release any shared v4 so DNS cannot point at it
 # DNS: A -> the dedicated IPv4, AAAA -> the IPv6, both DNS only.
-fly deploy --ha=false                  # --ha=false: exactly one machine
+fly deploy --config fly/fly.toml --ha=false   # --ha=false: exactly one machine
 fly machine list -a oxfer-relay-eu     # must show one machine
 fly logs -a oxfer-relay-eu
 ```
 
 - Always pass `--ha=false`. `fly deploy` creates spare machines by default,
   and two machines behind one hostname would split the peers of a transfer.
+- Run `fly deploy` from `p2p-transfer/deploy/relay` with
+  `--config fly/fly.toml`. Fly builds from the directory it runs in and reads
+  the Dockerfile path relative to `fly.toml`; run from `fly/`, the build
+  fails because `config.toml` is not there.
 - Do not run `fly certs add`. That is for Fly-terminated TLS; here the relay
   terminates TLS and runs ACME itself.
 - **Endpoint-ID blocks** come from the Fly secret `OXFER_RELAY_DENYLIST`,
   so the IDs stay out of the public image. Separate IDs with spaces or
   commas. Setting the secret restarts the machine, and the entrypoint
-  replaces `access = "everyone"` with the list:
+  merges the list with `denylist.sh`, as `setup.sh` does on the VPS:
   ```sh
   fly secrets set OXFER_RELAY_DENYLIST="<endpoint id> <endpoint id>" -a oxfer-relay-eu
   fly logs -a oxfer-relay-eu   # "2 denylisted endpoint IDs"
   ```
-  An entry that is not 64 hex digits (or 52 base32 characters) stops the
-  machine from starting. The entrypoint does not run `setup.sh`'s full
-  check, so use the IDs the `ticket-endpoint-id` example prints.
+  An entry that is not an endpoint ID, or that the relay binary does not
+  accept as one (the same 2-second check as on the VPS), stops the machine
+  from starting; `fly logs` says why without showing the entry. Use the IDs
+  the `ticket-endpoint-id` example prints.
 - QUIC address discovery (native clients only): set `OXFER_RELAY_QAD = "true"`
-  in `fly.toml`, uncomment the UDP service, and redeploy. The entrypoint
+  in `fly/fly.toml`, uncomment the UDP service, and redeploy. The entrypoint
   resolves `fly-global-services` and binds UDP 7842 there. Fly carries UDP only
   on the dedicated IPv4, not on IPv6.
 - Upgrades: update the digest in `fly/Dockerfile` (see "Upgrades") and redeploy.
@@ -853,3 +868,54 @@ host (the rule loads but was not exercised), the timed midnight run of
 `logrotate.timer` (simulated), a refused connection's log output (checked
 in the source only), the arm64 binary at runtime, a Fly deployment, and
 `fly config validate`, which needs a Fly login.
+
+Re-verified on 3 October 2026, after `relay.env` and `denylist.sh` were
+added, the Fly image started building from the kit directory and
+`cloud-init.yaml` stopped listing packages, in the same sandbox and with the
+same test-only changes:
+
+- First boot from `cloud-init.yaml` in systemd containers of Debian 12
+  (cloud-init 22.4.2), Debian 13 (25.1.4) and Ubuntu 24.04 (26.1, with
+  `lsb-release` added so cloud-init can name the release in its apt
+  sources): all 14 files landed byte-identical to the kit, with the intended
+  modes; `setup.sh` installed the packages the image lacked (`logrotate`,
+  `nftables` and `unattended-upgrades` on all three, and `iproute2` on
+  Debian 13); with no DNS record the relay was left stopped. `cloud-init
+  schema` (26.1) reports the file valid.
+- Then, in the same containers, with the relay enabled by hand: the relay
+  process had `relay.env`'s `RUST_LOG` and `NO_COLOR`, also with a unit
+  drop-in setting `Environment=RUST_LOG=info`. Without `relay.env` the unit
+  failed to start ("Failed to load environment files") until a `setup.sh`
+  rerun put the file back. `/etc/nftables.conf` is mode 0755. A rerun kept
+  the same relay process and did not reload the firewall. `setup.sh
+  --denylist` merged two IDs, one in upper case with a comment, in about
+  2.1 s, and the relay answered; run again with nothing changed it took
+  about 30 ms and did not start the relay's parse check. A well-formed ID
+  that is not a valid key, and a pasted link, were refused with the config
+  unchanged and the relay running; the second message named the line and
+  not the entry. `oxfer-relay-ban` added, listed and lifted a ban and
+  refused an add once the table was deleted, and `setup.sh` loaded the table
+  again. No line of the relay journal held a client address or an endpoint
+  ID.
+- The Fly image built from `p2p-transfer/deploy/relay` with
+  `fly/Dockerfile`; its config, `relay.env`, `denylist.sh` and entrypoint
+  are byte-identical to the kit's. It ran with QAD off and on, with
+  `relay.env`'s `RUST_LOG` (a `RUST_LOG` set on the container took
+  precedence), and with `OXFER_RELAY_DENYLIST` holding three IDs in mixed
+  case separated by commas and spaces, which it rendered as
+  `access.denylist` before answering. A malformed entry and a well-formed
+  invalid key each stopped it before the relay started, without showing the
+  entry. QAD without `fly-global-services` failed closed, and it exited 0 on
+  SIGINT.
+- `sh render.sh --check` passes, and fails when a source, a payload, the YAML
+  around the payloads, a mode or `setup.sh`'s `KIT_FILES` changes. Shell
+  scripts: `sh -n`, `dash -n` and shellcheck 0.11.0 clean. `nftables.conf`:
+  `nft -c` with nftables 1.0.9. The installed units: `systemd-analyze verify`
+  in the containers.
+
+Not verified then: `fly deploy` and `fly config validate`, which need a Fly
+login. That `fly deploy --config fly/fly.toml`, run from this directory,
+builds with this directory as the context and `fly/Dockerfile` as the
+Dockerfile was read from the flyctl 0.4.110 source (`resolveDockerfilePath`
+joins the Dockerfile path to the directory of `fly.toml`; the build context
+is the working directory).

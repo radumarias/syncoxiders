@@ -86,7 +86,7 @@ add)
 	[1-9] | [1-9][0-9] | [1-9][0-9][0-9]) [ "$days" -le "$MAX_DAYS" ] ;;
 	*) false ;;
 	esac || die "DAYS must be a whole number from 1 to $MAX_DAYS; every ban expires"
-	nft list table inet oxfer_relay >/dev/null 2>&1 || die "firewall not loaded; run setup.sh"
+	nft -t list table inet oxfer_relay >/dev/null 2>&1 || die "firewall not loaded; run setup.sh"
 	secs=$((days * 86400))
 	# Persist first: rewrite checks the whole ruleset with the new line, so a
 	# ban that would not load is refused before the live set changes.

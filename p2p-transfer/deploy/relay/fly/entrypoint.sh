@@ -1,6 +1,7 @@
 #!/bin/sh
 # Fly.io entrypoint for the Oxfer relay. Writes the runtime config from the
-# VPS config (same keys, different bind addresses), then execs iroh-relay.
+# VPS config (same keys, different bind addresses), then execs iroh-relay
+# with the VPS variant's environment (relay.env).
 #
 # Fly specifics (https://docs.fly.io/networking/udp-and-tcp/):
 #  - TCP services bind 0.0.0.0.
@@ -13,10 +14,13 @@
 # spaces or commas, as the ticket-endpoint-id example prints them. A secret
 # keeps them out of the public image; setting it restarts the machine:
 #   fly secrets set OXFER_RELAY_DENYLIST="<id> <id>" -a oxfer-relay-eu
+# denylist.sh merges and checks it as it does for setup.sh, the relay binary
+# included; an entry it refuses stops the machine from starting.
 set -eu
 
 BASE=/etc/iroh-relay/config.base.toml
 OUT=/etc/iroh-relay/config.toml
+DENYLIST=/usr/local/lib/oxfer-relay/denylist.sh
 
 qad=false
 quic_addr="0.0.0.0:7842"
@@ -30,30 +34,12 @@ if [ "${OXFER_RELAY_QAD:-false}" = true ]; then
 	quic_addr="$ip:7842"
 fi
 
-sed -e 's|^http_bind_addr = .*|http_bind_addr = "0.0.0.0:80"|' \
+n=$(printf '%s\n' "${OXFER_RELAY_DENYLIST:-}" | sh "$DENYLIST" merge "$BASE" "$OUT" OXFER_RELAY_DENYLIST)
+sed -i -e 's|^http_bind_addr = .*|http_bind_addr = "0.0.0.0:80"|' \
 	-e 's|^https_bind_addr = .*|https_bind_addr = "0.0.0.0:443"|' \
 	-e "s|^enable_quic_addr_discovery = .*|enable_quic_addr_discovery = $qad|" \
 	-e "s|^quic_bind_addr = .*|quic_bind_addr = \"$quic_addr\"|" \
-	"$BASE" > "$OUT"
-
-deny=$(printf '%s' "${OXFER_RELAY_DENYLIST:-}" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')
-n=0
-for id in $deny; do
-	printf '%s\n' "$id" | grep -Eqx '[0-9a-f]{64}|[a-z2-7]{52}' || {
-		echo "oxfer-relay: OXFER_RELAY_DENYLIST holds something that is not an endpoint ID" >&2
-		exit 1
-	}
-	n=$((n + 1))
-done
-if [ "$n" -gt 0 ]; then
-	grep -qx 'access = "everyone"' "$OUT" || {
-		echo "oxfer-relay: expected line missing from $OUT: access = \"everyone\"" >&2
-		exit 1
-	}
-	# shellcheck disable=SC2086 # split the IDs into words on purpose
-	list=$(printf '"%s", ' $deny)
-	sed -i "s|^access = \"everyone\"\$|access.denylist = [${list%, }]|" "$OUT"
-fi
+	"$OUT"
 
 # The config structs ignore unknown or misplaced keys, so fail closed if the
 # base file no longer has the shape this script expects.
@@ -70,10 +56,17 @@ for line in \
 		exit 1
 	}
 done
+sh "$DENYLIST" check /iroh-relay "$OUT"
 
-# Same log policy as iroh-relay.service: no per-connection lines.
-export RUST_LOG="${RUST_LOG:-off,iroh_relay=warn,iroh_relay::server::http_server=off,iroh_relay::server::client=off,iroh_relay::server::streams=off,iroh_relay::protos=off,iroh_metrics=warn}"
-export NO_COLOR=1
+# Same log policy as iroh-relay.service, from the same relay.env: no
+# per-connection lines. A RUST_LOG set on the machine (fly.toml [env] or a
+# secret) still takes precedence, for debugging only.
+machine_log=${RUST_LOG:-}
+set -a
+# shellcheck source=/dev/null
+. /etc/iroh-relay/relay.env
+set +a
+if [ -n "$machine_log" ]; then RUST_LOG=$machine_log; fi
 
 # One file descriptor per relayed WebSocket connection. The image's /bin/sh
 # is BusyBox ash, which supports ulimit -n.

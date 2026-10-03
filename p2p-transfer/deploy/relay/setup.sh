@@ -25,6 +25,13 @@ RELAY_VERSION=1.1.0
 RELAY_SHA256_X86_64=9a68108b824e4164ad2eec729cf0e8167e4cb50581cb745a242bace135df7614
 RELAY_SHA256_AARCH64=1b4261b6dd0d17ae9a7516aa6d122b296a77678bac174ce30262702c9f91cb00
 
+# The kit files besides this script. render.sh fails unless its FILES list
+# names the same ones.
+KIT_FILES='config.toml relay.env denylist.sh iroh-relay.service nftables.conf
+journald-oxfer-relay.conf sshd-oxfer-relay.conf unattended-upgrades.conf
+logrotate-oxfer-relay.conf tmpfiles-oxfer-relay.conf oxfer-relay-ban
+oxfer-relay-ban.service oxfer-relay-ban.timer'
+
 KIT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 BIN=/usr/local/bin/iroh-relay
 CONF=/etc/iroh-relay/config.toml
@@ -40,9 +47,7 @@ case "${1:-}" in '' | --denylist) ;; *) die "usage: sh setup.sh [--denylist]" ;;
 # older denylist.
 exec 8>/run/oxfer-relay-setup.lock
 flock -n 8 || { log "waiting for another setup.sh run to finish"; flock 8; }
-for f in config.toml iroh-relay.service nftables.conf journald-oxfer-relay.conf \
-	sshd-oxfer-relay.conf unattended-upgrades.conf logrotate-oxfer-relay.conf \
-	tmpfiles-oxfer-relay.conf oxfer-relay-ban oxfer-relay-ban.service oxfer-relay-ban.timer; do
+for f in $KIT_FILES; do
 	[ -f "$KIT_DIR/$f" ] || die "missing $KIT_DIR/$f"
 done
 WORK=$(mktemp -d)
@@ -59,59 +64,27 @@ install_file() {
 }
 
 # The relay config is the kit's config.toml with the endpoint IDs from
-# DENYLIST (one per line, # comments) in place of access = "everyone".
-# Returns 0 when CONF changed; keeps the old one as CONF.prev.
+# DENYLIST in place of access = "everyone" (denylist.sh). Returns 0 when
+# CONF changed; keeps the old one as CONF.prev.
 install_relay_config() {
 	# A CONF.prev left by a run that stopped before check_relay is older than
 	# CONF; check_relay must never put that one back.
 	rm -f "$CONF.prev"
-	ids=""
-	if [ -f "$DENYLIST" ]; then
-		ids=$(awk '{ sub(/#.*/, ""); for (i = 1; i <= NF; i++) print tolower($i) }' "$DENYLIST" | sort -u)
-	fi
-	if [ -z "$ids" ]; then
-		cp "$KIT_DIR/config.toml" "$WORK/relay.toml" || die "could not copy config.toml"
-	else
-		set -f
-		for id in $ids; do
-			# The entry is not repeated: a pasted share link carries its
-			# capability, which must not reach a terminal or a log.
-			printf '%s\n' "$id" | grep -Eqx '[0-9a-f]{64}|[a-z2-7]{52}' ||
-				die "$DENYLIST line $(grep -n -i -F -- "$id" "$DENYLIST" | head -n 1 | cut -d: -f1): not an endpoint ID (64 hex digits, as ticket-endpoint-id prints); entry not shown"
-		done
-		set +f
-		grep -qx 'access = "everyone"' "$KIT_DIR/config.toml" ||
-			die "config.toml lacks the line: access = \"everyone\""
-		{
-			echo 'access.denylist = ['
-			printf '%s\n' "$ids" | sed 's/.*/  "&",/'
-			echo ']'
-		} >"$WORK/deny.toml" || die "could not write the denylist"
-		# An ID that is not a valid Ed25519 key fails only when iroh-relay
-		# parses it, and the relay would then not start. Parse the list
-		# first in a throwaway plain-HTTP relay on a loopback port: still
-		# running after 2 s (timeout's 124) means it was accepted.
-		{
-			printf 'http_bind_addr = "127.0.0.1:0"\nenable_metrics = false\n'
-			cat "$WORK/deny.toml"
-		} >"$WORK/check.toml" || die "could not write the denylist check"
-		rc=0
-		timeout -s INT 2 "$BIN" --config-path "$WORK/check.toml" >"$WORK/check.log" 2>&1 || rc=$?
-		if [ "$rc" -ne 124 ]; then
-			cat "$WORK/check.log" >&2
-			die "iroh-relay rejects $DENYLIST (an entry is not a valid endpoint ID); nothing changed"
-		fi
-		awk -v f="$WORK/deny.toml" '$0 == "access = \"everyone\"" {
-			while ((getline l < f) > 0) print l; next } { print }' \
-			"$KIT_DIR/config.toml" >"$WORK/relay.toml" || die "could not build the relay config"
-	fi
+	list=/dev/null
+	if [ -f "$DENYLIST" ]; then list=$DENYLIST; fi
+	n=$(sh "$KIT_DIR/denylist.sh" merge "$KIT_DIR/config.toml" "$WORK/relay.toml" "$DENYLIST" <"$list") ||
+		die "$DENYLIST not applied; $CONF is unchanged"
 	if cmp -s "$WORK/relay.toml" "$CONF"; then return 1; fi
+	# A new list is parsed by the relay binary itself first (2 s): an ID
+	# that is not a valid key would keep the relay from starting.
+	sh "$KIT_DIR/denylist.sh" check "$BIN" "$WORK/relay.toml" ||
+		die "iroh-relay rejects $DENYLIST (an entry is not a valid endpoint ID); nothing changed"
 	if [ -f "$CONF" ]; then cp -p "$CONF" "$CONF.prev" || die "could not back up $CONF"; fi
 	if ! install -D -m 0644 -o root -g root "$WORK/relay.toml" "$CONF"; then
 		if [ -f "$CONF.prev" ]; then mv -f "$CONF.prev" "$CONF"; fi
 		die "could not install $CONF; the previous one is kept"
 	fi
-	log "updated $CONF ($(printf '%s' "$ids" | grep -c . || true) denylisted endpoint IDs)"
+	log "updated $CONF ($n denylisted endpoint IDs)"
 }
 
 # Waits for the plain-HTTP captive-portal endpoint, which answers even
@@ -212,6 +185,7 @@ if [ ! -e "$DENYLIST" ]; then
 	chmod 0600 "$DENYLIST"
 fi
 if install_relay_config; then restart_relay=1; fi
+if install_file "$KIT_DIR/relay.env" /etc/iroh-relay/relay.env 0644; then restart_relay=1; fi
 if install_file "$KIT_DIR/iroh-relay.service" /etc/systemd/system/iroh-relay.service 0644; then restart_relay=1; fi
 if install_file "$KIT_DIR/journald-oxfer-relay.conf" /etc/systemd/journald.conf.d/zz-oxfer-relay.conf 0644; then
 	systemctl restart systemd-journald
@@ -253,9 +227,11 @@ exec 9>/run/oxfer-relay-ban.lock
 flock 9
 nft -c -f "$KIT_DIR/nftables.conf" || die "nftables.conf (or a file in /etc/nftables.d) does not validate"
 fw=0
+# 0755, as the nftables package ships /etc/nftables.conf: it is an nft -f
+# script (#!/usr/sbin/nft -f).
 if install_file "$KIT_DIR/nftables.conf" /etc/nftables.conf 0755; then fw=1; fi
 systemctl enable nftables >/dev/null 2>&1
-if [ "$fw" -eq 1 ] || ! nft list table inet oxfer_relay >/dev/null 2>&1; then
+if [ "$fw" -eq 1 ] || ! nft -t list table inet oxfer_relay >/dev/null 2>&1; then
 	systemctl reload-or-restart nftables
 fi
 systemctl enable --now oxfer-relay-ban.timer >/dev/null 2>&1

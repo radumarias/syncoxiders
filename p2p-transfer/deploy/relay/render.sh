@@ -1,34 +1,42 @@
 #!/bin/sh
-# Regenerate the derived files of the relay kit from their sources:
-#   cloud-init.yaml   embeds setup.sh and the host files, each gzip-compressed
-#                     and base64-encoded (cloud-init "encoding: gz+b64"): as
-#                     plain text the kit exceeds Hetzner's 32 KiB user data
-#   fly/config.toml   copy of config.toml; the Fly build context is fly/ only
+# Regenerate cloud-init.yaml, the relay kit's one derived file. It embeds
+# setup.sh and the host files, each gzip-compressed and base64-encoded
+# (cloud-init "encoding: gz+b64"): as plain text the kit exceeds Hetzner's
+# 32 KiB user data. The Fly image builds from the kit files themselves.
 # Usage:
-#   sh render.sh           rewrite both files
-#   sh render.sh --check   exit 1 if either is stale. It decodes every
-#                          embedded file and compares it with its source, so
-#                          another gzip build does not count as drift. It also
-#                          fails if fly/entrypoint.sh's default RUST_LOG differs
-#                          from iroh-relay.service's, which "What is logged"
-#                          in README.md relies on for both variants.
-# Edit the sources and re-render; never edit the derived files by hand.
+#   sh render.sh           rewrite cloud-init.yaml
+#   sh render.sh --check   exit 1 if it is stale. It decodes every embedded
+#                          file and compares it with its source, so another
+#                          gzip build does not count as drift.
+# Both fail if setup.sh's KIT_FILES and FILES below name different files.
+# Edit the sources and re-render; never edit cloud-init.yaml by hand.
 set -eu
 cd "$(dirname -- "$0")"
 
-# kit file : destination on the host : mode
-FILES='setup.sh:/opt/oxfer-relay/setup.sh:0755
-config.toml:/opt/oxfer-relay/config.toml:0644
-iroh-relay.service:/opt/oxfer-relay/iroh-relay.service:0644
-nftables.conf:/opt/oxfer-relay/nftables.conf:0644
-journald-oxfer-relay.conf:/opt/oxfer-relay/journald-oxfer-relay.conf:0644
-sshd-oxfer-relay.conf:/opt/oxfer-relay/sshd-oxfer-relay.conf:0644
-unattended-upgrades.conf:/opt/oxfer-relay/unattended-upgrades.conf:0644
-logrotate-oxfer-relay.conf:/opt/oxfer-relay/logrotate-oxfer-relay.conf:0644
-tmpfiles-oxfer-relay.conf:/opt/oxfer-relay/tmpfiles-oxfer-relay.conf:0644
-oxfer-relay-ban:/opt/oxfer-relay/oxfer-relay-ban:0755
-oxfer-relay-ban.service:/opt/oxfer-relay/oxfer-relay-ban.service:0644
-oxfer-relay-ban.timer:/opt/oxfer-relay/oxfer-relay-ban.timer:0644'
+# kit file : mode. Each lands in /opt/oxfer-relay/ under its own name.
+# nftables.conf is 0755 there and in /etc, as the nftables package ships it.
+FILES='setup.sh:0755
+denylist.sh:0755
+config.toml:0644
+relay.env:0644
+iroh-relay.service:0644
+nftables.conf:0755
+journald-oxfer-relay.conf:0644
+sshd-oxfer-relay.conf:0644
+unattended-upgrades.conf:0644
+logrotate-oxfer-relay.conf:0644
+tmpfiles-oxfer-relay.conf:0644
+oxfer-relay-ban:0755
+oxfer-relay-ban.service:0644
+oxfer-relay-ban.timer:0644'
+
+# setup.sh refuses to start unless every file in its KIT_FILES is present.
+have=$(sed -n "/^KIT_FILES='/,/'\$/p" setup.sh | sed "s/^KIT_FILES=//; s/'//g" | tr -s '[:space:]' '\n' | grep . | sort)
+want=$(printf '%s\n' "$FILES" | cut -d: -f1 | grep -vx setup.sh | sort)
+if [ -z "$have" ] || [ "$have" != "$want" ]; then
+	echo "setup.sh's KIT_FILES and FILES in render.sh name different files; keep them equal" >&2
+	exit 1
+fi
 
 render_cloud_init() {
 	cat <<'EOF'
@@ -41,9 +49,10 @@ render_cloud_init() {
 # Create the DNS records first (README.md, "DNS").
 #
 # First boot writes the kit to /opt/oxfer-relay/ and runs setup.sh, which
-# installs the pinned, checksum-verified iroh-relay binary, the systemd unit,
-# the firewall and ban tool, log retention, key-only SSH and unattended
-# upgrades. Without DNS pointing here it leaves the relay stopped.
+# installs the packages it needs, the pinned, checksum-verified iroh-relay
+# binary, the systemd unit, the firewall and ban tool, log retention,
+# key-only SSH and unattended upgrades. Without DNS pointing here it leaves
+# the relay stopped.
 # Each file below is the kit file of the same name in
 # p2p-transfer/deploy/relay/, gzip-compressed and base64-encoded to fit the
 # providers' user-data limits; "sh render.sh --check" proves they match.
@@ -52,18 +61,11 @@ render_cloud_init() {
 ssh_pwauth: false
 package_update: true
 package_upgrade: true
-packages:
-  - ca-certificates
-  - curl
-  - iproute2
-  - logrotate
-  - nftables
-  - unattended-upgrades
 
 write_files:
 EOF
-	printf '%s\n' "$FILES" | while IFS=: read -r src dst mode; do
-		printf '  - path: %s\n    owner: root:root\n    permissions: "%s"\n    encoding: gz+b64\n    content: |\n' "$dst" "$mode"
+	printf '%s\n' "$FILES" | while IFS=: read -r src mode; do
+		printf '  - path: /opt/oxfer-relay/%s\n    owner: root:root\n    permissions: "%s"\n    encoding: gz+b64\n    content: |\n' "$src" "$mode"
 		{
 			gzip -9 -n -c "$src" | base64 | tr -d '\n' | fold -w 76
 			echo
@@ -87,7 +89,6 @@ split() {
 }
 
 if [ "${1:-}" = "--check" ]; then
-	stale=0
 	tmp=$(mktemp -d)
 	trap 'rm -rf "$tmp"' EXIT
 	mkdir "$tmp/have" "$tmp/want"
@@ -101,23 +102,11 @@ if [ "${1:-}" = "--check" ]; then
 				base64 -d <"$tmp/have/$n" 2>/dev/null | gzip -dc 2>/dev/null | cmp -s - "$src" || exit 1
 			done
 		}; then
-		echo "cloud-init.yaml is stale" >&2
-		stale=1
-	fi
-	cmp -s config.toml fly/config.toml || { echo "fly/config.toml is stale" >&2; stale=1; }
-	unit_log=$(sed -n 's/^Environment="RUST_LOG=\(.*\)"$/\1/p' iroh-relay.service)
-	fly_log=$(sed -n 's/^export RUST_LOG="\${RUST_LOG:-\(.*\)}"$/\1/p' fly/entrypoint.sh)
-	if [ -z "$unit_log" ] || [ "$unit_log" != "$fly_log" ]; then
-		echo "fly/entrypoint.sh's RUST_LOG default differs from iroh-relay.service's; keep them equal by hand" >&2
+		echo "cloud-init.yaml is stale; run: sh render.sh" >&2
 		exit 1
 	fi
-	if [ "$stale" -ne 0 ]; then
-		echo "run: sh render.sh" >&2
-		exit 1
-	fi
-	echo "cloud-init.yaml and fly/config.toml are up to date"
+	echo "cloud-init.yaml is up to date"
 else
 	render_cloud_init >cloud-init.yaml
-	cp config.toml fly/config.toml
-	echo "wrote cloud-init.yaml ($(wc -c <cloud-init.yaml) bytes) and fly/config.toml"
+	echo "wrote cloud-init.yaml ($(wc -c <cloud-init.yaml) bytes)"
 fi

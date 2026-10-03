@@ -1,6 +1,7 @@
 # Fly.io variant of the Oxfer relay (../README.md, "Fly.io variant").
-# Deploy from this directory, always with one machine:
-#   fly deploy --ha=false
+# Deploy from p2p-transfer/deploy/relay, the image's build context, always
+# with one machine:
+#   fly deploy --config fly/fly.toml --ha=false
 # (fly deploy creates spare machines by default; both peers of a transfer
 # must reach the same relay process, so there must be exactly one.)
 
@@ -12,6 +13,9 @@ kill_signal = "SIGINT"
 kill_timeout = 15
 
 [build]
+  # Relative to this file. The build context is the directory fly deploy
+  # runs in, which must be the kit: the image copies config.toml, relay.env
+  # and denylist.sh from there.
   dockerfile = "Dockerfile"
 
 [env]

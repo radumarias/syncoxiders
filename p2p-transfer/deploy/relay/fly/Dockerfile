@@ -6,11 +6,15 @@
 # Nothing is compiled here.
 FROM docker.io/n0computer/iroh-relay:v1.1.0@sha256:7805aaf67ca59e04cd54999d142c85ed72e38e5bd4515c902fa5c8d838674747
 
-# config.toml is a generated copy of ../config.toml (render.sh); the
-# entrypoint rewrites only the bind addresses at start.
+# The build context is the kit, p2p-transfer/deploy/relay (see fly.toml), so
+# config.toml, relay.env and denylist.sh are the VPS variant's own files.
+# The entrypoint rewrites only the bind addresses at start.
 COPY config.toml /etc/iroh-relay/config.base.toml
-COPY entrypoint.sh /usr/local/bin/oxfer-relay-entrypoint
-RUN chmod 0644 /etc/iroh-relay/config.base.toml \
+COPY relay.env /etc/iroh-relay/relay.env
+COPY denylist.sh /usr/local/lib/oxfer-relay/denylist.sh
+COPY fly/entrypoint.sh /usr/local/bin/oxfer-relay-entrypoint
+RUN chmod 0644 /etc/iroh-relay/config.base.toml /etc/iroh-relay/relay.env \
+		/usr/local/lib/oxfer-relay/denylist.sh \
 	&& chmod 0755 /usr/local/bin/oxfer-relay-entrypoint
 
 # iroh-relay shuts down gracefully only on SIGINT (src/main.rs:605-611); as

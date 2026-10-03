@@ -13,20 +13,10 @@ After=network-online.target nftables.service
 Type=exec
 ExecStart=/usr/local/bin/iroh-relay --config-path /etc/iroh-relay/config.toml
 
-# Logging. The relay writes tracing output to stderr and has no access-log
-# option; RUST_LOG (EnvFilter, src/main.rs:568-571) is the only control.
-#  - At "info", per-connection spans add the client IP and port to every
-#    connection error (conn{peer=...}, src/server/http_server.rs:499).
-#  - At "warn", those spans are off, but each failed or probed connection
-#    still writes a line.
-#  - This filter keeps startup failures, ACME errors and server-task failures
-#    (target iroh_relay::server) and silences the per-connection targets. A
-#    span-scoped directive such as "[conn]=off" cannot do this, because
-#    EnvFilter ORs span directives with target directives.
-# What remains per request is one line per malformed request on port 80,
-# with the parser error and no address.
-Environment="RUST_LOG=off,iroh_relay=warn,iroh_relay::server::http_server=off,iroh_relay::server::client=off,iroh_relay::server::streams=off,iroh_relay::protos=off,iroh_metrics=warn"
-Environment=NO_COLOR=1
+# Logging: the RUST_LOG filter in relay.env, shared with the Fly variant,
+# keeps client addresses, endpoint IDs and connection events out of the
+# journal. Without that file the relay does not start.
+EnvironmentFile=/etc/iroh-relay/relay.env
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=iroh-relay

@@ -72,7 +72,7 @@ reasons, and the sections each one affects, are:
 | --- | --- | --- | --- | --- | --- | --- |
 | P1 | Serving the app shell and legal pages from Cloudflare; protecting the site | Visitors | IP address, user agent, request line without the URL fragment, time, TLS and connection data; security cookies such as `__cf_bm` when Cloudflare bot protection is active; Network Error Logging reports until the owner turns them off (section 2.2) | Art. 6(1)(f), LIA 3.1 | Cloudflare, Inc. (processor) | No request log is kept for the operator: Cloudflare's request-log retention (Logpull) is off by default and stays off [T24] ([README](README.md#owner-actions), action 1). The dashboard shows aggregates, and details of requests Cloudflare's security features block for the period the plan sets (24 hours on the Free and Pro plans). Cloudflare keeps its own operational and security logs under its privacy policy [T3]. The operator exports no logs. |
 | P2 | STUN, so browsers can find a direct path | Senders and recipients using the browser app | Public IP address and port, time | Art. 6(1)(b) | Cloudflare, Inc. (see section 4 on its role) | Cloudflare's policy. The operator receives nothing. |
-| P3 | Relay: authenticating endpoints, carrying connection setup, forwarding encrypted traffic when no direct path works | Senders and recipients | IP address and port, endpoint ID (a public key new for each share and each receiving session), connection times, traffic volume. The relay forwards ciphertext it cannot read. | Art. 6(1)(b); rate limits and blocking: Art. 6(1)(f), LIA 3.2 | [[RELAY_HOSTING_PROVIDER]] (processor, infrastructure only) | Held in memory only while connected: the relay's key cache is turned off, so endpoint IDs are not kept after a connection ends (section 2.1). No access log: with the shipped configuration the relay logs no client IP addresses, endpoint IDs or connection events. Its own operational errors are logged without client addresses and deleted by journald after at most 3 days. The host firewall's rate-limit sets hold a source address for at most 60 seconds. Aggregate metrics contain no personal data. Blocked endpoint IDs and IP addresses: while the block is in force (section 6). |
+| P3 | Relay: authenticating endpoints, carrying connection setup, forwarding encrypted traffic when no direct path works | Senders and recipients | IP address and port, endpoint ID (a public key new for each share and each receiving session), connection times, traffic volume. The relay forwards ciphertext it cannot read. | Art. 6(1)(b); rate limits and blocking: Art. 6(1)(f), LIA 3.2 | [[RELAY_HOSTING_PROVIDER]] (processor, infrastructure only) | Held in memory only while connected: the relay's key cache is turned off, so endpoint IDs are not kept after a connection ends (section 2.1). No access log: with the shipped configuration the relay logs no client IP addresses, endpoint IDs or connection events. Its own operational errors are logged without client addresses and deleted by journald after at most 3 days. The host firewall's rate-limit sets hold a source address for at most 60 seconds. Aggregate metrics contain no personal data. Blocked endpoint IDs and IP addresses: while the block is in force, and longer in the host's shell history when a block command is typed in an interactive shell there (section 6). |
 | P4 | Peer connection: exchanging addresses (ICE candidates; direct addresses in native tickets) and transferring the files | Senders and recipients | IP addresses and candidates, endpoint IDs, file names, sizes, checksums, file contents | Art. 6(1)(b) | The other party to the transfer, chosen by the user who shares the link. The operator receives none of it. | Held by the peers for the session; saved files are under the recipient's control. |
 | P5 | Handling abuse reports, complaints, appeals and requests from authorities and regulators | Reporters, people reported (usually only as an endpoint ID or IP address), staff of authorities | Email address, name if given, message, reported link or endpoint ID, IP addresses blocked, decision and outcome, correspondence | Art. 6(1)(c) where a law requires the handling (for example the points of contact in DSA Arts. 11 and 12); otherwise Art. 6(1)(f), LIA 3.3 | Cloudflare Email Routing and the mailbox provider (processors); competent authorities; NCMEC for apparent child sexual abuse material (section 5) | As long as needed to handle the matter and show how it was handled; reviewed at least yearly. |
 | P6 | Handling data protection requests | People who write to `privacy@oxfer.app` | Email address, request, identity details if needed | Art. 6(1)(c) (GDPR Arts. 12 to 22) | Cloudflare Email Routing and the mailbox provider (processors) | As long as needed to show the request was handled; reviewed at least yearly. |
@@ -91,9 +91,9 @@ The `iroh-relay` 1.1.0 binary has no access-log option. It logs through
 socket address, so every connection error prints that IP address and port; at
 `warn`, each failed or probed connection still writes a line. The
 [relay runbook](../../deploy/relay/README.md#what-is-logged) therefore ships a
-`RUST_LOG` filter in `deploy/relay/iroh-relay.service` that keeps startup
-failures, ACME and certificate errors and relay task failures, and turns the
-per-connection targets off. With that configuration:
+`RUST_LOG` filter, in `deploy/relay/relay.env` (read by the relay's systemd
+unit), that keeps startup failures, ACME and certificate errors and relay task
+failures, and turns the per-connection targets off. With that configuration:
 
 - the relay logs no client IP addresses, endpoint IDs or connection events;
 - operational errors are logged without client addresses. The only
@@ -113,8 +113,19 @@ per-connection targets off. With that configuration:
   `/var/log/btmp`, sessions in `/var/log/wtmp`. The kit rotates `btmp` and
   `wtmp` daily and keeps at most three days, and `lastlog` (and `lastlog2`
   where present) keeps no persistent record. These records concern the
-  operator's own administration of the host, not relay users. Block commands
-  (section 6) leave no shell history on the host;
+  operator's own administration of the host, not relay users;
+- block commands (section 6) typed in an interactive shell on the relay host,
+  such as `oxfer-relay-ban add ADDRESS DAYS` or the runbook's
+  `echo '<endpoint id>' >> /etc/oxfer-relay/denylist.txt`, stay in that
+  account's shell history with no time limit, together with the address or
+  endpoint ID they name. Block commands run non-interactively from
+  the operator's own machine leave no shell history on the host. On images
+  where the operator logs in as `debian` or `ubuntu`, `sudo` also records each
+  command, with its arguments, in the journal, which keeps it at most three
+  days. The kit does not change shell history settings; the owner decides how
+  to handle this ([README](README.md#10-other-items-that-need-the-owner),
+  "Shell history on the relay host";
+  [relay runbook](../../deploy/relay/README.md#what-is-logged));
 - metrics are aggregate counters in memory, bound to `127.0.0.1`;
 - the firewall has no logging rules. Its rate-limit sets hold a source address
   for at most 60 seconds; its ban sets hold only addresses the operator bans,
@@ -221,6 +232,7 @@ notice therefore does not describe it.
 | Relay aggregate metrics | Relay host, localhost only | Not personal data |
 | Denied endpoint IDs | `/etc/oxfer-relay/denylist.txt` on the relay host, merged into the relay's configuration by `setup.sh` | While the block is in force; kept through relay restarts, upgrades and reruns of `setup.sh`; recorded in the abuse log |
 | Banned IP addresses | `/etc/nftables.d/bans.nft` on the relay host, each with an expiry (normally 30 days), loaded into the firewall | Until the expiry or until lifted; kept through reboots, firewall reloads and reruns of `setup.sh`; recorded in the abuse log |
+| Block commands (the address or endpoint ID they name) | Shell history of the account that typed them on the relay host; with `sudo`, also the relay host's journal (section 2.1) | Shell history: no time limit, unless the commands are run non-interactively from the operator's own machine, which leaves none on the host. Journal: at most 3 days |
 | Abuse log and correspondence | Private records | As long as needed; reviewed at least yearly |
 | Browser-local items | User's browser | Until the user clears them |
 
@@ -350,7 +362,7 @@ Reviewed with the other records at the cadence in the
 - [T4] Cloudflare Realtime TURN service (lists `stun.cloudflare.com:3478`): <https://developers.cloudflare.com/realtime/turn/>
 - [T5] Cloudflare Network Error Logging: <https://developers.cloudflare.com/network-error-logging/>
 - [T6] iroh documentation, public relays: <https://docs.iroh.computer/iroh-services/relays/public>
-- [T7] `iroh-relay` 1.1.0 source (`src/main.rs`, `src/server/http_server.rs`, `src/server.rs`, `src/key_cache.rs`, `src/defaults.rs`) and `tracing-subscriber` 0.3 `EnvFilter::from_default_env`, as fetched into the workspace's Cargo registry; the relay kit in `deploy/relay/` (`config.toml`, `setup.sh`, `nftables.conf`).
+- [T7] `iroh-relay` 1.1.0 source (`src/main.rs`, `src/server/http_server.rs`, `src/server.rs`, `src/key_cache.rs`, `src/defaults.rs`) and `tracing-subscriber` 0.3 `EnvFilter::from_default_env`, as fetched into the workspace's Cargo registry; the relay kit in `deploy/relay/` (`config.toml`, `relay.env`, `setup.sh`, `nftables.conf`).
 - [T8] General Court, Case T-553/23 *Latombe v Commission*: <https://infocuria.curia.europa.eu/tabs/redirect/juris/liste.jsf?num=T-553%2F23>;
   WilmerHale on the appeal (secondary): <https://www.wilmerhale.com/en/insights/blogs/wilmerhale-privacy-and-cybersecurity-law/20251201-european-court-of-justice-to-review-challenge-to-eu-us-data-privacy-framework>
 - [T9] Directive 2002/58/EC, Art. 5(3): <https://eur-lex.europa.eu/eli/dir/2002/58/oj?locale=en>;
