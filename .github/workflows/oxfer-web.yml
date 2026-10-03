@@ -79,11 +79,9 @@ jobs:
           fi
           npx cf deploy --prebuilt
 
-      # Besides bytes and headers, verify-deployment.mjs fails while Cloudflare
-      # Network Error Logging (NEL/Report-To headers) is on for the oxfer.app
-      # zone. workers.dev is outside that zone, so there it only warns.
+      # Checks the three origins concurrently. Besides bytes and headers,
+      # verify-deployment.mjs fails while Cloudflare Network Error Logging
+      # (NEL/Report-To headers) is on for the oxfer.app zone. workers.dev is
+      # outside that zone, so there it only warns.
       - name: Verify production
-        run: |
-          node verify-deployment.mjs https://oxfer.42dev.workers.dev/
-          node verify-deployment.mjs https://www.oxfer.app/
-          node verify-deployment.mjs https://oxfer.app/
+        run: node verify-deployment.mjs https://oxfer.42dev.workers.dev/ https://www.oxfer.app/ https://oxfer.app/

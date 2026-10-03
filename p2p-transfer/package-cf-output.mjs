@@ -5,9 +5,16 @@
 // `assets/_headers`): the `{{RELAY_CONNECT_SRC}}` token in the
 // Content-Security-Policy becomes the relay origins the wasm build talks to,
 // taken from the same compile-time `P2P_RELAY_URL` that `src/node.rs` reads.
+//
+// CLI (build-web.sh and check.sh):
+//   node package-cf-output.mjs [--no-domains]   package dist/
+//   --check-relay   validate P2P_RELAY_URL and print its connect-src sources
+//   --check-legal   legal-page guards on the source pages (checkLegalPages)
+//   --check-dist    dist/ holds byte copies and no inline script (checkDist)
+// The --check-* flags combine and replace packaging.
 import { realpathSync } from "node:fs";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -28,23 +35,11 @@ export const RELAY_CONNECT_SRC_TOKEN = "{{RELAY_CONNECT_SRC}}";
 // n0's public relays (*.relay.n0.iroh.link, HTTPS latency probes) and pkarr
 // discovery at https://dns.iroh.link/pkarr, used while P2P_RELAY_URL is unset.
 export const N0_CONNECT_SRC = "https://*.iroh.link wss://*.iroh.link";
-// The `/*` Cache-Control that `verify-deployment.mjs` expects on every response.
-// Other rules add to it: Cloudflare joins the values of every matching rule with
-// a comma, so `/sw.js` gets its no-store rule appended.
-export const CACHE_CONTROL = "public, max-age=0, must-revalidate";
-// The legal pages add `no-transform`, which stops Cloudflare features that
-// rewrite responses, such as Email Address Obfuscation of their contact
-// addresses, so they are served byte for byte as built. It is set nowhere else
-// because it also stops Cloudflare compressing responses, and the wasm and
-// JavaScript should stay compressed. Only the legal pages contain addresses.
-// https://developers.cloudflare.com/waf/tools/scrape-shield/email-address-obfuscation/
-// https://developers.cloudflare.com/speed/optimization/content/compression/
-export const NO_TRANSFORM_PATHS = ["/privacy", "/terms", "/abuse"];
-// The operator's relay, which the filled legal pages describe.
+// The operator's relay, which the filled legal pages describe. If the pages
+// ever describe another relay, change this with them (tests/web-pages.test.mjs
+// fails while privacy.html does not name this host).
 export const OPERATOR_RELAY = "https://relay.oxfer.app";
-export const PERMISSIONS_POLICY =
-    "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), midi=(), screen-wake-lock=(self)";
-export const X_FRAME_OPTIONS = "SAMEORIGIN";
+export const LEGAL_PAGES = ["privacy.html", "terms.html", "abuse.html"];
 export const CSP_REPORT_ONLY = "Content-Security-Policy-Report-Only";
 // Cloudflare static assets: at most 100 rules and 2,000 characters per line.
 const HEADERS_MAX_LINE = 2000;
@@ -61,6 +56,16 @@ const UNSET_RELAY = /^[\t\n\v\f\r ]*$/;
 const NOT_PRINTABLE_ASCII = /[^\x20-\x7E]/u;
 // Characters that cannot be seen; the error names them by code point.
 const INVISIBLE = /^[\p{Cc}\p{Cf}\p{Z}]$/u;
+// The legal pages' unfilled tokens, such as [[OPERATOR_NAME]].
+const PLACEHOLDER = /\[\[[A-Z][A-Z0-9_]*\]\]/g;
+// HTML scanning for checkDist: comments, <link> tags and their attributes.
+const HTML_COMMENT = /<!--[\s\S]*?-->/g;
+const LINK_TAG = /<link\b([^>]*)>/gi;
+const ATTRIBUTE = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+// Any <script> without a src attribute, whatever else it carries (a nonce,
+// type or defer). Trunk.toml sets inject_scripts = false and the CSP allows no
+// inline script.
+const INLINE_SCRIPT = /<script\b(?![^>]*\ssrc\s*=)[^>]*>/i;
 
 // Name the entry by position only: a mistyped value may hold a credential, and
 // CI logs are not the place to repeat it (src/node.rs does the same).
@@ -94,13 +99,15 @@ function parseRelayEntry(entry, index) {
     if (url.protocol !== "https:" && url.protocol !== "http:") {
         throw relayError(index, `uses ${url.protocol} but must use https: (or http: for local tests)`);
     }
-    if (url.username || url.password || entry.includes("@")) {
+    // The URL parser takes credentials, a query and a fragment only from these
+    // characters, so the raw entry decides, including an empty "?" or "#".
+    if (entry.includes("@")) {
         throw relayError(index, "must not contain credentials");
     }
-    if (url.search || entry.includes("?")) {
+    if (entry.includes("?")) {
         throw relayError(index, "must not contain a query");
     }
-    if (url.hash || entry.includes("#")) {
+    if (entry.includes("#")) {
         throw relayError(index, "must not contain a fragment");
     }
     if (url.pathname !== "/") {
@@ -138,13 +145,25 @@ export function parseRelayList(value) {
 }
 
 /**
- * Whether a `P2P_RELAY_URL` value lists the relay at `origin`.
+ * Why a `P2P_RELAY_URL` value does not select the relay at `origin` alone, or
+ * `null` when it does (the relay go-live guard). Throws if the value is invalid.
  * @param {string | undefined | null} value
- * @param {string} origin such as `https://relay.oxfer.app`
+ * @param {string} [origin] such as `https://relay.oxfer.app`
+ * @returns {string | null}
  */
-export function listsRelay(value, origin) {
+export function operatorRelayProblem(value, origin = OPERATOR_RELAY) {
     const wanted = new URL(origin).origin;
-    return parseRelayList(value).some(url => url.origin === wanted);
+    const relays = parseRelayList(value);
+    if (relays.length === 0) {
+        return `P2P_RELAY_URL is not set, so the build uses n0's public relays, not ${wanted}`;
+    }
+    if (!relays.some(url => url.origin === wanted)) {
+        return `P2P_RELAY_URL does not list ${wanted}`;
+    }
+    if (relays.some(url => url.origin !== wanted)) {
+        return `P2P_RELAY_URL lists other relays besides ${wanted}`;
+    }
+    return null;
 }
 
 /**
@@ -213,30 +232,25 @@ export function headerRuleMatches(pattern, path) {
 }
 
 /**
- * The Cache-Control directives Cloudflare serves for `path`: the values of
- * every matching rule, joined in file order, lower-cased and without repeats.
- * @param {string} rendered a rendered `_headers` file
+ * The headers Cloudflare serves for `path` under a rendered `_headers` file:
+ * every matching rule applies, and a header that several rules set gets their
+ * values joined with a comma in file order, so `/sw.js` gets the `/*`
+ * Cache-Control followed by its own.
+ * https://developers.cloudflare.com/workers/static-assets/headers/
+ * @param {string} rendered
  * @param {string} path
- * @returns {string[]}
+ * @returns {Headers}
  */
-export function cacheControlDirectives(rendered, path) {
-    const directives = [];
+export function headersForPath(rendered, path) {
+    const result = new Headers();
     for (const [pattern, headers] of parseHeaders(rendered)) {
-        if (!headerRuleMatches(pattern, path)) {
-            continue;
-        }
-        for (const [name, value] of headers) {
-            if (name.toLowerCase() !== "cache-control") {
-                continue;
-            }
-            for (const directive of splitDirectives(value)) {
-                if (!directives.includes(directive)) {
-                    directives.push(directive);
-                }
+        if (headerRuleMatches(pattern, path)) {
+            for (const [name, value] of headers) {
+                result.append(name, value);
             }
         }
     }
-    return directives;
+    return result;
 }
 
 /**
@@ -309,6 +323,136 @@ export function securityHeaders(rendered) {
 }
 
 /**
+ * The legal-page guards build-web.sh runs before the Trunk build, on the
+ * source pages (checkDist later proves dist holds byte copies of them):
+ * - no `[[UPPER_CASE]]` placeholder may remain;
+ * - once none remains, `P2P_RELAY_URL` must select only `OPERATOR_RELAY`, the
+ *   relay the filled pages describe (the relay go-live guard).
+ * `allowPlaceholders` (`OXFER_ALLOW_PLACEHOLDERS=1`, local test builds only)
+ * turns both into warnings. An invalid relay list always throws first.
+ * @param {object} options
+ * @param {string} [options.crate] the directory holding the pages
+ * @param {string | undefined | null} options.relayUrl a `P2P_RELAY_URL` value
+ * @param {boolean} [options.allowPlaceholders]
+ * @returns {Promise<string[]>} warnings to print; throws when a guard fails
+ */
+export async function checkLegalPages({ crate = root, relayUrl, allowPlaceholders = false } = {}) {
+    const relayProblem = operatorRelayProblem(relayUrl);
+    const placeholders = [];
+    for (const page of LEGAL_PAGES) {
+        const html = await readFile(join(crate, page), "utf8");
+        for (const token of [...new Set(html.match(PLACEHOLDER))].sort()) {
+            placeholders.push(`${page} still contains the placeholder ${token}`);
+        }
+    }
+    let failure;
+    let warnings;
+    if (placeholders.length > 0) {
+        failure = [...placeholders, "Replace the placeholders in privacy.html, terms.html and abuse.html before deploying."];
+        warnings = [...placeholders, "OXFER_ALLOW_PLACEHOLDERS=1: packaging anyway. Do not deploy this build."];
+    } else if (relayProblem) {
+        failure = [
+            `${relayProblem}.`,
+            `The filled legal pages describe the relay at ${OPERATOR_RELAY}, so P2P_RELAY_URL must list only ` +
+                "it; set P2P_RELAY_URL, or edit the pages and OPERATOR_RELAY in package-cf-output.mjs to " +
+                "describe the relays in use.",
+        ];
+        warnings = [
+            `${relayProblem}.`,
+            `OXFER_ALLOW_PLACEHOLDERS=1: packaging filled legal pages that describe ${OPERATOR_RELAY} in a ` +
+                "build whose P2P_RELAY_URL does not list only it. Do not deploy this build.",
+        ];
+    } else {
+        return [];
+    }
+    if (allowPlaceholders) {
+        return warnings;
+    }
+    throw new Error([...failure, "For a local test build only, set OXFER_ALLOW_PLACEHOLDERS=1."].join("\n"));
+}
+
+/**
+ * The files Trunk copies verbatim: the `<link data-trunk rel="copy-file">`
+ * entries of `index.html`, as `[source, dist path]` pairs. Trunk copies each
+ * file under its own name into `data-target-path`, or else the dist root.
+ * @param {string} html the source `index.html`
+ * @returns {Array<[string, string]>}
+ */
+export function trunkCopyFiles(html) {
+    const files = [];
+    for (const [, source] of html.replace(HTML_COMMENT, "").matchAll(LINK_TAG)) {
+        const attributes = new Map(
+            [...source.matchAll(ATTRIBUTE)].map(([, name, double, single, bare]) => [
+                name.toLowerCase(),
+                double ?? single ?? bare ?? "",
+            ]),
+        );
+        if (!attributes.has("data-trunk") || attributes.get("rel") !== "copy-file") {
+            continue;
+        }
+        const href = attributes.get("href");
+        if (!href) {
+            throw new Error("index.html has a Trunk copy-file link without an href");
+        }
+        files.push([href, posix.join(attributes.get("data-target-path") ?? "", posix.basename(href))]);
+    }
+    if (files.length === 0) {
+        throw new Error("index.html has no Trunk copy-file links");
+    }
+    return files;
+}
+
+/**
+ * Check a Trunk `dist/` (check.sh and build-web.sh run this after the build):
+ * every copy-file entry of `index.html` is a byte copy of its source, and no
+ * HTML file in it has a `<script>` without `src`, which the CSP would block.
+ * Throws with every problem found.
+ * @param {object} [options]
+ * @param {string} [options.crate] the directory holding `index.html` and the sources
+ * @param {string} [options.dist]
+ * @returns {Promise<{ copied: string[], pages: string[] }>} the dist paths checked
+ */
+export async function checkDist({ crate = root, dist = join(crate, "dist") } = {}) {
+    const files = trunkCopyFiles(await readFile(join(crate, "index.html"), "utf8"));
+    const read = path => readFile(path).catch(error => {
+        if (error.code === "ENOENT") {
+            return null;
+        }
+        throw error;
+    });
+    const copies = await Promise.all(
+        files.map(async ([source, target]) => {
+            const [want, have] = await Promise.all([read(join(crate, source)), read(join(dist, target))]);
+            if (want === null) {
+                return `${source} is a copy-file entry in index.html but does not exist`;
+            }
+            if (have === null) {
+                return `dist/${target} is missing; Trunk should copy it from ${source}`;
+            }
+            return want.equals(have) ? null : `dist/${target} differs from ${source}`;
+        }),
+    );
+    const problems = copies.filter(problem => problem !== null);
+    const pages = (await readdir(dist, { recursive: true })).filter(name => name.endsWith(".html")).sort();
+    if (!pages.includes("index.html")) {
+        problems.push("dist/index.html is missing");
+    }
+    for (const page of pages) {
+        const html = await readFile(join(dist, page), "utf8");
+        if (html.trim() === "") {
+            problems.push(`dist/${page} is empty`);
+        }
+        if (INLINE_SCRIPT.test(html)) {
+            problems.push(`dist/${page} contains an inline <script>; the CSP would block it`);
+        }
+    }
+    if (problems.length > 0) {
+        throw new Error(problems.join("\n"));
+    }
+    return { copied: files.map(([, target]) => target), pages };
+}
+
+/**
  * @param {object} [options]
  * @param {string | undefined} [options.relayUrl] the `P2P_RELAY_URL` value the
  *   wasm was built with; when the key is absent, `process.env.P2P_RELAY_URL`.
@@ -359,28 +503,31 @@ export function isMainModule(moduleUrl) {
     }
 }
 
+const CLI_FLAGS = ["--check-relay", "--check-legal", "--check-dist", "--no-domains"];
+
 if (isMainModule(import.meta.url)) {
     try {
-        if (process.argv.includes("--check-relay")) {
-            // build-web.sh validates P2P_RELAY_URL before the Trunk build, and
-            // with --require-relay=ORIGIN checks that the list includes ORIGIN.
-            const value = process.env.P2P_RELAY_URL;
-            console.log(`connect-src relay sources: ${relayConnectSources(value)}`);
-            const required = process.argv.find(argument => argument.startsWith("--require-relay="));
-            if (required) {
-                const origin = required.slice("--require-relay=".length);
-                if (!listsRelay(value, origin)) {
-                    throw new Error(
-                        parseRelayList(value).length === 0
-                            ? `P2P_RELAY_URL is not set, so the build uses n0's public relays, not ${origin}`
-                            : `P2P_RELAY_URL does not list ${origin}`,
-                    );
-                }
+        const flags = process.argv.slice(2);
+        const unknown = flags.find(flag => !CLI_FLAGS.includes(flag));
+        if (unknown !== undefined) {
+            throw new Error(`unknown argument ${unknown}; expected ${CLI_FLAGS.join(", ")}`);
+        }
+        const relayUrl = process.env.P2P_RELAY_URL;
+        if (flags.includes("--check-relay")) {
+            console.log(`connect-src relay sources: ${relayConnectSources(relayUrl)}`);
+        }
+        if (flags.includes("--check-legal")) {
+            const allowPlaceholders = process.env.OXFER_ALLOW_PLACEHOLDERS === "1";
+            for (const warning of await checkLegalPages({ relayUrl, allowPlaceholders })) {
+                console.error(warning);
             }
-        } else {
-            await packageCfOutput({
-                includeDomains: !process.argv.includes("--no-domains"),
-            });
+        }
+        if (flags.includes("--check-dist")) {
+            const { copied, pages } = await checkDist();
+            console.log(`dist: ${copied.length} copied files match their sources; ${pages.length} HTML files have no inline <script>`);
+        }
+        if (!flags.some(flag => flag.startsWith("--check-"))) {
+            await packageCfOutput({ includeDomains: !flags.includes("--no-domains") });
         }
     } catch (error) {
         console.error(`package-cf-output: ${error.message}`);
