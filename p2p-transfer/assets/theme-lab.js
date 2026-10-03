@@ -63,7 +63,7 @@ const state = {
 };
 
 function hexOk(v) {
-  return /^#[0-9a-fA-F]{6}$/.test(v);
+  return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
 }
 function lum(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -300,19 +300,23 @@ function applyPreset(preset, name) {
   renderAll();
 }
 
+// The markup holds only the fixed TOKENS names. Palette values come from typed
+// input or an imported file, so they are set through .value, never as HTML.
 function renderTokens() {
   const root = document.getElementById("tokens");
   const pal = state[state.edit];
   root.innerHTML = TOKENS.map(([key, role]) => `
     <div class="token" data-key="${key}">
       <span title="${role}">${key}</span>
-      <input type="color" value="${hexOk(pal[key]) ? pal[key] : "#000000"}" aria-label="${key} picker">
-      <input type="text" value="${pal[key]}" spellcheck="false" aria-label="${key} hex">
+      <input type="color" aria-label="${key} picker">
+      <input type="text" spellcheck="false" aria-label="${key} hex">
     </div>`).join("");
   root.querySelectorAll(".token").forEach((row) => {
     const key = row.dataset.key;
     const picker = row.querySelector('input[type=color]');
     const text = row.querySelector('input[type=text]');
+    picker.value = hexOk(pal[key]) ? pal[key] : "#000000";
+    text.value = pal[key] ?? "";
     picker.addEventListener("input", () => {
       pal[key] = picker.value;
       text.value = picker.value;
@@ -466,6 +470,15 @@ function zipStore(files) {
   return out;
 }
 
+// An imported file is untrusted: keep each known token only if it is a
+// #rrggbb hex string, otherwise use that token from the base palette.
+function importPalette(base, imported) {
+  return Object.fromEntries(Object.entries(base).map(([key, fallback]) => {
+    const value = imported?.[key];
+    return [key, hexOk(value) ? value : fallback];
+  }));
+}
+
 function applyBundle(data) {
   if (data.format !== "oxfer-theme") throw new Error("Not an oxfer-theme file");
   state.name = data.name || "";
@@ -473,8 +486,8 @@ function applyBundle(data) {
   state.author = data.author || "";
   state.control_radius = data.control_radius ?? 18;
   state.card_radius = data.card_radius ?? 20;
-  state.light = { ...CLEAN.light, ...(data.light || {}) };
-  state.dark = { ...CLEAN.dark, ...(data.dark || {}) };
+  state.light = importPalette(CLEAN.light, data.light);
+  state.dark = importPalette(CLEAN.dark, data.dark);
   document.getElementById("name").value = state.name;
   document.getElementById("intent").value = state.intent;
   document.getElementById("author").value = state.author;
