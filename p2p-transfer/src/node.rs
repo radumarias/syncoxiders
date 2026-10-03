@@ -7,7 +7,7 @@ use log::info;
 use n0_future::{task, Stream};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
 };
 use tokio::sync::mpsc;
 
@@ -525,6 +525,11 @@ use tokio_util::sync::CancellationToken;
 const DAMAGED_LINK: &str = "this link is damaged; ask the sender to copy it again";
 /// ...and when it carried an access code but no ticket at all.
 const INCOMPLETE_LINK: &str = "this link is incomplete; ask the sender for the full link";
+/// [`share_endpoint_id`] was given nothing to read.
+const NO_LINK_GIVEN: &str = "nothing to read: pass a share link, its fragment or its ticket";
+/// [`share_endpoint_id`] found no ticket. Fixed text: it never repeats the input.
+const NO_TICKET_IN_LINK: &str = "no share ticket found: pass the whole share link, the part \
+     after its '#', or the part that starts with \"endpoint\", complete and unchanged";
 
 /// Context string of the capability derivation. Changing it invalidates every live link.
 const CAP_CONTEXT: &str = "syncoxiders/p2p-transfer cap v1";
@@ -540,32 +545,67 @@ const LOCAL_ADDR_TIMEOUT: Duration = Duration::from_secs(3);
 /// Poll interval while waiting for that address.
 const LOCAL_ADDR_POLL: Duration = Duration::from_millis(100);
 
+/// Host of the relay this deployment's operator runs (`deploy/relay/`), the one the legal
+/// pages describe. `OPERATOR_RELAY` in `package-cf-output.mjs` is the same relay.
+pub const OPERATOR_RELAY_HOST: &str = "relay.oxfer.app";
+
 /// Which relay infrastructure a node uses.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RelayChoice {
-    /// n0's public relays, with their address lookup.
+    /// n0's public relays, with n0's address lookup: pkarr publishing and resolution at
+    /// `dns.iroh.link`, plus DNS lookup natively.
     N0,
     /// Same n0 preset, with fully qualified DNS trailing dots removed from
     /// browser WebSocket URLs (WebKit cannot open the dotted relay URLs).
     N0WithoutTrailingDots,
-    /// A self-hosted relay, and no publishing to n0's infrastructure.
-    Custom(RelayUrl),
+    /// Self-hosted relays, one relay map entry per URL, built on `presets::Minimal`: no n0
+    /// relay map and no publishing to or lookup at n0's infrastructure.
+    ///
+    /// [`RelayChoice::from_setting`] only ever produces a non-empty, duplicate-free list of
+    /// `http`/`https` URLs. [`Node::bind`] and [`DiagnosticNode::bind`] reject an empty list
+    /// instead of starting an endpoint that could never come online.
+    Custom(Vec<RelayUrl>),
     /// No relay at all: LAN and tests.
     None,
 }
 
 impl RelayChoice {
-    /// `P2P_RELAY_URL` at compile time selects a self-hosted relay; otherwise n0's.
+    /// The relays this build was compiled for: `P2P_RELAY_URL` at compile time, read with
+    /// [`RelayChoice::from_setting`].
+    ///
+    /// The value is parsed once per process, so an invalid one logs its warning once; every
+    /// call returns a copy of that result.
     pub fn from_env() -> Self {
-        match option_env!("P2P_RELAY_URL") {
-            Some(url) => match url.parse::<RelayUrl>() {
-                Ok(url) => Self::Custom(url),
-                Err(e) => {
-                    log::warn!("P2P_RELAY_URL is not a valid relay URL ({e}); using the default");
-                    Self::default_n0()
-                }
-            },
-            None => Self::default_n0(),
+        static CHOICE: OnceLock<RelayChoice> = OnceLock::new();
+        CHOICE
+            .get_or_init(|| Self::from_setting(option_env!("P2P_RELAY_URL")))
+            .clone()
+    }
+
+    /// Interpret a `P2P_RELAY_URL` value: a comma-separated list of relay URLs of the form
+    /// `https://host[:port]` (or `http://` for a test relay).
+    ///
+    /// * `None`, an empty or a whitespace-only value selects n0's relays:
+    ///   [`RelayChoice::N0WithoutTrailingDots`] in the browser, [`RelayChoice::N0`] natively.
+    ///   CI passes an empty string when the repository variable is not set, so empty means
+    ///   unset.
+    /// * Otherwise each entry is trimmed, and when every entry is a valid `http` or `https`
+    ///   URL the result is [`RelayChoice::Custom`] with those URLs in order, duplicates
+    ///   removed.
+    /// * Any empty entry (such as a trailing comma), unparsable URL or other scheme makes the
+    ///   whole value invalid: a warning names the entry's position and the reason, never its
+    ///   text, and n0's relays are used. A typo therefore never ships a build that silently
+    ///   uses only some of its relays.
+    pub fn from_setting(setting: Option<&str>) -> Self {
+        let Some(setting) = setting.map(str::trim).filter(|value| !value.is_empty()) else {
+            return Self::default_n0();
+        };
+        match parse_relay_list(setting) {
+            Ok(urls) => Self::Custom(urls),
+            Err(reason) => {
+                log::warn!("P2P_RELAY_URL is not a valid relay list ({reason}); using the default");
+                Self::default_n0()
+            }
         }
     }
 
@@ -576,6 +616,125 @@ impl RelayChoice {
             Self::N0
         }
     }
+
+    /// Whether every relay is the operator's own, [`OPERATOR_RELAY_HOST`]: true only for a
+    /// non-empty [`RelayChoice::Custom`] list in which each URL has exactly that host (any
+    /// scheme or port). A list that also names another relay, n0's relays and no relay at all
+    /// are not the operator's, so the UI does not call them "operated by Oxfer".
+    pub fn uses_only_operator_relay(&self) -> bool {
+        match self {
+            Self::Custom(urls) => {
+                !urls.is_empty()
+                    && urls
+                        .iter()
+                        .all(|url| url.host_str() == Some(OPERATOR_RELAY_HOST))
+            }
+            Self::N0 | Self::N0WithoutTrailingDots | Self::None => false,
+        }
+    }
+}
+
+/// Parse a non-empty, comma-separated relay list. The error names an entry by its 1-based
+/// position and never echoes its text.
+pub(crate) fn parse_relay_list(setting: &str) -> Result<Vec<RelayUrl>, String> {
+    let mut urls: Vec<RelayUrl> = Vec::new();
+    for (index, entry) in setting.split(',').map(str::trim).enumerate() {
+        let position = index + 1;
+        if entry.is_empty() {
+            return Err(format!("entry {position} is empty"));
+        }
+        // `url::ParseError` describes the defect (such as an invalid port) without the input.
+        let url = url::Url::parse(entry)
+            .map_err(|error| format!("entry {position} is not a valid URL: {error}"))?;
+        // `http` and `https` are special schemes, so the parser has already rejected an
+        // empty host. Other schemes are not relay URLs in tickets.
+        if !matches!(url.scheme(), "https" | "http") {
+            return Err(format!(
+                "entry {position} uses the {} scheme; expected https or http",
+                url.scheme()
+            ));
+        }
+        let url = RelayUrl::from(url);
+        if !urls.contains(&url) {
+            urls.push(url);
+        }
+    }
+    Ok(urls)
+}
+
+/// Path of the relay's WebSocket endpoint, as dialled by the iroh relay client.
+const RELAY_WEBSOCKET_PATH: &str = "/relay";
+
+/// The dotted spelling of n0's EU relay, probed after n0's relays to detect the WebKit
+/// incompatibility with fully qualified DNS names (see [`RelayChoice::N0WithoutTrailingDots`]).
+const N0_DOTTED_PROBE_URL: &str = "wss://euc1-1.relay.n0.iroh.link./relay";
+
+/// The WebSocket URLs the browser diagnostics page probes for `relay`, in order and without
+/// duplicates; empty for [`RelayChoice::None`].
+///
+/// n0's presets probe the relays of `n0_relays_without_trailing_dots`, in that map's order,
+/// then `N0_DOTTED_PROBE_URL`. A custom relay is probed as `scheme://host[:port]/relay`,
+/// with the iroh relay client's scheme mapping (`http` dials `ws`, anything else `wss`). The
+/// URL is rebuilt from its scheme, host and port only: credentials, path, query and fragment
+/// never reach a copied diagnostics report.
+pub fn relay_probe_urls(relay: &RelayChoice) -> Vec<String> {
+    match relay {
+        RelayChoice::N0 | RelayChoice::N0WithoutTrailingDots => {
+            // Cannot fail for iroh's built-in maps, whose every URL has a DNS host.
+            let n0: Vec<RelayUrl> = n0_relays_without_trailing_dots()
+                .map(|map| map.urls())
+                .unwrap_or_default();
+            let mut probes = unique_probe_urls(&n0);
+            probes.push(N0_DOTTED_PROBE_URL.to_string());
+            probes
+        }
+        RelayChoice::Custom(urls) => unique_probe_urls(urls),
+        RelayChoice::None => Vec::new(),
+    }
+}
+
+/// [`relay_probe_url`] of each URL, in order, without duplicates.
+fn unique_probe_urls(urls: &[RelayUrl]) -> Vec<String> {
+    let mut probes: Vec<String> = Vec::with_capacity(urls.len());
+    for url in urls {
+        let probe = relay_probe_url(url);
+        if !probes.contains(&probe) {
+            probes.push(probe);
+        }
+    }
+    probes
+}
+
+fn relay_probe_url(url: &RelayUrl) -> String {
+    let scheme = match url.scheme() {
+        "http" | "ws" => "ws",
+        _ => "wss",
+    };
+    // `host_str` keeps the brackets of an IPv6 literal; `port` is `None` for the scheme's
+    // default port, which the WebSocket scheme shares.
+    let host = url.host_str().unwrap_or_default();
+    let port = url
+        .port()
+        .map(|port| format!(":{port}"))
+        .unwrap_or_default();
+    format!("{scheme}://{host}{port}{RELAY_WEBSOCKET_PATH}")
+}
+
+/// The endpoint builder for `relay`, shared by [`Node::bind`] and [`DiagnosticNode::bind`].
+fn endpoint_builder(relay: &RelayChoice) -> Result<iroh::endpoint::Builder, NodeError> {
+    Ok(match relay {
+        RelayChoice::N0 => Endpoint::builder(presets::N0),
+        RelayChoice::N0WithoutTrailingDots => Endpoint::builder(presets::N0)
+            .relay_mode(RelayMode::Custom(n0_relays_without_trailing_dots()?)),
+        RelayChoice::Custom(urls) => {
+            if urls.is_empty() {
+                return Err(NodeError::Relay("no relay URL is configured".into()));
+            }
+            Endpoint::builder(presets::Minimal)
+                .relay_mode(RelayMode::Custom(RelayMap::from_iter(urls.iter().cloned())))
+        }
+        RelayChoice::None => Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled),
+    })
 }
 
 fn without_trailing_dns_dot(relay: RelayUrl) -> Result<RelayUrl, NodeError> {
@@ -750,16 +909,7 @@ impl Node {
     pub async fn bind(files: SharedFiles, relay: RelayChoice) -> Result<Self, NodeError> {
         let secret = SecretKey::generate();
         let cap = derive_cap(&secret);
-        let builder = match &relay {
-            RelayChoice::N0 => Endpoint::builder(presets::N0),
-            RelayChoice::N0WithoutTrailingDots => Endpoint::builder(presets::N0)
-                .relay_mode(RelayMode::Custom(n0_relays_without_trailing_dots()?)),
-            RelayChoice::Custom(url) => Endpoint::builder(presets::Minimal)
-                .relay_mode(RelayMode::Custom(RelayMap::from(url.clone()))),
-            RelayChoice::None => {
-                Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
-            }
-        };
+        let builder = endpoint_builder(&relay)?;
         let bind = builder.secret_key(secret).alpns(vec![ALPN.to_vec()]).bind();
         let endpoint = timeout(BIND_TIMEOUT, bind)
             .await
@@ -943,6 +1093,69 @@ impl Node {
     }
 }
 
+/// Whether this page's URL fragment carries the `dev` flag, read with
+/// [`Node::parse_fragment`]; always false outside the browser.
+///
+/// The app's fragment scrub keeps `dev` when it removes a ticket and access code, and the
+/// boot script's `#dev` reload restores the original URL, so a page opened with `#dev` keeps
+/// the flag through both.
+pub fn page_has_dev_flag() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|window| window.location().hash().ok())
+            .is_some_and(|hash| Node::parse_fragment(&hash).dev)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
+/// The endpoint ID of the share a link points at, as an entry for the relay's denylist.
+///
+/// This is the take-down step of an abuse report (`docs/compliance/incident-runbook.md`):
+/// the report carries a link, and the relay blocks the share by its endpoint ID. The link
+/// does not show that ID. Its ticket is `endpoint` followed by base32 of a postcard encoding
+/// in which the 32-byte ID starts one byte in, so neither the ID's hex nor its base32 form
+/// appears in the link.
+///
+/// `input` is any of:
+///
+/// * a whole share link, `https://oxfer.app/#[dev&]endpoint…&cap=…`;
+/// * its fragment, with or without the `#`;
+/// * the bare ticket: the part that starts with `endpoint` and ends before `&cap=`, which is
+///   what the abuse page asks reporters to send.
+///
+/// Whitespace anywhere in `input` is ignored, so a link wrapped across lines in an email
+/// still reads, and so are `<`, `>` and quotes around it. The fragment is read by
+/// [`Node::parse_fragment`], so this accepts exactly the tickets the app opens. Nothing is
+/// dialled.
+///
+/// The result is the ID's `Display` form, 64 lowercase hex digits, which iroh-relay 1.1.0
+/// accepts in `access.denylist = ["…"]`: the relay deserializes that list from TOML as
+/// `Vec<EndpointId>`, and each entry goes through `PublicKey`'s `FromStr` (iroh-base 1.1.0),
+/// which takes 64 hex digits or 52 base32 characters. The ticket text itself fails that
+/// parse, and the relay then refuses to start.
+///
+/// Only the ID comes out. The capability after `cap=` and the ticket's addresses are
+/// dropped, and an error is a fixed message that never repeats `input`, because the
+/// capability is a bearer secret.
+pub fn share_endpoint_id(input: &str) -> Result<String, &'static str> {
+    let compact: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    let compact = compact.trim_matches(|c| matches!(c, '<' | '>' | '"' | '\''));
+    if compact.is_empty() {
+        return Err(NO_LINK_GIVEN);
+    }
+    let fragment = compact
+        .split_once('#')
+        .map_or(compact, |(_, fragment)| fragment);
+    Node::parse_fragment(fragment)
+        .ticket
+        .map(|ticket| ticket.endpoint_addr().id.to_string())
+        .ok_or(NO_TICKET_IN_LINK)
+}
+
 /// Separate ALPN and no file handler: opening a diagnostics link never serves a
 /// shared file or turns it into a valid transfer link.
 const DIAGNOSTIC_ALPN: &[u8] = b"oxfer/diagnostics/1";
@@ -964,16 +1177,7 @@ impl DiagnosticNode {
     }
 
     pub async fn bind(relay: RelayChoice) -> Result<Self, NodeError> {
-        let builder = match &relay {
-            RelayChoice::N0 => Endpoint::builder(presets::N0),
-            RelayChoice::N0WithoutTrailingDots => Endpoint::builder(presets::N0)
-                .relay_mode(RelayMode::Custom(n0_relays_without_trailing_dots()?)),
-            RelayChoice::Custom(url) => Endpoint::builder(presets::Minimal)
-                .relay_mode(RelayMode::Custom(RelayMap::from(url.clone()))),
-            RelayChoice::None => {
-                Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
-            }
-        };
+        let builder = endpoint_builder(&relay)?;
         let endpoint = timeout(
             BIND_TIMEOUT,
             builder

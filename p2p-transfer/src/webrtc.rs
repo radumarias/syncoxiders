@@ -18,10 +18,11 @@ use crate::transfer::{
     TransportError,
 };
 
-pub const ICE_SERVERS: &[&str] = &[
-    "stun:stun.cloudflare.com:3478",
-    "stun:stun.l.google.com:19302",
-];
+/// STUN servers for browser ICE. Every listed server receives the user's IP address on
+/// every session, so the list is one server, run by Cloudflare, which already serves the
+/// app shell. If it is unreachable, a NATed peer gets no direct path and the transfer stays
+/// on the iroh relay.
+pub const ICE_SERVERS: &[&str] = &["stun:stun.cloudflare.com:3478"];
 pub const CONNECT_TIMEOUT: Duration = crate::transfer::WEBRTC_OPEN;
 pub const BUFFER_STALL: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_MESSAGE: usize = 64 * 1024;
@@ -65,6 +66,16 @@ extern "C" {
 
 thread_local! {
     static DEBUG_PC: RefCell<Option<web_sys::RtcPeerConnection>> = const { RefCell::new(None) };
+}
+
+/// Whether the newest `RTCPeerConnection` may be published as the page global `__p2p` for
+/// console debugging: in debug builds, or when the page's fragment carries the `dev` flag.
+///
+/// Checked when each peer is created; [`crate::node::page_has_dev_flag`] says why a page
+/// opened with `#dev` still has the flag then. A release build opened without it never
+/// exposes the handle. [`debug_pc`] is unaffected: it stays in wasm memory.
+fn expose_debug_handle() -> bool {
+    cfg!(debug_assertions) || crate::node::page_has_dev_flag()
 }
 
 fn js_error(error: JsValue) -> TransportError {
@@ -222,7 +233,9 @@ impl PeerChannel {
         )
         .map_err(js_error)?;
         if let Ok(pc) = peer_connection(&peer).dyn_into::<web_sys::RtcPeerConnection>() {
-            let _ = Reflect::set(&js_sys::global(), &JsValue::from_str("__p2p"), pc.as_ref());
+            if expose_debug_handle() {
+                let _ = Reflect::set(&js_sys::global(), &JsValue::from_str("__p2p"), pc.as_ref());
+            }
             DEBUG_PC.with(|debug| *debug.borrow_mut() = Some(pc));
         }
         Ok(Self {
@@ -408,6 +421,8 @@ impl DataChannel for PeerChannel {
     }
 }
 
+/// The most recently created peer connection, for tests and debugging, in every build. Only
+/// Rust callers can reach it; page script sees it only through the gated `__p2p` global.
 pub fn debug_pc() -> Option<web_sys::RtcPeerConnection> {
     DEBUG_PC.with(|debug| debug.borrow().clone())
 }

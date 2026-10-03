@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<!--
+  Oxfer privacy notice, served at /privacy.
+
+  OWNER CHECKLIST. Replace each placeholder token below everywhere it appears
+  in this file. They are written here without their double square brackets, so
+  this list does not trip the placeholder check in build-web.sh, which refuses
+  to deploy while any token remains in privacy.html, terms.html or abuse.html.
+
+    OPERATOR_NAME           Legal name of the person or company that runs Oxfer.
+                            Exception: in section 14.6 (Singapore) it names the
+                            individual responsible for data protection. If the
+                            operator is a company, write that individual's name
+                            there, not the company's (Singapore PDPA s.11(3)
+                            and (5) require a designated individual).
+    OPERATOR_ADDRESS        Postal address: domicile (natural person) or
+                            registered office (company).
+    OPERATOR_REGISTRATION   Trade-register number and tax ID (company only).
+                            For a natural person, delete the whole line marked
+                            "delete for a natural person".
+    EFFECTIVE_DATE          Date this version takes effect, e.g. 1 November 2026.
+    RELAY_HOSTING_PROVIDER  Company that provides the relay server.
+    RELAY_LOCATION          City and country of the relay server.
+
+  This notice describes the operator's own relay at relay.oxfer.app. Publish it
+  with a build that sets P2P_RELAY_URL to that relay. A build without it uses
+  n0's public relays and dns.iroh.link, which this notice does not describe.
+
+  Before publishing, also make these statements true:
+  - Section 8, NCMEC: confirm the Art. 49(1)(d) basis with counsel before the
+    first referral (docs/compliance/ropa.md, section 5).
+  - Section 8, email: choose a mailbox provider that keeps messages in the EEA
+    or relies on an adequacy decision or the EU Standard Contractual Clauses.
+  - Section 3, loading the website: Cloudflare request-log retention (Logpull)
+    stays off.
+
+  RELAY VARIANT. This notice, terms.html, abuse.html and the records in
+  docs/compliance/ describe the VPS variant of deploy/relay/: an EU server we
+  run, with the nftables firewall, rate-limit sets and IP bans, the journal
+  capped at three days, SSH login records kept at most three days, and the
+  endpoint-ID denylist kept on the server. The kit's Fly.io variant makes
+  several statements false: there the relay sees Fly's proxy address instead
+  of the user's, so it cannot rate-limit by address or block IP addresses; Fly.io, Inc.,
+  a United States company, runs the edge that handles every connection; and
+  relay logs go to Fly's log pipeline, not the three-day journal. Before
+  using Fly, change at least: this notice, section 3 (relay row: processor,
+  legal basis for address blocking, retention, SSH) and section 8 (Fly as a
+  US processor and its transfer basis); terms.html sections 5.2, 7.1 and 7.3;
+  abuse.html sections 4, 7 and 9.1; and the records listed in
+  deploy/relay/README.md, "Fly.io variant".
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="What personal data Oxfer processes, who receives it, why, and for how long.">
+<title>Privacy notice · Oxfer</title>
+<link rel="stylesheet" href="assets/legal.css">
+<link rel="icon" type="image/svg+xml" href="assets/oxfer-favicon-light.svg">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+    <a class="brand" href="/">
+        <picture>
+            <source srcset="assets/oxfer-wordmark-dark.svg" media="(prefers-color-scheme: dark)">
+            <img src="assets/oxfer-wordmark-light.svg" alt="Oxfer home" width="179" height="28">
+        </picture>
+    </a>
+    <a class="back-link" href="/">Back to the app</a>
+</header>
+
+<nav class="legal-nav" aria-label="Legal pages">
+    <ul>
+        <li><a href="/privacy" aria-current="page">Privacy</a></li>
+        <li><a href="/terms">Terms of use</a></li>
+        <li><a href="/abuse">Abuse and safety</a></li>
+    </ul>
+</nav>
+
+<main id="main">
+<article>
+    <h1>Privacy notice</h1>
+    <p class="meta">Last updated: [[EFFECTIVE_DATE]]</p>
+
+    <section class="summary" aria-labelledby="summary-title">
+        <h2 id="summary-title">In short</h2>
+        <ul>
+            <li>Oxfer has no accounts, no analytics, no advertising and sets no cookies of its own.</li>
+            <li>Files go from the sender's device to the recipient's device, encrypted. When no direct path works, the encrypted data passes through our relay, which cannot read it. We never store your files.</li>
+            <li>To connect the two devices, some parties see your IP address: Cloudflare (which delivers the website and a connection helper called STUN), our relay, and the other device in the transfer.</li>
+            <li>The share link is the key. Anyone who has the complete link can download the files while the sender is still sharing.</li>
+            <li>We keep no record of who used Oxfer or what was sent. We hold personal data only if you write to us, if a report or a block concerns you, and for as long as <a href="#processing">section 3</a> says.</li>
+        </ul>
+    </section>
+
+    <nav class="toc" aria-labelledby="toc-title">
+        <h2 id="toc-title">Contents</h2>
+        <ol>
+            <li><a href="#controller">1. Who is responsible</a></li>
+            <li><a href="#how-it-works">2. How Oxfer works</a></li>
+            <li><a href="#processing">3. What data is processed, by whom and why</a></li>
+            <li><a href="#on-device">4. What stays on your device</a></li>
+            <li><a href="#not-done">5. What we do not do</a></li>
+            <li><a href="#cookies">6. Cookies</a></li>
+            <li><a href="#links-security">7. Share links and security</a></li>
+            <li><a href="#transfers">8. International transfers</a></li>
+            <li><a href="#rights">9. Your rights</a></li>
+            <li><a href="#complaints">10. Complaints to a supervisory authority</a></li>
+            <li><a href="#children">11. Children</a></li>
+            <li><a href="#changes">12. Changes to this notice</a></li>
+            <li><a href="#contact">13. Contact</a></li>
+            <li><a href="#regional">14. Information for users in specific regions</a></li>
+        </ol>
+    </nav>
+
+    <section id="controller" aria-labelledby="controller-title">
+        <h2 id="controller-title">1. Who is responsible</h2>
+        <p>Oxfer is run by the operator named below, who is the controller of the personal data described in this notice. In this notice, "we" and "us" mean the operator.</p>
+        <address class="identity">
+            <dl>
+                <dt>Operator</dt>
+                <dd>[[OPERATOR_NAME]]</dd>
+                <dt>Postal address</dt>
+                <dd>[[OPERATOR_ADDRESS]]</dd>
+                <!-- delete for a natural person: remove the next line -->
+                <dt>Registration</dt><dd>[[OPERATOR_REGISTRATION]]</dd>
+                <dt>Privacy contact</dt>
+                <dd><a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a></dd>
+                <dt>Website</dt>
+                <dd>oxfer.app</dd>
+            </dl>
+        </address>
+        <p>This notice covers the Oxfer web app at oxfer.app, these legal pages, the diagnostics page, and the Oxfer relay at relay.oxfer.app.</p>
+    </section>
+
+    <section id="how-it-works" aria-labelledby="how-it-works-title">
+        <h2 id="how-it-works-title">2. How Oxfer works</h2>
+        <ol>
+            <li>Your browser loads the Oxfer app from oxfer.app. The app runs on your device.</li>
+            <li>When you share files, the app creates a new random key and a share link. The part of the link after <code>#</code> holds the address of your device and a random access code. Browsers do not send this part of a link to the website.</li>
+            <li>The recipient opens the link. The two devices find each other through our relay and set up an encrypted connection.</li>
+            <li>Browsers then try to open a direct connection (WebRTC). If that fails, the encrypted data keeps flowing through our relay.</li>
+            <li>The sender must keep Oxfer open until the transfer ends. Nothing is stored on a server for later download.</li>
+        </ol>
+    </section>
+
+    <section id="processing" aria-labelledby="processing-title">
+        <h2 id="processing-title">3. What data is processed, by whom and why</h2>
+        <p>"Art. 6(1)(b)" means the processing is needed to provide the service you ask for. "Art. 6(1)(f)" means it is based on our legitimate interests, which the table names. "Art. 6(1)(c)" means a legal obligation. These refer to the EU General Data Protection Regulation (GDPR).</p>
+        <div class="table-wrap">
+            <table class="cards">
+                <caption>Processing activities</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Activity</th>
+                        <th scope="col">Data</th>
+                        <th scope="col">Who receives it</th>
+                        <th scope="col">Purpose</th>
+                        <th scope="col">Legal basis</th>
+                        <th scope="col">How long</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <th scope="row">Loading the website</th>
+                        <td data-label="Data">IP address, browser details sent with each request (such as the user agent), the page address without the part after <code>#</code>, date and time, and technical connection data.</td>
+                        <td data-label="Who receives it">Cloudflare, Inc., which hosts oxfer.app for us as our processor.</td>
+                        <td data-label="Purpose">Delivering the app and these pages, and protecting the site against attacks and abuse.</td>
+                        <td data-label="Legal basis">Art. 6(1)(f): running a working and secure website.</td>
+                        <td data-label="How long">We do not export or keep request logs. Cloudflare keeps no request log for us: its request-log retention is off unless a customer turns it on, and we have not. Cloudflare's dashboard shows us aggregate statistics, such as requests per country, and limited details of requests its security features block, which it keeps for the period its plan sets (the last 24 hours on the Free and Pro plans). Cloudflare keeps its own operational and security logs for as long as its purposes require, as its <a href="https://www.cloudflare.com/privacypolicy/">privacy policy</a> describes.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Finding a direct path (STUN)</th>
+                        <td data-label="Data">The public IP address and port your device uses, and the time of the request.</td>
+                        <td data-label="Who receives it">Cloudflare, Inc., which runs the public STUN service at stun.cloudflare.com.</td>
+                        <td data-label="Purpose">Lets two browsers find a direct network path to each other. Used by the browser app when it tries a direct connection.</td>
+                        <td data-label="Legal basis">Art. 6(1)(b).</td>
+                        <td data-label="How long">Under Cloudflare's policies. We receive nothing from this service.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Connecting through our relay</th>
+                        <td data-label="Data">IP address, endpoint ID (a public key created anew for each share and each receiving session), connection times, and the amount of encrypted data relayed. The relay cannot read file names or file contents.</td>
+                        <td data-label="Who receives it">Our relay at relay.oxfer.app, which we operate on a server provided by [[RELAY_HOSTING_PROVIDER]] in [[RELAY_LOCATION]]. The provider acts as our processor.</td>
+                        <td data-label="Purpose">Lets the two devices find and authenticate each other, carries connection setup, and carries the encrypted transfer when no direct path works.</td>
+                        <td data-label="Legal basis">Art. 6(1)(b). Rate limits, and blocking of abusive shares and addresses: Art. 6(1)(f), keeping the relay available and preventing abuse.</td>
+                        <td data-label="How long">The relay holds your IP address and endpoint ID in memory only while you are connected. It keeps no access log and no record of who connected, when, or how much was sent: its logs record no IP addresses, endpoint IDs or connections. It logs only its own operational errors, and the server deletes these logs automatically after at most three days. The server's firewall holds the source address of each new connection for at most 60 seconds, to enforce rate limits. Endpoint IDs and IP addresses we block stay in the relay's block lists while the block is in force: an address block lasts a set period, normally 30 days (<a href="/abuse#blocking">abuse and safety page, section 4</a>). We keep aggregate counters, such as the total number of connections, which contain no data about any person. Separately, the server records our own administrative logins and the source addresses of failed attempts to log in to it, and deletes these records after at most three days.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Connecting to the other device</th>
+                        <td data-label="Data">Your IP addresses and network connection candidates, your endpoint ID and, from the sender, the names, sizes and checksums of the shared files, then the files themselves.</td>
+                        <td data-label="Who receives it">The other device in the transfer, controlled by the person who has the link.</td>
+                        <td data-label="Purpose">Opening a direct connection and performing the transfer.</td>
+                        <td data-label="Legal basis">Art. 6(1)(b).</td>
+                        <td data-label="How long">The other browser holds connection data for the session. Files the recipient saves are under the recipient's control.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Diagnostics page</th>
+                        <td data-label="Data">A report with the app version, date and time, your browser's user agent, whether browser features are available, and the results of connection tests to the relay.</td>
+                        <td data-label="Who receives it">Nobody, unless you copy the report and send it to someone. The tests contact our relay in the same way as a transfer.</td>
+                        <td data-label="Purpose">Helping you and us find connection problems.</td>
+                        <td data-label="Legal basis">Art. 6(1)(b).</td>
+                        <td data-label="How long">Not stored. The report exists on your screen until you leave the page. It contains no share links, file names or IP addresses.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Messages you send us</th>
+                        <td data-label="Data">Your email address, your name if you give it, your message and anything you attach.</td>
+                        <td data-label="Who receives it">Us. Email to oxfer.app addresses is forwarded by Cloudflare Email Routing to the mailbox we use, which an email service provider hosts for us.</td>
+                        <td data-label="Purpose">Answering you, and handling privacy requests, abuse reports, complaints and requests from authorities.</td>
+                        <td data-label="Legal basis">Art. 6(1)(c) where the law requires us to receive and handle such messages, for example the EU Digital Services Act. Otherwise Art. 6(1)(f): answering people who contact us.</td>
+                        <td data-label="How long">As long as needed to handle the matter and to show how we handled it. We review what we keep at least once a year and delete what is no longer needed.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Abuse reports passed on</th>
+                        <td data-label="Data">The content of a report, including any link or endpoint ID in it, and the reporter's contact details where needed.</td>
+                        <td data-label="Who receives it">Competent authorities. Reports about child sexual abuse material go to the National Center for Missing &amp; Exploited Children (NCMEC) in the United States (<a href="#transfers">section 8</a>) and to Romanian authorities.</td>
+                        <td data-label="Purpose">Protecting people from serious harm and cooperating with lawful requests.</td>
+                        <td data-label="Legal basis">Art. 6(1)(c) where the law requires it; otherwise Art. 6(1)(f): protecting victims and preventing crime.</td>
+                        <td data-label="How long">As for messages you send us.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <p>No law obliges you to give us personal data. Your IP address and the technical data above are needed to provide the service you ask for, delivering the app and connecting the two devices, so Oxfer cannot work without them. You never have to give us your name or email address. If you write to us without a way to reach you, we cannot reply.</p>
+    </section>
+
+    <section id="on-device" aria-labelledby="on-device-title">
+        <h2 id="on-device-title">4. What stays on your device</h2>
+        <p>The browser app stores only the items below in your browser for this site. They are not sent to us and we cannot see them. You can remove all of them by clearing this site's data in your browser settings.</p>
+        <div class="table-wrap">
+            <table class="stack">
+                <caption>Browser storage used by Oxfer</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Item</th>
+                        <th scope="col">Where</th>
+                        <th scope="col">What it holds</th>
+                        <th scope="col">Kept until</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <th scope="row"><code>oxfer.theme.v1</code></th>
+                        <td data-label="Where">Local storage</td>
+                        <td data-label="What it holds">The display theme you chose (Clean or Rusty). Saved only when you pick a theme yourself, or when the app carries over a theme you picked in an earlier version. If you never pick one, nothing is saved.</td>
+                        <td data-label="Kept until">You clear site data.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><code>oxfer-v3</code></th>
+                        <td data-label="Where">Cache storage, managed by the Oxfer service worker</td>
+                        <td data-label="What it holds">Copies of the app's own files. The app always fetches them from oxfer.app first and uses these copies only when that fails, so it can still start on a poor connection. The browser also keeps the service worker itself registered for this site. The service worker passes downloads to your browser's download manager, without keeping them.</td>
+                        <td data-label="Kept until">A newer version replaces it, or you clear site data.</td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><code>oxfer-resume</code></th>
+                        <td data-label="Where">A folder in the origin private file system and a database in IndexedDB, both with this name</td>
+                        <td data-label="What it holds">Only if you tick "Keep a copy here so I can continue later": the received file data, file names, sizes, checksums, progress and the time of the last update. The folder and the database are created only when you tick that box and start saving. Looking for saved copies, exporting them and deleting them never create either.</td>
+                        <td data-label="Kept until">You choose "Delete saved copy" or clear site data. The browser may also remove it when storage runs low.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <p>Oxfer sets no cookies and stores nothing else on your device. Earlier versions also kept two local-storage entries written by the user-interface framework, <code>app</code> (which held the theme) and <code>egui_memory_ron</code> (interface state such as scroll positions). Oxfer no longer writes them. When the app starts, it moves a theme you chose there to <code>oxfer.theme.v1</code> and deletes both entries.</p>
+        <p>The app stores these items so it can work as you ask (the app files and any copy you choose to keep) and to remember the theme you chose. Files you save go to the place you choose or to your downloads folder.</p>
+        <p>While a transfer runs, Oxfer asks your browser to keep the screen on. Oxfer does not use your camera, microphone or location.</p>
+        <p>If you use the Oxfer desktop app, it keeps a settings file on your computer with the theme, the folder you chose for saving, the window's size and position, and user-interface state such as which sections are open. That file holds no share links and no details of your transfers. Share links created by the desktop app also contain your computer's IP addresses.</p>
+    </section>
+
+    <section id="not-done" aria-labelledby="not-done-title">
+        <h2 id="not-done-title">5. What we do not do</h2>
+        <ul>
+            <li>We do not create accounts or ask for your name, email address or phone number to use Oxfer.</li>
+            <li>We do not use analytics, advertising, tracking pixels, third-party scripts or third-party fonts.</li>
+            <li>We do not sell personal data, share it for advertising, or build profiles.</li>
+            <li>We make no automated decisions about you that have legal or similarly significant effects.</li>
+            <li>We cannot see the contents or names of the files you send.</li>
+            <li>We do not receive share links, unless someone sends one to us in a report.</li>
+        </ul>
+    </section>
+
+    <section id="cookies" aria-labelledby="cookies-title">
+        <h2 id="cookies-title">6. Cookies</h2>
+        <p>Oxfer sets no cookies. Cloudflare, which hosts the site, may set strictly necessary security cookies, such as <code>__cf_bm</code> for bot protection or <code>cf_clearance</code> after a security check, when those protections are active for the site. Oxfer does not read them. Cloudflare describes them in its <a href="https://developers.cloudflare.com/fundamentals/reference/policies-compliances/cloudflare-cookies/">cookie documentation</a>.</p>
+        <p>The browser storage described in <a href="#on-device">section 4</a> is not a cookie and is never sent to a server.</p>
+    </section>
+
+    <section id="links-security" aria-labelledby="links-security-title">
+        <h2 id="links-security-title">7. Share links and security</h2>
+        <ul>
+            <li>A share link works like a key. Anyone who has the complete link can download the shared files while the sender keeps sharing. Send links only through channels you trust, and stop sharing when the transfer is done.</li>
+            <li>Every share uses a new key. Once the sender stops sharing, the link stops working and cannot be used again.</li>
+            <li>Data is encrypted between the two devices. On a direct connection the browsers use DTLS. Through the relay, the data stays inside an encrypted connection between the two devices, and the relay only forwards it.</li>
+            <li>Our relay and Cloudflare's STUN service see IP addresses. The two devices in a transfer usually see each other's public IP address.</li>
+            <li>The app is loaded from oxfer.app each time you open it, so you rely on the integrity of the files served there. We protect the build and deployment process, and the source code is public.</li>
+            <li>The recipient's app checks that each received file matches the sender's checksum before reporting success.</li>
+        </ul>
+    </section>
+
+    <section id="transfers" aria-labelledby="transfers-title">
+        <h2 id="transfers-title">8. International transfers</h2>
+        <ul>
+            <li><strong>Our relay</strong> runs in the European Union, in [[RELAY_LOCATION]].</li>
+            <li><strong>Cloudflare</strong> is a United States company with a global network. Your requests are usually handled by a Cloudflare data centre near you, which may be outside the European Economic Area. Cloudflare states that, for transfers to the United States, it relies on its certification under the EU-U.S. Data Privacy Framework, the UK Extension to it and the Swiss-U.S. Data Privacy Framework, and that its data processing addendum also includes the EU Standard Contractual Clauses. See Cloudflare's <a href="https://www.cloudflare.com/trust-hub/gdpr/">GDPR information</a> and <a href="https://www.cloudflare.com/privacypolicy/">privacy policy</a>.</li>
+            <li><strong>The other device.</strong> If the person you exchange files with is outside the European Economic Area, your connection data goes to their device directly. This is part of the transfer you ask for.</li>
+            <li><strong>Email.</strong> Messages you send us pass through Cloudflare Email Routing, covered by the Cloudflare safeguards above, and then to our email service provider. That provider keeps them in the European Economic Area, or processes them elsewhere only under an adequacy decision of the European Commission or the EU Standard Contractual Clauses. Write to <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a> for the provider's name and a copy of the safeguards.</li>
+            <li><strong>NCMEC.</strong> When we refer child sexual abuse material to the National Center for Missing &amp; Exploited Children (NCMEC) in the United States, we send the report, the link or endpoint ID in it and, only where needed, how to reach the reporter. No adequacy decision covers NCMEC: the EU-U.S. Data Privacy Framework covers only organisations certified under it, and NCMEC, a non-profit organisation, is not. We make these transfers only when necessary for important reasons of public interest (GDPR Art. 49(1)(d)): protecting children from sexual abuse and exploitation, which EU law recognises, for example in Directive 2011/93/EU. We send only what NCMEC needs to act. For more information, write to <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>.</li>
+        </ul>
+    </section>
+
+    <section id="rights" aria-labelledby="rights-title">
+        <h2 id="rights-title">9. Your rights</h2>
+        <p>Under the GDPR you have the right to access your personal data, to have it corrected or erased, to restrict its processing, to receive it in a portable format, and to object to processing based on our legitimate interests. You can also complain to a supervisory authority (<a href="#complaints">section 10</a>).</p>
+        <p>In practice, we hold almost nothing about users. We have no accounts, no request logs of our own and no record of transfers, so we usually cannot find any data linked to you. If you write to us, we will tell you what, if anything, we hold, and act on your request. Where a request concerns data Cloudflare processes for us, we will pass it on and help where we can.</p>
+        <p>Write to <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>. We answer within one month. If a request is complex, we may extend this by up to two more months and will tell you why.</p>
+    </section>
+
+    <section id="complaints" aria-labelledby="complaints-title">
+        <h2 id="complaints-title">10. Complaints to a supervisory authority</h2>
+        <p>Our lead supervisory authority is the Romanian data protection authority:</p>
+        <address class="identity">
+            <dl>
+                <dt>Authority</dt>
+                <dd>Autoritatea Națională de Supraveghere a Prelucrării Datelor cu Caracter Personal (ANSPDCP)</dd>
+                <dt>Address</dt>
+                <dd>B-dul G-ral. Gheorghe Magheru 28-30, Sector 1, cod poștal 010336, București, România</dd>
+                <dt>Website</dt>
+                <dd><a href="https://www.dataprotection.ro/">www.dataprotection.ro</a></dd>
+            </dl>
+        </address>
+        <p>You may also complain to the supervisory authority in the EU country where you live or work, or where you think an infringement happened. For the United Kingdom and Switzerland, see <a href="#regional">section 14</a>.</p>
+    </section>
+
+    <section id="children" aria-labelledby="children-title">
+        <h2 id="children-title">11. Children</h2>
+        <p>Oxfer is not directed at children. Our <a href="/terms">terms of use</a> do not allow use by anyone under 13. Oxfer asks no one for personal details, so it does not knowingly collect data about children. If you think a child has sent us personal data, for example by email, write to <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a> and we will delete it.</p>
+    </section>
+
+    <section id="changes" aria-labelledby="changes-title">
+        <h2 id="changes-title">12. Changes to this notice</h2>
+        <p>We will update this notice when Oxfer changes in a way that affects personal data, and change the "Last updated" date at the top. We will describe significant changes on this page before they take effect, where we can. Accounts, analytics, advertising, payments or stored files would each be a significant change.</p>
+    </section>
+
+    <section id="contact" aria-labelledby="contact-title">
+        <h2 id="contact-title">13. Contact</h2>
+        <p>Privacy questions and requests: <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>. Abuse reports and requests from authorities: <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a>, as described on the <a href="/abuse">abuse and safety page</a>. Our postal address is in <a href="#controller">section 1</a>.</p>
+    </section>
+
+    <section id="regional" aria-labelledby="regional-title">
+        <h2 id="regional-title">14. Information for users in specific regions</h2>
+        <p>Oxfer is offered from Romania under EU law. The information below is provided for users in these regions. It does not mean that we target these regions or that every local law applies to Oxfer.</p>
+
+        <h3 id="uk">14.1 United Kingdom</h3>
+        <p>You have the same rights under the UK GDPR as described in <a href="#rights">section 9</a>. You can complain to the Information Commissioner's Office (ICO): <a href="https://ico.org.uk/make-a-complaint/">ico.org.uk/make-a-complaint</a>.</p>
+
+        <h3 id="switzerland">14.2 Switzerland</h3>
+        <p>You have comparable rights under the Swiss Federal Act on Data Protection. You can contact the Federal Data Protection and Information Commissioner (FDPIC): <a href="https://www.edoeb.admin.ch/en">www.edoeb.admin.ch</a>.</p>
+
+        <h3 id="california">14.3 California, United States</h3>
+        <ul>
+            <li>Categories of personal information processed: IP addresses and browser details (<a href="#processing">section 3</a>), and your email address and message if you contact us.</li>
+            <li>Other parties: Cloudflare processes requests to the site and to its STUN service, as described above. No other party collects information about your activity across other websites through Oxfer.</li>
+            <li>Do Not Track: Oxfer does not track users over time or across other websites. We treat every visit the same whether or not your browser sends a Do Not Track or Global Privacy Control signal.</li>
+            <li>We do not sell personal information and do not share it for cross-context behavioural advertising.</li>
+            <li>There are no accounts to review or edit. For any request, write to <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>.</li>
+            <li>Changes are described in <a href="#changes">section 12</a>. The date at the top shows when this version took effect.</li>
+        </ul>
+
+        <h3 id="brazil">14.4 Brazil</h3>
+        <p>Under the Lei Geral de Proteção de Dados (LGPD) you may ask us to confirm whether we process your data, give you access, correct, anonymise, block or delete it, tell you with whom we share it, and port it. Our communication channel for these requests is <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>. Oxfer is not directed at children or adolescents and does no profiling or advertising. You can also contact the Autoridade Nacional de Proteção de Dados (ANPD): <a href="https://www.gov.br/anpd/pt-br">www.gov.br/anpd</a>.</p>
+
+        <h3 id="india">14.5 India</h3>
+        <p>Questions and grievances about personal data can be sent to <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>. We answer within one month. Once the provisions of the Digital Personal Data Protection Act, 2023 that allow it are in force (under the current schedule, from May 2027), you may also complain to the Data Protection Board of India if you are not satisfied with our answer. For complaints about content or conduct on the service, see the <a href="/abuse#india">Grievance Officer details</a> on the abuse and safety page.</p>
+
+        <h3 id="singapore">14.6 Singapore</h3>
+        <p>The individual responsible for data protection at Oxfer is [[OPERATOR_NAME]]. Contact: <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>. You can also contact the Personal Data Protection Commission: <a href="https://www.pdpc.gov.sg/">www.pdpc.gov.sg</a>.</p>
+
+        <h3 id="japan">14.7 Japan</h3>
+        <p>When you use Oxfer, your browser sends information to the destinations below. Oxfer contains no advertising, analytics or other third-party tags.</p>
+        <div class="table-wrap">
+            <table class="stack">
+                <caption>Information sent from your browser</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Destination</th>
+                        <th scope="col">Information</th>
+                        <th scope="col">Purpose</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <th scope="row">Cloudflare, Inc. (oxfer.app)</th>
+                        <td data-label="Information">IP address, browser details, requested page</td>
+                        <td data-label="Purpose">Delivering the app and protecting the site</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Cloudflare, Inc. (stun.cloudflare.com)</th>
+                        <td data-label="Information">IP address and port</td>
+                        <td data-label="Purpose">Finding a direct network path</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">The operator's relay (relay.oxfer.app)</th>
+                        <td data-label="Information">IP address, endpoint ID, encrypted transfer data</td>
+                        <td data-label="Purpose">Connecting the two devices and relaying encrypted data</td>
+                    </tr>
+                    <tr>
+                        <th scope="row">The other device in the transfer</th>
+                        <td data-label="Information">IP addresses, connection candidates, endpoint ID, the files you send</td>
+                        <td data-label="Purpose">Performing the transfer</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+</article>
+</main>
+
+<footer class="site-footer">
+    <ul>
+        <li><a href="/">Oxfer app</a></li>
+        <li><a href="/privacy" aria-current="page">Privacy</a></li>
+        <li><a href="/terms">Terms of use</a></li>
+        <li><a href="/abuse">Abuse and safety</a></li>
+    </ul>
+    <p>Privacy notice. Last updated: [[EFFECTIVE_DATE]].</p>
+</footer>
+</body>
+</html>

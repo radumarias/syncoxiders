@@ -10,18 +10,13 @@ cargo clippy  --quiet -p p2p-transfer --all-targets --all-features -- -D warning
 cargo clippy  --quiet -p p2p-transfer --all-features --lib --target wasm32-unknown-unknown -- -D warnings -W clippy::all
 cargo test    --quiet -p p2p-transfer --all-targets --all-features
 cargo test    --quiet -p p2p-transfer --doc
-node --test tests/resume_worker.test.mjs
-node --test tests/diagnostics.test.mjs
-node --test tests/webrtc_stats.test.mjs
-node --test tests/wake_lock.test.mjs
-node --test tests/theme.test.mjs
-node --test tests/favicon.test.mjs
-node --test tests/package-cf-output.test.mjs
+node --test tests/*.test.mjs
+sh deploy/relay/render.sh --check
 wasm-pack test --headless --firefox -- --test webrtc_wasm
 wasm-pack test --headless --firefox -- --test relay_wasm
 wasm-pack test --headless --firefox -- --test resume_wasm
 trunk build
-cmp assets/theme.js dist/assets/theme.js
-cmp assets/favicon.js dist/assets/favicon.js
-cmp assets/oxfer-favicon-light.svg dist/assets/oxfer-favicon-light.svg
-cmp assets/oxfer-favicon-dark.svg dist/assets/oxfer-favicon-dark.svg
+# Every Trunk copy-file entry in index.html is a byte copy of its source, and
+# no dist HTML file has an inline <script> (Trunk.toml inject_scripts = false;
+# the CSP would block it). build-web.sh runs the same check.
+node package-cf-output.mjs --check-dist

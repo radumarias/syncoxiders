@@ -24,8 +24,8 @@ use crate::file_io::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::file_io::{FsSink, FsSource};
 use crate::node::{
-    n0_relays_without_trailing_dots, without_trailing_relay_dots, DiagnosticNode, Node, Peers,
-    RelayChoice, SinkPref,
+    n0_relays_without_trailing_dots, parse_relay_list, relay_probe_urls, share_endpoint_id,
+    without_trailing_relay_dots, DiagnosticNode, Node, NodeError, Peers, RelayChoice, SinkPref,
 };
 use crate::protocol::{
     cap_eq, cap_from_hex, cap_to_hex, decode, encode_chunk, encode_control, max_payload,
@@ -119,6 +119,258 @@ fn local_test_old_tickets_keep_peer_and_ip_when_normalizing_relay() {
 }
 
 // ---------------------------------------------------------------------------------------
+// Relay selection (`P2P_RELAY_URL`) and diagnostics probe URLs
+// ---------------------------------------------------------------------------------------
+
+fn relay_url(url: &str) -> iroh::RelayUrl {
+    url.parse().unwrap()
+}
+
+#[test]
+fn local_test_relay_setting_unset_or_blank_selects_n0() {
+    // Native builds use the dotted n0 preset; the browser variant is covered by relay_wasm.
+    assert_eq!(RelayChoice::from_setting(None), RelayChoice::N0);
+    assert_eq!(RelayChoice::from_setting(Some("")), RelayChoice::N0);
+    assert_eq!(RelayChoice::from_setting(Some("  \t\n ")), RelayChoice::N0);
+}
+
+#[test]
+fn local_test_relay_setting_single_url() {
+    assert_eq!(
+        RelayChoice::from_setting(Some("https://relay.oxfer.app")),
+        RelayChoice::Custom(vec![relay_url("https://relay.oxfer.app")])
+    );
+    assert_eq!(
+        RelayChoice::from_setting(Some("  https://relay.oxfer.app/  ")),
+        RelayChoice::Custom(vec![relay_url("https://relay.oxfer.app")])
+    );
+}
+
+#[test]
+fn local_test_relay_setting_several_urls_with_spaces_keep_order() {
+    assert_eq!(
+        RelayChoice::from_setting(Some(
+            " https://relay.example.test ,https://relay2.example.test:8443,  http://127.0.0.1:3340 "
+        )),
+        RelayChoice::Custom(vec![
+            relay_url("https://relay.example.test"),
+            relay_url("https://relay2.example.test:8443"),
+            relay_url("http://127.0.0.1:3340"),
+        ])
+    );
+    // A repeated relay is one relay map entry, and one probe.
+    assert_eq!(
+        RelayChoice::from_setting(Some(
+            "https://relay.example.test, https://relay.example.test/"
+        )),
+        RelayChoice::Custom(vec![relay_url("https://relay.example.test")])
+    );
+}
+
+#[test]
+fn local_test_relay_setting_rejects_empty_entries() {
+    for setting in [
+        "https://relay.example.test,",
+        "https://relay.example.test, ",
+        ",https://relay.example.test",
+        "https://relay.example.test,,https://relay2.example.test",
+        ",",
+    ] {
+        assert_eq!(
+            RelayChoice::from_setting(Some(setting)),
+            RelayChoice::N0,
+            "{setting:?} must fall back to n0 as a whole"
+        );
+    }
+}
+
+#[test]
+fn local_test_relay_setting_rejects_invalid_urls() {
+    for setting in [
+        "not a url",
+        "relay.oxfer.app",
+        "https://relay.example.test, relay2.example.test",
+        "https://relay.example.test:99999",
+        "https://",
+        "wss://relay.example.test",
+        "ftp://relay.example.test",
+        "https://relay.example.test, mailto:abuse@oxfer.app",
+    ] {
+        assert_eq!(
+            RelayChoice::from_setting(Some(setting)),
+            RelayChoice::N0,
+            "{setting:?} must fall back to n0 as a whole"
+        );
+    }
+}
+
+#[test]
+fn local_test_relay_setting_warning_names_the_entry_without_echoing_it() {
+    let cases = [
+        ("https://relay.example.test, ", "entry 2 is empty"),
+        (
+            "https://relay.example.test, https://u:s3cret@relay2.example.test:99999",
+            "entry 2 is not a valid URL",
+        ),
+        (
+            "wss://u:s3cret@relay.example.test",
+            "entry 1 uses the wss scheme",
+        ),
+    ];
+    for (setting, expected) in cases {
+        let reason = parse_relay_list(setting).unwrap_err();
+        assert!(reason.starts_with(expected), "{reason}");
+        for secret in ["s3cret", "relay.example.test", "relay2"] {
+            assert!(!reason.contains(secret), "{reason} echoes {secret:?}");
+        }
+    }
+}
+
+#[test]
+fn local_test_relay_probe_urls_n0_and_none() {
+    let n0 = relay_probe_urls(&RelayChoice::N0);
+    // n0's relays in their relay map's order, then the dotted WebKit canary, exactly.
+    assert_eq!(
+        n0,
+        [
+            "wss://aps1-1.relay.n0.iroh.link/relay",
+            "wss://euc1-1.relay.n0.iroh.link/relay",
+            "wss://use1-1.relay.n0.iroh.link/relay",
+            "wss://usw1-1.relay.n0.iroh.link/relay",
+            "wss://euc1-1.relay.n0.iroh.link./relay",
+        ]
+    );
+    assert_eq!(relay_probe_urls(&RelayChoice::N0WithoutTrailingDots), n0);
+    // Every production relay of the pinned iroh version is probed without its DNS dot, so an
+    // iroh upgrade that moves the relays fails here instead of probing stale hosts.
+    for host in [
+        iroh::defaults::prod::NA_EAST_RELAY_HOSTNAME,
+        iroh::defaults::prod::NA_WEST_RELAY_HOSTNAME,
+        iroh::defaults::prod::EU_RELAY_HOSTNAME,
+        iroh::defaults::prod::AP_RELAY_HOSTNAME,
+    ] {
+        let probe = format!("wss://{}/relay", host.trim_end_matches('.'));
+        assert!(n0.contains(&probe), "{probe} is not probed");
+    }
+    assert!(relay_probe_urls(&RelayChoice::None).is_empty());
+}
+
+#[test]
+fn local_test_relay_probe_urls_custom_single() {
+    let relay = RelayChoice::from_setting(Some("https://relay.oxfer.app"));
+    assert_eq!(relay_probe_urls(&relay), ["wss://relay.oxfer.app/relay"]);
+    // The scheme's default port is implied, as the WebSocket scheme shares it.
+    let relay = RelayChoice::Custom(vec![relay_url("https://relay.oxfer.app:443")]);
+    assert_eq!(relay_probe_urls(&relay), ["wss://relay.oxfer.app/relay"]);
+}
+
+#[test]
+fn local_test_relay_probe_urls_custom_multiple() {
+    let relay = RelayChoice::from_setting(Some(
+        "https://relay.example.test, https://relay2.example.test:8443, http://127.0.0.1:3340, \
+         https://[::1]:8443",
+    ));
+    assert_eq!(
+        relay_probe_urls(&relay),
+        [
+            "wss://relay.example.test/relay",
+            "wss://relay2.example.test:8443/relay",
+            "ws://127.0.0.1:3340/relay",
+            "wss://[::1]:8443/relay",
+        ]
+    );
+    // Two relay URLs that differ only in their path are one WebSocket endpoint.
+    let relay = RelayChoice::Custom(vec![
+        relay_url("https://relay.example.test/a"),
+        relay_url("https://relay.example.test/b"),
+    ]);
+    assert_eq!(relay_probe_urls(&relay), ["wss://relay.example.test/relay"]);
+}
+
+#[test]
+fn local_test_relay_probe_urls_never_carry_credentials_path_or_query() {
+    let relay = RelayChoice::from_setting(Some(
+        "https://probe-user:s3cret-token@relay.example.test:8443/private-path?auth=hunter2#frag, \
+         http://only-user@relay2.example.test/",
+    ));
+    let RelayChoice::Custom(urls) = &relay else {
+        panic!("credentials are valid URL syntax and must not reject the setting: {relay:?}");
+    };
+    assert_eq!(urls.len(), 2);
+    let probes = relay_probe_urls(&relay);
+    assert_eq!(
+        probes,
+        [
+            "wss://relay.example.test:8443/relay",
+            "ws://relay2.example.test/relay"
+        ]
+    );
+    for probe in &probes {
+        for secret in [
+            "probe-user",
+            "s3cret-token",
+            "only-user",
+            "@",
+            "private-path",
+            "auth",
+            "hunter2",
+            "frag",
+            "?",
+            "#",
+        ] {
+            assert!(!probe.contains(secret), "{probe} leaks {secret:?}");
+        }
+    }
+}
+
+#[test]
+fn local_test_operator_relay_only_when_every_relay_is_the_operators() {
+    for setting in [
+        "https://relay.oxfer.app",
+        "https://relay.oxfer.app/",
+        "https://relay.oxfer.app:443",
+        "https://RELAY.oxfer.app",
+        " https://relay.oxfer.app , https://relay.oxfer.app:8443 ",
+        "http://relay.oxfer.app:3340",
+    ] {
+        let relay = RelayChoice::from_setting(Some(setting));
+        assert!(matches!(relay, RelayChoice::Custom(_)), "{setting:?}");
+        assert!(relay.uses_only_operator_relay(), "{setting:?}");
+    }
+    for setting in [
+        "https://relay.oxfer.app, https://relay.example.test",
+        "https://relay.example.test, https://relay.oxfer.app",
+        "https://relay.example.test",
+        "https://oxfer.app",
+        "https://eu.relay.oxfer.app",
+        "https://relay.oxfer.app.example.test",
+        "https://relay.oxfer.app.",
+        "https://relay-oxfer.app",
+    ] {
+        let relay = RelayChoice::from_setting(Some(setting));
+        assert!(matches!(relay, RelayChoice::Custom(_)), "{setting:?}");
+        assert!(!relay.uses_only_operator_relay(), "{setting:?}");
+    }
+    for relay in [
+        RelayChoice::N0,
+        RelayChoice::N0WithoutTrailingDots,
+        RelayChoice::None,
+        RelayChoice::Custom(Vec::new()),
+    ] {
+        assert!(!relay.uses_only_operator_relay(), "{relay:?}");
+    }
+}
+
+#[tokio::test]
+async fn local_test_empty_custom_relay_list_is_refused_before_binding() {
+    let files = Arc::new(Mutex::new(Vec::new()));
+    let node = Node::bind(files, RelayChoice::Custom(Vec::new())).await;
+    assert!(matches!(node, Err(NodeError::Relay(_))));
+    let diagnostic = DiagnosticNode::bind(RelayChoice::Custom(Vec::new())).await;
+    assert!(matches!(diagnostic, Err(NodeError::Relay(_))));
+}
+
+// ---------------------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------------------
 
@@ -135,12 +387,13 @@ fn test_cap(seed: u8) -> [u8; CAP_LEN] {
     cap
 }
 
+/// A fresh directory under the system temp directory, removed on drop (also on panic).
 #[cfg(not(target_arch = "wasm32"))]
-struct TestDir(std::path::PathBuf);
+pub(crate) struct TestDir(pub(crate) std::path::PathBuf);
 
 #[cfg(not(target_arch = "wasm32"))]
 impl TestDir {
-    fn new(label: &str) -> Self {
+    pub(crate) fn new(label: &str) -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
@@ -678,6 +931,177 @@ fn local_test_fragment_bad_cap() {
 }
 
 // ---------------------------------------------------------------------------------------
+// Endpoint ID of a reported link (examples/ticket-endpoint-id.rs)
+// ---------------------------------------------------------------------------------------
+
+#[test]
+fn local_test_share_endpoint_id_reads_every_link_form() {
+    let ticket = test_ticket();
+    let id = ticket.endpoint_addr().id.to_string();
+    let cap = test_cap(0xc5);
+    let link = Node::link("https://oxfer.app/", &ticket, &cap, false);
+    let dev_link = Node::link("https://oxfer.app/", &ticket, &cap, true);
+    let fragment = link.split_once('#').expect("fragment").1.to_string();
+    let bare = ticket.to_string();
+    // A link wrapped across lines in an email.
+    let (head, tail) = link.split_at(link.len() / 2);
+    for input in [
+        link.clone(),
+        dev_link,
+        fragment.clone(),
+        format!("#{fragment}"),
+        bare.clone(),
+        format!("{bare}&cap"),
+        format!("{bare}&cap={}&future=1", cap_to_hex(&cap)),
+        format!("cap={}&relay&{bare}", cap_to_hex(&cap)),
+        format!("https://oxfer.app/?from=mail#{fragment}"),
+        format!("  {link}\n"),
+        format!("{head}\n    {tail}"),
+        format!("<{link}>"),
+        format!("\"{bare}\""),
+        format!("'{link}'"),
+    ] {
+        assert_eq!(
+            share_endpoint_id(&input).as_deref(),
+            Ok(id.as_str()),
+            "{input:?}"
+        );
+    }
+
+    // No ticket, a damaged one, or an ID instead of a link: a fixed message, never the input.
+    let damaged = &bare[3..];
+    for input in [
+        String::new(),
+        " \n\t".to_string(),
+        "https://oxfer.app/".to_string(),
+        "https://oxfer.app/#dev".to_string(),
+        damaged.to_string(),
+        format!("https://oxfer.app/#{damaged}&cap={}", cap_to_hex(&cap)),
+        format!("cap={}", cap_to_hex(&cap)),
+        id.clone(),
+    ] {
+        let error = share_endpoint_id(&input).expect_err(&input);
+        assert!(
+            input.trim().is_empty() || !error.contains(input.trim()),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn local_test_share_endpoint_id_is_what_the_relay_denylist_parses() {
+    use serde::de::value::{Error as ValueError, SeqDeserializer};
+    use serde::de::{Deserialize, Deserializer, IntoDeserializer};
+
+    let ticket = test_ticket();
+    let id = ticket.endpoint_addr().id;
+    let link = Node::link("https://oxfer.app/", &ticket, &test_cap(0x42), false);
+    let entry = share_endpoint_id(&link).unwrap();
+    assert_eq!(entry.len(), 64, "{entry}");
+    assert!(
+        entry
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "{entry}"
+    );
+
+    // iroh-relay 1.1.0 (src/main.rs) reads `access.denylist` from TOML, a human-readable
+    // format, as `Denylist(Vec<EndpointId>)`. Each entry therefore goes through iroh-base
+    // 1.1.0's `Deserialize for PublicKey`, which calls `PublicKey::from_str`. These are the
+    // same impls, from the same iroh-base, fed the way TOML feeds them.
+    let as_toml_feeds_it = IntoDeserializer::<ValueError>::into_deserializer(entry.clone());
+    assert!(as_toml_feeds_it.is_human_readable());
+    let denylist = Vec::<iroh::EndpointId>::deserialize(SeqDeserializer::<_, ValueError>::new(
+        vec![entry.clone()].into_iter(),
+    ))
+    .unwrap();
+    assert_eq!(denylist, vec![id]);
+    assert_eq!(entry.parse::<iroh::EndpointId>().unwrap(), id);
+    // `Display` is the relay's own spelling of an ID, for example in its HTTP access header.
+    assert_eq!(entry, id.to_string());
+
+    // The link does not show the ID, and the ticket text is not one: pasted into the
+    // denylist as it stands, it fails the parse and the relay refuses to start.
+    let base32 = base32_lower(id.as_bytes());
+    assert_eq!(base32.parse::<iroh::EndpointId>().unwrap(), id);
+    assert!(!link.contains(&entry));
+    assert!(!link.contains(&base32));
+    let bare = ticket.to_string();
+    assert!(bare.parse::<iroh::EndpointId>().is_err());
+    assert!(
+        Vec::<iroh::EndpointId>::deserialize(SeqDeserializer::<_, ValueError>::new(
+            vec![bare].into_iter(),
+        ))
+        .is_err()
+    );
+}
+
+/// RFC 4648 base32 without padding, lowercase: the alphabet of tickets, and the other form
+/// `PublicKey::from_str` accepts.
+fn base32_lower(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+    let mut out = String::with_capacity(bytes.len().div_ceil(5) * 8);
+    let (mut buffer, mut bits) = (0u16, 0u32);
+    for &byte in bytes {
+        buffer = (buffer << 8) | u16::from(byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(char::from(ALPHABET[usize::from((buffer >> bits) & 31)]));
+        }
+        buffer &= (1 << bits) - 1;
+    }
+    if bits > 0 {
+        out.push(char::from(
+            ALPHABET[usize::from((buffer << (5 - bits)) & 31)],
+        ));
+    }
+    out
+}
+
+#[test]
+fn local_test_share_endpoint_id_never_returns_the_capability() {
+    let ticket = test_ticket();
+    let bare = ticket.to_string();
+    let damaged = &bare[3..];
+    let cap = cap_to_hex(&test_cap(0x5c));
+    for input in [
+        Node::link("https://oxfer.app/", &ticket, &test_cap(0x5c), false),
+        Node::link("https://oxfer.app/", &ticket, &test_cap(0x5c), true),
+        format!("{bare}&cap={cap}"),
+        format!("cap={cap}"),
+        format!("cap={cap}&{damaged}"),
+        format!("{damaged}&cap={cap}"),
+        format!("{bare}&cap=zz{cap}"),
+    ] {
+        let output = match share_endpoint_id(&input) {
+            Ok(id) => id,
+            Err(error) => error.to_string(),
+        };
+        for secret in [cap.as_str(), "cap=", damaged, bare.as_str()] {
+            assert!(!output.contains(secret), "{output} repeats {secret:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn local_test_share_endpoint_id_of_a_real_share_link() {
+    timeout(Duration::from_secs(20), async {
+        let node = Node::bind(Arc::new(Mutex::new(Vec::new())), RelayChoice::None)
+            .await
+            .unwrap();
+        let ticket = node.ticket().await.unwrap();
+        let link = Node::link("https://oxfer.app/", &ticket, &node.cap(), false);
+        let entry = share_endpoint_id(&link).unwrap();
+        assert_eq!(entry, node.id().to_string());
+        assert!(!entry.contains(&cap_to_hex(&node.cap())));
+        node.shutdown().await;
+    })
+    .await
+    .expect("local node timed out");
+}
+
+// ---------------------------------------------------------------------------------------
 // File I/O
 // ---------------------------------------------------------------------------------------
 
@@ -1019,7 +1443,7 @@ async fn local_test_test_sinks_behave() {
 // ---------------------------------------------------------------------------------------
 
 /// A shared file backed by memory, hashed the way the app would hash it.
-fn shared_file(name: &str, data: &[u8]) -> SharedFile {
+pub(crate) fn shared_file(name: &str, data: &[u8]) -> SharedFile {
     SharedFile {
         meta: FileMeta {
             name: name.to_string(),

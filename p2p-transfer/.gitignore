@@ -9,6 +9,9 @@ dist
 .wrangler/
 node_modules/
 
+# Bundle-hash list the oxfer-web deploy job writes (docs/cloudflare-workers.md)
+oxfer-web-sha256.txt
+
 # Rust compile target directories:
 target
 target_ra
