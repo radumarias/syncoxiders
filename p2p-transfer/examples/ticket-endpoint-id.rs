@@ -54,10 +54,16 @@ const USAGE: &str = "usage: cargo run -q -p p2p-transfer --example ticket-endpoi
                      '<share link, fragment or ticket>' (or '-' to read standard input)";
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // `args_os`, not `args`: `args` panics on an argument that is not valid UTF-8, and its
+    // panic message repeats that argument, capability included.
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let [arg] = args.as_slice() else {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
+    };
+    let Some(arg) = arg.to_str() else {
+        eprintln!("the argument is not valid UTF-8 text; argument not shown");
+        return ExitCode::FAILURE;
     };
 
     let from_stdin = arg == "-";
@@ -73,7 +79,7 @@ fn main() -> ExitCode {
         }
         input
     } else {
-        arg.clone()
+        arg.to_owned()
     };
 
     match p2p_transfer::node::share_endpoint_id(&input) {

@@ -35,6 +35,11 @@ die() { printf 'oxfer-relay-setup: ERROR: %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "run as root"
 case "${1:-}" in '' | --denylist) ;; *) die "usage: sh setup.sh [--denylist]" ;; esac
+# One run at a time. A --denylist run made while the first-boot run is still
+# going could otherwise be overwritten by the config that run built from the
+# older denylist.
+exec 8>/run/oxfer-relay-setup.lock
+flock -n 8 || { log "waiting for another setup.sh run to finish"; flock 8; }
 for f in config.toml iroh-relay.service nftables.conf journald-oxfer-relay.conf \
 	sshd-oxfer-relay.conf unattended-upgrades.conf logrotate-oxfer-relay.conf \
 	tmpfiles-oxfer-relay.conf oxfer-relay-ban oxfer-relay-ban.service oxfer-relay-ban.timer; do
@@ -44,9 +49,12 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 # install_file SRC DST MODE; returns 0 when DST changed.
+# Callers test its status, and sh ignores set -e inside a function called
+# from an if or !, so every step that must not fail dies explicitly; here
+# and in install_relay_config.
 install_file() {
 	if cmp -s "$1" "$2"; then return 1; fi
-	install -D -m "$3" -o root -g root "$1" "$2"
+	install -D -m "$3" -o root -g root "$1" "$2" || die "could not install $2"
 	log "updated $2"
 }
 
@@ -62,7 +70,7 @@ install_relay_config() {
 		ids=$(awk '{ sub(/#.*/, ""); for (i = 1; i <= NF; i++) print tolower($i) }' "$DENYLIST" | sort -u)
 	fi
 	if [ -z "$ids" ]; then
-		cp "$KIT_DIR/config.toml" "$WORK/relay.toml"
+		cp "$KIT_DIR/config.toml" "$WORK/relay.toml" || die "could not copy config.toml"
 	else
 		set -f
 		for id in $ids; do
@@ -78,13 +86,15 @@ install_relay_config() {
 			echo 'access.denylist = ['
 			printf '%s\n' "$ids" | sed 's/.*/  "&",/'
 			echo ']'
-		} >"$WORK/deny.toml"
+		} >"$WORK/deny.toml" || die "could not write the denylist"
 		# An ID that is not a valid Ed25519 key fails only when iroh-relay
 		# parses it, and the relay would then not start. Parse the list
 		# first in a throwaway plain-HTTP relay on a loopback port: still
 		# running after 2 s (timeout's 124) means it was accepted.
-		printf 'http_bind_addr = "127.0.0.1:0"\nenable_metrics = false\n' >"$WORK/check.toml"
-		cat "$WORK/deny.toml" >>"$WORK/check.toml"
+		{
+			printf 'http_bind_addr = "127.0.0.1:0"\nenable_metrics = false\n'
+			cat "$WORK/deny.toml"
+		} >"$WORK/check.toml" || die "could not write the denylist check"
 		rc=0
 		timeout -s INT 2 "$BIN" --config-path "$WORK/check.toml" >"$WORK/check.log" 2>&1 || rc=$?
 		if [ "$rc" -ne 124 ]; then
@@ -93,11 +103,14 @@ install_relay_config() {
 		fi
 		awk -v f="$WORK/deny.toml" '$0 == "access = \"everyone\"" {
 			while ((getline l < f) > 0) print l; next } { print }' \
-			"$KIT_DIR/config.toml" >"$WORK/relay.toml"
+			"$KIT_DIR/config.toml" >"$WORK/relay.toml" || die "could not build the relay config"
 	fi
 	if cmp -s "$WORK/relay.toml" "$CONF"; then return 1; fi
-	if [ -f "$CONF" ]; then cp -p "$CONF" "$CONF.prev"; fi
-	install -D -m 0644 -o root -g root "$WORK/relay.toml" "$CONF"
+	if [ -f "$CONF" ]; then cp -p "$CONF" "$CONF.prev" || die "could not back up $CONF"; fi
+	if ! install -D -m 0644 -o root -g root "$WORK/relay.toml" "$CONF"; then
+		if [ -f "$CONF.prev" ]; then mv -f "$CONF.prev" "$CONF"; fi
+		die "could not install $CONF; the previous one is kept"
+	fi
 	log "updated $CONF ($(printf '%s' "$ids" | grep -c . || true) denylisted endpoint IDs)"
 }
 
@@ -149,7 +162,9 @@ esac
 # permanent last-login database. On first boot apt's daily timers may hold
 # the dpkg lock; wait for it.
 export DEBIAN_FRONTEND=noninteractive
-apt_get() { apt-get -o DPkg::Lock::Timeout=600 "$@"; }
+# 8>&-: a daemon a package script starts must not inherit, and so hold, the
+# setup lock.
+apt_get() { apt-get -o DPkg::Lock::Timeout=600 "$@" 8>&-; }
 apt_get update -q
 apt_get install -y -q --no-install-recommends ca-certificates curl iproute2 logrotate nftables unattended-upgrades
 for p in rsyslog libpam-lastlog2; do
@@ -232,6 +247,10 @@ systemctl daemon-reload
 # existing rules. Reload only when the file changed or the table is
 # missing; a reload keeps bans, which come from /etc/nftables.d/bans.nft.
 install -d -m 0755 /etc/nftables.d
+# oxfer-relay-ban's lock: it moves a new bans.nft into place before checking
+# it, so it must not do that while this run checks and loads the ruleset.
+exec 9>/run/oxfer-relay-ban.lock
+flock 9
 nft -c -f "$KIT_DIR/nftables.conf" || die "nftables.conf (or a file in /etc/nftables.d) does not validate"
 fw=0
 if install_file "$KIT_DIR/nftables.conf" /etc/nftables.conf 0755; then fw=1; fi

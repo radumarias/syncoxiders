@@ -495,9 +495,11 @@ the line as text, so give it the spelling `list` shows.
 
 `oxfer-relay-ban` writes the element, with its absolute expiry, to
 `/etc/nftables.d/bans.nft` (mode 0600), which `nftables.conf` includes, and
-adds it to the `banned_v4` or `banned_v6` set with a timeout. It checks the
-whole ruleset with `nft -c` before it changes the file or the loaded set, so
-a refused change leaves both as they were. The kernel
+adds it to the `banned_v4` or `banned_v6` set with a timeout. It puts the
+new file in place, checks the whole ruleset with `nft -c`, and puts the old
+file back if that fails, all before it changes the loaded set, so a refused
+change leaves both as they were. `setup.sh` takes the tool's lock while it
+checks and loads the ruleset. The kernel
 lifts a ban at its timeout. After a reload or reboot the line is loaded again
 with the timeout it was written with, so `oxfer-relay-ban.timer` runs
 `oxfer-relay-ban prune` hourly to delete lines past their expiry, and their
