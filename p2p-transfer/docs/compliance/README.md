@@ -69,7 +69,7 @@ documented in this directory; "Owner" means it needs the owner (see
 | C2 | Terms of use | Code, Owner | `terms.html` |
 | C3 | Abuse, safety and law-enforcement page | Code, Owner | `abuse.html` |
 | C4 | Clean paths `/privacy`, `/terms`, `/abuse` | Code | Workers static-assets HTML handling (no `_redirects`); checked by `verify-deployment.mjs` |
-| C5 | Operator identity on each page | Owner | Decision D4, owner action 1; `build-web.sh` refuses to package while placeholders remain, and refuses filled pages unless `P2P_RELAY_URL` lists `https://relay.oxfer.app` |
+| C5 | Operator identity on each page | Owner | Decision D4, owner action 1; `build-web.sh` refuses to package while placeholders remain, and refuses filled pages unless `P2P_RELAY_URL` lists only `https://relay.oxfer.app` |
 | C6 | Honest "Technical details" relay sentence | Code | `src/app.rs` `show_how_it_works` (`RelayOperator`); only the browser app's text names Cloudflare, which serves the browser app and answers its STUN requests |
 
 ### D. Assessments and records
@@ -108,7 +108,7 @@ Do them roughly in this order. Actions 1 and 3 are linked: the legal pages
 describe the operator's own relay, so publish them (by filling the placeholders,
 which unlocks the deploy guard) only when production builds use that relay.
 `build-web.sh` enforces this: once the pages are filled, it refuses to package
-them unless `P2P_RELAY_URL` lists `https://relay.oxfer.app`
+them unless `P2P_RELAY_URL` lists only `https://relay.oxfer.app`
 ([relay go-live guard](../cloudflare-workers.md#relay-go-live-guard)).
 Otherwise the published privacy notice would describe a relay the production
 build does not use. `build-web.sh` also refuses to package while any

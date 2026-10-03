@@ -25,21 +25,30 @@ node verify-deployment.mjs https://oxfer.42dev.workers.dev/
 
 `npm run build` is `bash build-web.sh`. In order, it:
 
-1. Validates `P2P_RELAY_URL` ([relay selection](#relay-selection-p2p_relay_url)).
-   An empty or ASCII-whitespace-only value is unset before the build; any
-   other value with a character outside printable ASCII fails.
-2. Runs a Trunk 0.21.14 release build. The Trunk binary is downloaded into
+1. Fails if a stale `p2p-transfer/Cargo.lock` exists; builds use the
+   workspace's `../Cargo.lock`.
+2. Before the long build, runs one call on the source pages,
+   `node package-cf-output.mjs --check-relay --check-legal`:
+   - validates `P2P_RELAY_URL` ([relay selection](#relay-selection-p2p_relay_url)).
+     An empty or ASCII-whitespace-only value is unset first; any other value
+     with a character outside printable ASCII fails;
+   - fails while the legal pages still contain placeholders
+     ([legal pages](#legal-pages-and-the-placeholder-guard));
+   - fails when the legal pages are filled but `P2P_RELAY_URL` does not list
+     only `https://relay.oxfer.app`: the published privacy notice would not
+     match the relays the build uses
+     ([relay go-live guard](#relay-go-live-guard)).
+3. Runs a Trunk 0.21.14 release build. The Trunk binary is downloaded into
    `target/pages-tools/` and checked against a pinned SHA-256.
-3. Fails if any file is over Cloudflare's 25 MiB asset limit, or if Trunk did
-   not copy `_headers`, `assets/boot.js`, `assets/app-init.js`,
-   `assets/theme-lab.js`, `assets/legal.css`, `theme.html` and the three legal
-   pages byte for byte. It also fails if `dist/index.html` contains an inline
-   `<script>`.
-4. Fails while the legal pages still contain placeholders
-   ([legal pages](#legal-pages-and-the-placeholder-guard)).
-5. Fails when the legal pages are filled but `P2P_RELAY_URL` does not list
-   `https://relay.oxfer.app`, which would publish a privacy notice for a
-   relay the build does not use ([relay go-live guard](#relay-go-live-guard)).
+4. Fails if any file is over Cloudflare's 25 MiB asset limit.
+5. Runs `node package-cf-output.mjs --check-dist` (`checkDist`, which
+   `check.sh` runs too). It fails unless every Trunk `copy-file` entry of
+   `index.html` (the page scripts and stylesheet, `theme.html`, the three
+   legal pages, `_headers`, `sw.js`, the manifest, the icons and the images)
+   is in `dist/`, at its `data-target-path` or the root, byte for byte. It
+   also fails if any HTML file in `dist/` has a `<script>` without `src`, or
+   if `dist/index.html` is missing or empty. It reports every problem at
+   once.
 6. Runs `package-cf-output.mjs`. It copies `dist/` into
    `.cloudflare/output/v0/workers/default/assets/` and writes a rendered
    `_headers` there ([security headers](#security-headers)).
@@ -48,7 +57,8 @@ The `.cloudflare/` tree is gitignored. `npm run deploy` is
 `cf deploy --prebuilt` using the `cf` version pinned in `package.json`.
 
 Run `verify-deployment.mjs` with the same `P2P_RELAY_URL` as the build. It
-renders the expected Content-Security-Policy from that value.
+renders the expected headers, Content-Security-Policy included, from that
+value.
 
 `package-cf-output.mjs` includes `oxfer.app` and `www.oxfer.app` by default so a
 later `cf deploy --prebuilt` cannot drop those custom domains. Use
@@ -88,25 +98,34 @@ redeploy it from the same build as production. Until then it is a second,
 stale copy of the app.
 
 ```sh
-node verify-deployment.mjs https://oxfer.app/
-node verify-deployment.mjs https://www.oxfer.app/
+node verify-deployment.mjs https://oxfer.app/ https://www.oxfer.app/
 ```
 
 ## Verify a deployment
 
 1. The Worker version matches the intended Git commit (shown in the app).
-2. `node verify-deployment.mjs <origin>/` fetches `/`, `/diags`, the JS and
+2. `node verify-deployment.mjs <origin>/ [<origin>/ ...]` checks every
+   origin given, concurrently. For each it fetches `/`, `/diags`, the JS and
    WASM bundle, the service worker, `theme.html`, `/privacy`, `/terms`,
-   `/abuse` and the static scripts, stylesheet and images. For each path it
-   checks the status and MIME type, that the bytes equal the local `dist/`, and
-   the cache, referrer, nosniff, Permissions-Policy, X-Frame-Options and
-   report-only CSP headers. The expected `Cache-Control` of each path comes
-   from `assets/_headers`: `no-transform` on `/privacy`, `/terms` and
-   `/abuse` and on no other path, and `no-store` on `/sw.js`.
-   It also fails if a response carries `NEL`, `Report-To` or
-   `Reporting-Endpoints` ([Network Error Logging](#network-error-logging-must-be-off));
-   on a `*.workers.dev` origin it only warns. It makes up to 10 attempts,
-   3 seconds apart, while the edge updates.
+   `/abuse` and the static scripts, stylesheet and images, all at once. For
+   each path it checks the status and MIME type, that the bytes equal the
+   local `dist/`, and then every header `assets/_headers` gives that path:
+   rendered with `P2P_RELAY_URL`, with the values of every matching rule
+   joined as Cloudflare joins them (`headersForPath` in
+   `package-cf-output.mjs`). Each header must match exactly, and
+   `Cache-Control` as a set of directives (order, case and repeats do not
+   matter). So `/privacy`, `/terms` and `/abuse` need `no-transform` and no
+   other path may have it, and `/sw.js` needs `no-store`. All mismatches of a
+   response are reported together. It also fails if a response carries
+   `NEL`, `Report-To` or `Reporting-Endpoints`
+   ([Network Error Logging](#network-error-logging-must-be-off)); on a
+   `*.workers.dev` origin it only warns. While the edge updates, a path whose
+   request, status, redirect, MIME type or bytes fail is retried on its own,
+   up to 10 attempts 3 seconds apart. The headers are checked only once the
+   bytes are this build's, so a header mismatch or NEL fails at once, without
+   retrying. A deploy that changes only `assets/_headers` and is checked
+   while the edge still serves the old headers therefore fails; run the check
+   again a little later.
 3. Reload without `#dev` and confirm the service worker controls the page.
 4. Transfer a small file between two browsers.
 5. Open `/diags` and check the relay lines ([docs/diagnostics.md](diagnostics.md)).
@@ -123,10 +142,10 @@ One value is used in five places:
 | Where | What happens |
 | --- | --- |
 | `.github/workflows/oxfer-web.yml` | The deploy job sets `P2P_RELAY_URL: ${{ vars.P2P_RELAY_URL }}`. An unset variable arrives as an empty string. |
-| `build-web.sh` | An empty or ASCII-whitespace-only value is unset, which means n0's relays. Any other value is checked with `node package-cf-output.mjs --check-relay` before the long build, then exported. Once the legal pages are filled, the value must also list `https://relay.oxfer.app` ([relay go-live guard](#relay-go-live-guard)). |
+| `build-web.sh` | An empty or ASCII-whitespace-only value is unset, which means n0's relays. Any other value is exported and checked with `node package-cf-output.mjs --check-relay --check-legal` before the long build. Once the legal pages are filled, that call also requires the value to list only `https://relay.oxfer.app` ([relay go-live guard](#relay-go-live-guard)). |
 | `src/node.rs` | `RelayChoice::from_env()` reads `option_env!("P2P_RELAY_URL")` at compile time. A valid list selects `RelayChoice::Custom`, built on iroh's `presets::Minimal`: only the listed relays, with no n0 relay map and no pkarr publishing or lookup at `dns.iroh.link`. |
 | `package-cf-output.mjs` | Replaces `{{RELAY_CONNECT_SRC}}` in `_headers` with the matching CSP `connect-src` sources. |
-| `verify-deployment.mjs` | Renders the same policy and asserts that the deployment serves it. |
+| `verify-deployment.mjs` | Renders the same policy and asserts that every origin it checks serves it. |
 
 Format: a comma-separated list of `https://host[:port]` URLs, with `http://`
 only for a local test relay. Spaces around commas are trimmed, order is kept
@@ -171,13 +190,13 @@ Then open `https://oxfer.app/diags`. It should list
 To roll back before the legal pages are filled, run
 `gh variable delete P2P_RELAY_URL --repo radumarias/syncoxiders` and re-run
 the workflow. Once they are filled, that build fails at the
-[relay go-live guard](#relay-go-live-guard), which requires
-`https://relay.oxfer.app` in the list whatever the pages say. A rollback to
-n0 is then one commit that edits the privacy notice (and any page or record
-that names `relay.oxfer.app`) to describe n0's relays, and changes the guard
-in `build-web.sh` and its test in `tests/web-pages.test.mjs` to match; delete
-the variable when that commit lands
-([relay runbook](../deploy/relay/README.md#rollback)).
+[relay go-live guard](#relay-go-live-guard), which requires the list to be
+`https://relay.oxfer.app` alone whatever the pages say. A rollback to n0 is
+then one commit that edits the privacy notice (and any page or record that
+names `relay.oxfer.app`) to describe n0's relays, and changes the guard
+(`OPERATOR_RELAY` and `checkLegalPages` in `package-cf-output.mjs`) and its
+tests in `tests/web-pages.test.mjs` to match; delete the variable when that
+commit lands ([relay runbook](../deploy/relay/README.md#rollback)).
 
 The same value works locally:
 
@@ -195,20 +214,24 @@ so a path with its own `Cache-Control` rule gets both:
 - `/sw.js` adds `no-cache, no-store, must-revalidate`, so the service worker
   is served with `no-store`.
 - `/privacy`, `/terms` and `/abuse` add `no-transform`
-  ([why only these](#why-cache-control-no-transform)). `NO_TRANSFORM_PATHS`
-  in `package-cf-output.mjs` lists them. `/privacy.html` and the other
-  `.html` spellings only redirect (307) to these paths.
+  ([why only these](#why-cache-control-no-transform)). `/privacy.html` and
+  the other `.html` spellings only redirect (307) to these paths.
 
 | Header | Value |
 | --- | --- |
-| `Cache-Control` | `public, max-age=0, must-revalidate` (`CACHE_CONTROL`) |
+| `Cache-Control` | `public, max-age=0, must-revalidate` |
 | `Referrer-Policy` | `no-referrer` |
 | `X-Content-Type-Options` | `nosniff` |
 | `Content-Security-Policy-Report-Only` | the policy below |
 | `Permissions-Policy` | `camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), midi=(), screen-wake-lock=(self)` |
 | `X-Frame-Options` | `SAMEORIGIN` |
 
-The policy, with the relay token rendered at packaging time:
+No script keeps its own copy of these headers: `verify-deployment.mjs`
+derives each path's expected headers from `assets/_headers`, and
+`tests/package-cf-output.test.mjs` pins the values in the file.
+
+The Content-Security-Policy, with the relay token rendered at packaging
+time:
 
 ```text
 default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline';
@@ -224,8 +247,12 @@ package when:
 
 - the token is missing, or another `{{...}}` token is left after rendering;
 - a line is longer than 2,000 characters, or there are more than 100 rules
-  (Cloudflare's `_headers` limits);
-- a security header is set outside `/*`, or set twice.
+  (Cloudflare's `_headers` limits).
+
+Before it fetches anything, `verify-deployment.mjs` also refuses a rendered
+file that sets the CSP, `Permissions-Policy` or `X-Frame-Options` outside
+`/*`, or sets one twice (`securityHeaders`), because Cloudflare would then
+comma-join the values.
 
 `script-src 'self'` allows no inline script. `Trunk.toml` therefore sets
 `inject_scripts = false`, and `index.html` loads `assets/boot.js` (service
@@ -303,16 +330,17 @@ curl -sS -o /dev/null -D - -H 'Accept-Encoding: br, gzip' \
 It should print `content-encoding: br` (or `gzip`). The byte comparison in
 `verify-deployment.mjs` still catches any rewrite of the other paths.
 
-`verify-deployment.mjs` reads the expected directives of each path from
-`assets/_headers` (`cacheControlDirectives` in `package-cf-output.mjs`). It
-names the directive when a legal page lacks `no-transform`, and fails when
-any other checked path has it. Before fetching anything,
-`checkLocalCacheControl` applies the same rule to the local
-`assets/_headers`. To add a page with an email address, add its clean path
-to `NO_TRANSFORM_PATHS`, give it a `Cache-Control: no-transform` rule in
-`assets/_headers`, and add it to the paths `verify-deployment.mjs` checks.
-`tests/package-cf-output.test.mjs` pins the list and checks that the three
-agree, so update it in the same commit.
+`verify-deployment.mjs` keeps no list of these paths: it expects each
+checked path's `Cache-Control` directives from `assets/_headers`
+(`headersForPath` in `package-cf-output.mjs`). It names the directive when a
+legal page lacks `no-transform`, and fails when any other checked path has
+it. `tests/package-cf-output.test.mjs` pins the rule: its
+`NO_TRANSFORM_PATHS` must be exactly the paths `assets/_headers` gives
+`no-transform`, every checked path must get the expected directives, and
+`verify-deployment.mjs` must check each of the three. To add a page with an
+email address, give its clean path a `Cache-Control: no-transform` rule in
+`assets/_headers`, add it to `checks` in `verify-deployment.mjs`, and add it
+to `NO_TRANSFORM_PATHS` in the test, in the same commit.
 
 ## Legal pages and the placeholder guard
 
@@ -331,11 +359,13 @@ Until the operator's details are filled in, the pages contain these tokens:
 
 A comment at the top of each page lists them without brackets.
 
-`build-web.sh` refuses to package while any `[[UPPER_CASE]]` token remains in
-`dist/privacy.html`, `dist/terms.html` or `dist/abuse.html`, and names each
-file and token. Until the tokens are replaced, the `oxfer-web` workflow fails
-at its **Build browser app** step on every push to `main`. This is
-intentional.
+`build-web.sh` refuses to build while any `[[UPPER_CASE]]` token remains in
+`privacy.html`, `terms.html` or `abuse.html`, and names each file and token.
+It checks the source pages before the Trunk build (`checkLegalPages` in
+`package-cf-output.mjs`); after the build, `--check-dist` proves that `dist/`
+holds byte copies of them. Until the tokens are replaced, the `oxfer-web`
+workflow fails at its **Build browser app** step on every push to `main`,
+before the Trunk build. This is intentional.
 
 For a local test build only:
 
@@ -345,30 +375,39 @@ OXFER_ALLOW_PLACEHOLDERS=1 npm run build
 
 It warns and packages anyway. It also bypasses the
 [relay go-live guard](#relay-go-live-guard), but not the relay-list check.
-Never set it in CI and never deploy its output.
+Only the value `1` bypasses them. Never set it in CI and never deploy its
+output.
 
 ### Relay go-live guard
 
 The filled pages describe the operator's relay at `relay.oxfer.app`, run
 from the VPS kit in [`deploy/relay/`](../deploy/relay/README.md). Once no
-placeholder is left, `build-web.sh` also refuses to package unless
-`P2P_RELAY_URL` lists `https://relay.oxfer.app`. An unset, empty or
-ASCII-whitespace-only value (n0's public relays) fails, and so does a list
-of only other relays; a list with `https://relay.oxfer.app` among others
-passes. The guard runs
-`node package-cf-output.mjs --check-relay --require-relay=https://relay.oxfer.app`;
-the relay is `operator_relay` in `build-web.sh` and `OPERATOR_RELAY` in
-`package-cf-output.mjs`. `verify-deployment.mjs` then checks that the
-deployed CSP matches the value.
+placeholder is left, `build-web.sh` also refuses to build unless
+`P2P_RELAY_URL` lists only `https://relay.oxfer.app`. An unset, empty or
+ASCII-whitespace-only value (n0's public relays) fails, and so do a list of
+only other relays and a list with `https://relay.oxfer.app` among others:
+the filled privacy notice describes one relay, and a build that also used
+others would send users' addresses to relays it does not name. Repeating
+`https://relay.oxfer.app` passes. The error says which case applies and
+never repeats the other entries. The guard is `operatorRelayProblem`, called
+by `checkLegalPages` in `package-cf-output.mjs`, which `build-web.sh` runs
+before the Trunk build with
+`node package-cf-output.mjs --check-relay --check-legal`. The relay is
+`OPERATOR_RELAY` in `package-cf-output.mjs`; `build-web.sh` does not name
+it. `verify-deployment.mjs` then checks that the deployed CSP matches the
+value. The app's "Technical details" likewise credits Oxfer only when every
+listed relay has that host (`OPERATOR_RELAY_HOST` in `src/node.rs`), so
+change both with the pages.
 
 The guard does not read the page text. Instead, a test in
 `tests/web-pages.test.mjs` fails when `privacy.html` no longer names
 `relay.oxfer.app`, so the guard changes in the same commit as the pages. The
-same test runs the guard blocks of `build-web.sh` (between its `# BEGIN` and
-`# END` markers) against scratch copies of the pages.
-`OXFER_ALLOW_PLACEHOLDERS=1` bypasses this guard too, with a warning, for
-local test builds only. It never bypasses the relay-list check that runs
-before the Trunk build ([relay selection](#relay-selection-p2p_relay_url)).
+same file calls `checkLegalPages` directly, and runs the
+`node package-cf-output.mjs --check-relay --check-legal` call of
+`build-web.sh` against scratch copies of the pages. `OXFER_ALLOW_PLACEHOLDERS=1` bypasses this
+guard too, with a warning, for local test builds only. It never bypasses the
+relay-list check, which runs first
+([relay selection](#relay-selection-p2p_relay_url)).
 
 The pages and the compliance records are written for the VPS kit. The kit's
 Fly.io variant would make statements about IP blocking, log retention, the
@@ -473,8 +512,9 @@ list; `verify-deployment.mjs` checks them. The incident procedure is in
       account.
 - [ ] Protect `main` with a branch protection rule or ruleset that requires the
       `ci` workflow's checks (`ci (ubuntu-latest)`, `ci (macos-latest)`,
-      `ci (windows-latest)`, `p2p-browser-integration`). Turn on "Do not allow
-      bypassing" if the rule should bind administrators too.
+      `ci (windows-latest)`, `p2p-web-checks`, `p2p-browser-integration`).
+      Turn on "Do not allow bypassing" if the rule should bind administrators
+      too.
 - [ ] `CLOUDFLARE_API_TOKEN` is an Account API token made from the **Edit
       Cloudflare Workers** template for this account only. Roll it every year,
       update the secret, and re-run `oxfer-web` to confirm.
@@ -536,7 +576,7 @@ What the rule does not cover:
   preview URLs are not hostnames in that zone. To close them, set
   `workersDev: false` and `previewUrls: false` in both `cloudflare.config.ts`
   and `workerConfig` in `package-cf-output.mjs`. Then remove the `workers.dev`
-  line from the workflow's **Verify production** step. `oxfer.pages.dev` is
+  origin from the workflow's **Verify production** step. `oxfer.pages.dev` is
   also outside the zone ([custom domains](#custom-domains)).
 - **The relay and native apps.** `relay.oxfer.app` is DNS-only, so Cloudflare
   does not see its traffic. A native app that is already installed keeps
@@ -559,16 +599,27 @@ was turned on or off and why in the private records
 ## CI checks
 
 The `ci` workflow ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml))
-runs on pushes and pull requests to `main` and `release`. Its
-`p2p-browser-integration` job runs every `node --test` suite in `tests/`
-(including `package-cf-output.test.mjs` and `web-pages.test.mjs`) and the
-three Firefox tests `webrtc_wasm`, `relay_wasm` and `resume_wasm`, the same
-commands `check.sh` runs. The test "CI runs every node and browser suite that
-check.sh runs" in `tests/package-cf-output.test.mjs` fails when `check.sh`
-misses a suite in `tests/`, or when that job misses a `node --test` or
-`wasm-pack test` line of `check.sh`. CI does not run `check.sh`'s fmt, clippy,
-wasm32 check or Trunk build; the deploy job's `build-web.sh` runs the Trunk
-build and its byte comparisons.
+runs on pushes and pull requests to `main` and `release`. Two of its jobs run
+the same commands as `check.sh`:
+
+- `p2p-web-checks` needs no Rust toolchain, so it does not wait for the
+  `wasm-pack` install. It runs `node --test tests/*.test.mjs`, every node
+  suite (including `package-cf-output.test.mjs` and `web-pages.test.mjs`),
+  and `sh deploy/relay/render.sh --check`.
+- `p2p-browser-integration` installs nightly Rust and `wasm-pack` and runs
+  the three Firefox tests `webrtc_wasm`, `relay_wasm` and `resume_wasm`.
+
+The test "CI runs the node suites, the relay kit check and every browser
+suite that check.sh runs" in `tests/package-cf-output.test.mjs` fails when
+`check.sh` or `p2p-web-checks` lacks the `node --test` or `render.sh --check`
+line, when `p2p-web-checks` uses a Rust toolchain, or when `check.sh` or
+`p2p-browser-integration` lacks the `wasm-pack test` line of a
+`tests/*_wasm.rs` suite. A new node suite needs no new line.
+
+CI does not run `check.sh`'s fmt, clippy, wasm32 check, Trunk build or
+`--check-dist`. The deploy job's `build-web.sh` runs the release Trunk build
+and `--check-dist`, but only once the legal pages are filled: until then it
+stops at the placeholder guard, before the build. Run `./check.sh` locally.
 
 ## Automatic deploys from `main`
 
@@ -578,13 +629,14 @@ lockfile, or the workflow itself. Its steps:
 
 1. `npm ci`
 2. `npm run build`, with `P2P_RELAY_URL` from the repository variable; it
-   fails when the [placeholder](#legal-pages-and-the-placeholder-guard) or
+   fails before the Trunk build when the
+   [placeholder](#legal-pages-and-the-placeholder-guard) or
    [relay go-live](#relay-go-live-guard) guard trips
 3. record and upload the bundle hashes
 4. `npx cf deploy --prebuilt`
-5. `verify-deployment.mjs` against `oxfer.42dev.workers.dev`, `www.oxfer.app`
-   and `oxfer.app`: bytes, headers, and Network Error Logging off on the two
-   `oxfer.app` hostnames
+5. one `verify-deployment.mjs` run that checks `oxfer.42dev.workers.dev`,
+   `www.oxfer.app` and `oxfer.app` concurrently: bytes, headers, and Network
+   Error Logging off on the two `oxfer.app` hostnames
 
 Cloudflare Workers Builds cannot watch this repository yet: the account is not
 connected to GitHub (`This project is disconnected from your Git account`).

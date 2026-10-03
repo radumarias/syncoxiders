@@ -73,7 +73,7 @@ the list:
 
 | Build | Probed URLs |
 | --- | --- |
-| `P2P_RELAY_URL` unset (n0's public relays) | `wss://euc1-1.relay.n0.iroh.link/relay`, `wss://use1-1.relay.n0.iroh.link/relay`, `wss://usw1-1.relay.n0.iroh.link/relay`, `wss://aps1-1.relay.n0.iroh.link/relay`, plus the dotted spelling `wss://euc1-1.relay.n0.iroh.link./relay` |
+| `P2P_RELAY_URL` unset (n0's public relays) | n0's relays in iroh's relay-map order, `wss://aps1-1.relay.n0.iroh.link/relay`, `wss://euc1-1.relay.n0.iroh.link/relay`, `wss://use1-1.relay.n0.iroh.link/relay` and `wss://usw1-1.relay.n0.iroh.link/relay`, then the dotted spelling `wss://euc1-1.relay.n0.iroh.link./relay` |
 | `P2P_RELAY_URL` set | One `wss://host[:port]/relay` per configured relay, in the configured order with duplicates dropped; `ws://` for an `http://` test relay. For example, `https://relay.oxfer.app` is probed as `wss://relay.oxfer.app/relay`. |
 
 A custom relay's probe URL is rebuilt from its scheme, host and port only, so
@@ -97,7 +97,9 @@ every deployed build, refuses such values before building, including ones
 with an invisible character such as a byte-order mark, so a rejected value
 points to a build made another way (`trunk build` or `trunk serve`).
 **Technical details** on the home screen says the same thing in words: "a
-relay operated by Oxfer" or "n0.computer's public iroh relays".
+relay operated by Oxfer" when every configured relay is `relay.oxfer.app`,
+"a relay this build was configured to use" for any other `P2P_RELAY_URL`,
+or "n0.computer's public iroh relays".
 
 ### n0 builds: trailing DNS dots
 
@@ -140,9 +142,10 @@ relay. The paired diagnostics do not test ICE; use the `WebRTC perf` lines
 below.
 
 The desktop app uses neither WebRTC nor this STUN server, and is not served
-by Cloudflare, so its **Technical details** text names only the relay
-operator (or says the build has no relay). It says instead that its share
-links contain the device's IP addresses.
+by Cloudflare, so its **Technical details** text mentions only the relay
+(Oxfer's, n0.computer's, or one the build was configured to use, without
+naming who runs it) or says the build has no relay. It says instead that its
+share links contain the device's IP addresses.
 
 ## Slow WebRTC transfers
 
@@ -182,7 +185,8 @@ For hands-on inspection in the browser console, the newest
 or when the page's URL fragment carries the `dev` flag at the moment the peer
 connection is created. A release build opened without `dev` never sets it.
 
-- Sender: open `https://oxfer.app/#dev`, then share.
+- Sender: open `https://oxfer.app/#dev`, then share. Links shared from that
+  page carry `dev` too.
 - Receiver: append `&dev` to the share link's fragment, as in
   `…#<ticket>&cap=<code>&dev`. The app keeps `dev` when it removes the ticket
   and access code from the address bar.

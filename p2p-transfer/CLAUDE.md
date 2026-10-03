@@ -31,22 +31,28 @@ from the workspace root may select the user's stable toolchain instead.
 - `trunk serve`: debug browser build at `http://127.0.0.1:8080`.
 - `trunk build`: static `dist/`.
 - `bash build-web.sh` (`npm run build`): release Trunk build, checks, and cf
-  Build Output packaging. Before the build it rejects a `P2P_RELAY_URL` that
-  the relay-list parser refuses, including any character outside printable
-  ASCII. After it, it refuses to package while the legal pages contain
-  placeholders, and, once they are filled, unless `P2P_RELAY_URL` lists
-  `https://relay.oxfer.app` (relay go-live guard).
-  `OXFER_ALLOW_PLACEHOLDERS=1 bash build-web.sh` bypasses those two page
-  guards, not the relay-list check, for local test builds only and must never
-  be deployed.
+  Build Output packaging. Before the build, one call
+  (`node package-cf-output.mjs --check-relay --check-legal`) rejects a
+  `P2P_RELAY_URL` that the relay-list parser refuses, including any character
+  outside printable ASCII, then runs the legal-page guards on the source
+  pages: it refuses while they contain placeholders and, once they are
+  filled, unless `P2P_RELAY_URL` lists only `https://relay.oxfer.app` (relay
+  go-live guard). After the build, `node package-cf-output.mjs --check-dist`
+  checks `dist/` (see `./check.sh` below), then it packages.
+  `OXFER_ALLOW_PLACEHOLDERS=1 bash build-web.sh` turns those two page guards
+  into warnings, not the relay-list check, for local test builds only and
+  must never be deployed.
 - `P2P_RELAY_URL=https://relay.example bash build-web.sh`: build for
-  self-hosted relays instead of n0's (see Relay selection below).
+  self-hosted relays instead of n0's (see Relay selection below). The
+  legal-page guards above still apply.
 - `npx cf deploy --prebuilt` (`npm run deploy`): upload the packaged Worker
   (`cf` from `package.json`).
-- `node verify-deployment.mjs https://oxfer.app/`: compare a deployment with
-  local `dist/` and assert its headers. Run it with the build's `P2P_RELAY_URL`.
-  It fails while Cloudflare Network Error Logging (`NEL`/`Report-To`) is on
-  for the `oxfer.app` zone and only warns on `*.workers.dev`
+- `node verify-deployment.mjs https://oxfer.app/ [more origins]`: compare
+  deployments with local `dist/` and assert every header `assets/_headers`
+  gives each path. Several origins are checked concurrently in one run. Run it
+  with the build's `P2P_RELAY_URL`. It fails while Cloudflare Network Error
+  Logging (`NEL`/`Report-To`) is on for the `oxfer.app` zone and only warns on
+  `*.workers.dev`
   ([turning NEL off](docs/cloudflare-workers.md#network-error-logging-must-be-off)).
 - `cargo run -q -p p2p-transfer --example ticket-endpoint-id -- '<share link, fragment or ticket>'`:
   print a reported share's endpoint ID, the entry the relay's denylist takes
@@ -58,18 +64,20 @@ from the workspace root may select the user's stable toolchain instead.
 - Pushes to `main` that touch this crate deploy via
   `.github/workflows/oxfer-web.yml`.
 - `./check.sh`: required gate. Native and wasm checks, fmt, clippy with
-  `-D warnings` on both targets, tests, doctests, every `node --test` suite in
-  `tests/`, the relay kit's `render.sh --check`, real Firefox WebRTC, relay
-  and persistence tests, then `trunk build` with byte comparisons of copied
-  files and an inline-script guard on `dist/index.html`. It requires Node.js,
-  Firefox, `wasm-pack`, and Trunk.
+  `-D warnings` on both targets, tests, doctests, every node suite
+  (`node --test tests/*.test.mjs`), the relay kit's `render.sh --check`, real
+  Firefox WebRTC, relay and persistence tests, then `trunk build` and
+  `node package-cf-output.mjs --check-dist` (`checkDist`): every Trunk
+  `copy-file` entry of `index.html` must be a byte copy of its source in
+  `dist/`, and no HTML file in `dist/` may have a `<script>` without `src`.
+  It requires Node.js, Firefox, `wasm-pack`, and Trunk.
 - `cargo test <substring>`: run a focused unit test.
 - `sh deploy/relay/render.sh --check`: fails if the relay kit's generated
-  `cloud-init.yaml` or `fly/config.toml` is stale; without `--check` it
-  regenerates them. `cloud-init.yaml` embeds each kit file as `gz+b64`
-  (plain text would exceed Hetzner's 32 KiB user-data limit); `--check`
-  decodes and compares every payload, and also fails if `fly/entrypoint.sh`'s
-  default `RUST_LOG` differs from `iroh-relay.service`'s.
+  `cloud-init.yaml` is stale; without `--check` it regenerates it.
+  `cloud-init.yaml` embeds each kit file as `gz+b64` (plain text would exceed
+  Hetzner's 32 KiB user-data limit); `--check` decodes and compares every
+  payload. Both modes fail if `setup.sh`'s `KIT_FILES` and `render.sh`'s
+  `FILES` name different files.
 
 Cloudflare: this crate has no Wrangler config. Use `cf` (`cf --help`,
 `cf cli search …`). Do not fall back to Wrangler. `cf deploy` without
@@ -121,7 +129,8 @@ list; change them together with it:
   only when the user picks a theme, or once at start-up to carry over a
   non-default theme the user picked in an older version (stored under
   eframe's `app` key). No other localStorage key is written.
-- eframe's browser persistence is off: on wasm `App::save` writes nothing and
+- eframe's browser persistence is off: on wasm the app keeps eframe's default
+  `App::save`, which writes nothing (only the native build overrides it), and
   `persist_egui_memory` is false, so eframe's `app` key and `egui_memory_ron`
   are never written. `restore_browser_theme` removes both legacy keys at
   start-up, after the migration.
@@ -130,11 +139,13 @@ list; change them together with it:
 - The opt-in "Keep a copy" IndexedDB database and OPFS directory, both named
   `oxfer-resume`. In `assets/resume-worker.js` only the saving path creates
   them: `prepare`, run when the receiver has ticked "Keep a copy" and saving
-  starts, through `putGroup` and `rootDirectory(true)`. Listing, exporting
-  and deleting never create them: `database(false)` checks
-  `indexedDB.databases()` first and otherwise aborts the version-change
-  transaction of a new database, and a missing directory makes deleting a
-  no-op. Once created they stay, empty, after the last copy is deleted.
+  starts, through `putGroup` (`database('create')`) and
+  `rootDirectory(true)`. Listing, exporting and deleting never create them:
+  `database('probe')` checks `indexedDB.databases()` first, both it and
+  `database('existing')` (the write path, once `prepare` has found the
+  database) abort the version-change transaction of a new database, and a
+  missing directory makes deleting a no-op. Once created they stay, empty,
+  after the last copy is deleted.
   Browsers that ran a build from before this change may still hold an empty
   `oxfer-resume` database made by the old start-up listing; the app does not
   delete it, because that could race another tab's save.
@@ -150,13 +161,21 @@ directory). What users see and how to reset it:
   Receiver Save creates sinks before sending `ReceiveCommand::Save`. The bottom
   bar on every screen links to Privacy, Terms, Abuse & safety and Source
   (`FooterLink`): inline at 760 px or wider, otherwise in a "Legal" menu. The
-  web build opens `/privacy` and the other clean paths; native opens
-  `https://oxfer.app/...` in the system browser through eframe's `links`
-  feature (enabled in `Cargo.toml`). The receive screens (the file list before
-  saving, the "Received" list and, on the web, "Saved files in this browser")
-  show a "Report abuse" link (`show_report_abuse`) to the same Abuse & safety
-  page; it carries nothing about the transfer. "Technical details" names the
-  relay operator from `RelayChoice::from_env()` (`RelayOperator`). Its privacy
+  web build opens `/privacy` and the other clean paths; native opens them on
+  `PUBLIC_ORIGIN` (`https://oxfer.app`) in the system browser through
+  eframe's `links` feature (enabled in `Cargo.toml`). Source opens the
+  crate's `repository` (`env!("CARGO_PKG_REPOSITORY")`). The receive screens
+  (the file list before saving, the "Received" list and, on the web, "Saved
+  files in this browser") show a "Report abuse" link (`show_report_abuse`) to
+  the same Abuse & safety page; it carries nothing about the transfer.
+  "Technical details" names the relay operator from `RelayChoice::from_env()`
+  (`RelayOperator`). It says "operated by Oxfer" only when
+  `RelayChoice::uses_only_operator_relay()` holds, that is every configured
+  relay's host is `node::OPERATOR_RELAY_HOST` (`relay.oxfer.app`); any other
+  `P2P_RELAY_URL` list gets neutral copy that names no one
+  (`RelayOperator::Configured`, "a relay this build was configured to use").
+  n0's relays and no relay have their own copy. The copy is composed from
+  shared sentences once per process in `RelayCopy::current()`. Its privacy
   boundary text comes from `RelayOperator::privacy_boundary_for(web)`: the
   browser text says Cloudflare serves the web app shell and answers STUN; the
   desktop text mentions neither (the desktop app uses neither) and says that
@@ -164,11 +183,18 @@ directory). What users see and how to reset it:
   says the same. Browser storage: see [below](#browser-storage).
 - `src/node.rs`: iroh `Node`, endpoint ticket links, capability authorization,
   relay selection, and the sender-side protocol handler. `RelayChoice::from_env()`
-  reads the compile-time `P2P_RELAY_URL` through `RelayChoice::from_setting`.
-  `relay_probe_urls` builds the Diags probe list. `share_endpoint_id` turns a
-  reported link, fragment or bare ticket into the endpoint ID for the relay's
-  `access.denylist`, through `Node::parse_fragment`; its errors are fixed
-  strings that never repeat the input.
+  reads the compile-time `P2P_RELAY_URL` through `RelayChoice::from_setting`,
+  once per process (a `OnceLock`, so an invalid value warns once).
+  `relay_probe_urls` builds the Diags probe list: for n0, the relays of
+  `n0_relays_without_trailing_dots()` in that map's order, then the dotted
+  `wss://euc1-1.relay.n0.iroh.link./relay` canary; for custom relays, one URL
+  per relay. `page_has_dev_flag()` reads the `dev` flag from the page's
+  fragment through `Node::parse_fragment` (always false natively); `app.rs`
+  uses it to keep `#dev` in new share links and `webrtc.rs` to gate `__p2p`.
+  `share_endpoint_id` turns a reported link, fragment or bare ticket into the
+  endpoint ID for the relay's `access.denylist`, through
+  `Node::parse_fragment`; its errors are fixed strings that never repeat the
+  input.
 - `examples/ticket-endpoint-id.rs`: the operator's command-line wrapper around
   `share_endpoint_id` (see Toolchain and commands). It prints only the ID and
   never prints or logs the capability.
@@ -190,8 +216,9 @@ directory). What users see and how to reset it:
   implementation: SDP/ICE, bounded inbound queue, `bufferedAmount`
   backpressure, path stats, close/failure signalling, and relay fallback.
   `ICE_SERVERS` is Cloudflare's STUN server only. The newest peer connection is
-  published as `window.__p2p` only in debug builds, or when the page fragment
-  has the `dev` flag when the peer is created. `debug_pc()` stays Rust-only.
+  published as `window.__p2p` only in debug builds, or when
+  `node::page_has_dev_flag()` is true when the peer is created.
+  `debug_pc()` stays Rust-only.
 - `src/diagnostics.rs` and `assets/diagnostics.js`: the `/diags` report and
   relay WebSocket probes ([`docs/diagnostics.md`](docs/diagnostics.md)).
 
@@ -219,17 +246,24 @@ must accept nothing the Rust one rejects:
   the whole value. The app then logs a warning naming only the entry's
   position, and falls back to n0.
 - `package-cf-output.mjs` (`parseRelayList`, `relayConnectSources`,
-  `listsRelay`): used by `build-web.sh --check-relay`, CSP rendering and
-  `verify-deployment.mjs`. It is stricter and fails the build instead of
-  falling back. A value of only ASCII whitespace is unset; any other
-  character outside printable ASCII (0x20 to 0x7E) fails, because JS `trim`
-  strips characters Rust keeps (a U+FEFF byte-order mark passed JS and made
-  the wasm fall back to n0). The error names invisible characters by code
-  point and never repeats a visible one. It also rejects credentials, paths,
-  queries, fragments, IPv6 literals and trailing-dot hosts.
+  `operatorRelayProblem`): used by `build-web.sh`
+  (`--check-relay --check-legal`), CSP rendering and `verify-deployment.mjs`.
+  It is stricter and fails the build instead of falling back. A value of only
+  ASCII whitespace is unset; any other character outside printable ASCII
+  (0x20 to 0x7E) fails, because JS `trim` strips characters Rust keeps (a
+  U+FEFF byte-order mark passed JS and made the wasm fall back to n0). The
+  error names invisible characters by code point and never repeats a visible
+  one. It also rejects credentials, paths, queries, fragments, IPv6 literals
+  and trailing-dot hosts.
 
 The gate covers only builds made by `build-web.sh`: a plain `trunk build`
 with an invalid value still falls back to n0 with a console warning.
+
+The operator's relay is named twice: `OPERATOR_RELAY` in
+`package-cf-output.mjs` (`https://relay.oxfer.app`, the relay go-live guard:
+a build with filled legal pages must list only it) and `OPERATOR_RELAY_HOST`
+in `src/node.rs` (`relay.oxfer.app`, the "operated by Oxfer" copy). Change
+them together with the legal pages.
 
 The workflow sets the value from the repository variable `vars.P2P_RELAY_URL`.
 
@@ -237,31 +271,44 @@ The workflow sets the value from the repository variable `vars.P2P_RELAY_URL`.
 
 - `assets/_headers` is copied verbatim to `dist/_headers`. Its `/*` rule
   carries `Content-Security-Policy-Report-Only` with one `{{RELAY_CONNECT_SRC}}`
-  token, `Permissions-Policy`, `X-Frame-Options: SAMEORIGIN`, and
-  `Cache-Control: public, max-age=0, must-revalidate` (`CACHE_CONTROL` in
-  `package-cf-output.mjs`). Cloudflare comma-joins the values of every rule
-  that matches a path: `/sw.js` adds `no-cache, no-store, must-revalidate`,
-  and `/privacy`, `/terms` and `/abuse` (`NO_TRANSFORM_PATHS`) add
-  `no-transform`. `no-transform` stops Cloudflare features such as Email
-  Address Obfuscation from rewriting the legal pages' `mailto:` links, so
-  their bytes match the build and the published hashes. It is set nowhere
-  else because it also stops Cloudflare's Brotli/gzip compression, which the
-  wasm and JavaScript keep
-  ([why](docs/cloudflare-workers.md#why-cache-control-no-transform)).
+  token, `Permissions-Policy`, `X-Frame-Options: SAMEORIGIN`,
+  `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and
+  `Cache-Control: public, max-age=0, must-revalidate`. Cloudflare comma-joins
+  the values of every rule that matches a path: `/sw.js` adds
+  `no-cache, no-store, must-revalidate`, and `/privacy`, `/terms` and
+  `/abuse` add `no-transform`. `no-transform` stops Cloudflare features such
+  as Email Address Obfuscation from rewriting the legal pages' `mailto:`
+  links, so their bytes match the build and the published hashes. It is set
+  nowhere else because it also stops Cloudflare's Brotli/gzip compression,
+  which the wasm and JavaScript keep
+  ([why](docs/cloudflare-workers.md#why-cache-control-no-transform)). No
+  script keeps its own copy of these headers;
+  `tests/package-cf-output.test.mjs` pins the file's values.
 - `package-cf-output.mjs` renders the token only in the packaged copy under
   `.cloudflare/output/`: `https://*.iroh.link wss://*.iroh.link` for n0, or each
-  relay's `https://` and `wss://` origin. It refuses leftover tokens, files
-  over Cloudflare's line or rule limits, and security headers set outside `/*`
-  or set twice.
-- `verify-deployment.mjs` asserts the rendered values on every checked path.
-  It takes each path's expected `Cache-Control` directives from the rendered
-  `_headers` (`cacheControlDirectives`), requires `no-transform` on the legal
-  pages, fails if any other checked path has it, and requires `no-store` on
-  `/sw.js`; `checkLocalCacheControl` checks the local file the same way. It
-  also asserts the absence of `NEL`, `Report-To` and `Reporting-Endpoints` on
-  hosts in the `oxfer.app` zone. Cloudflare Network Error Logging adds the
-  first two; turn it off with the zone setting `nel`
+  relay's `https://` and `wss://` origin. It refuses leftover tokens and files
+  over Cloudflare's line or rule limits. Its CLI flags `--check-relay`,
+  `--check-legal` and `--check-dist` combine and replace packaging; an
+  unknown argument fails.
+- `verify-deployment.mjs` takes one or more origins and checks them, and
+  every path of each, concurrently. Once per run it hashes the local `dist/`
+  files and builds each path's expected headers with `headersForPath`
+  (`package-cf-output.mjs`), which applies every matching rule of the
+  rendered `_headers` the way Cloudflare does. `checkHeaders` then compares
+  every header exactly, and `Cache-Control` as a set of directives (order,
+  case and repeats ignored), so it fails when a legal page lacks
+  `no-transform` or another path has it. Before fetching, `securityHeaders`
+  refuses a rendered file that sets the CSP, `Permissions-Policy` or
+  `X-Frame-Options` outside `/*` or twice. It also asserts the absence of
+  `NEL`, `Report-To` and `Reporting-Endpoints` on hosts in the `oxfer.app`
+  zone. Cloudflare Network Error Logging adds the first two; turn it off with
+  the zone setting `nel`
   ([how](docs/cloudflare-workers.md#network-error-logging-must-be-off)).
+  A path whose request, status, redirect, MIME type or bytes fail is retried
+  alone (10 attempts, 3 seconds apart) while the edge updates; headers are
+  checked only once the bytes are this build's, so a header mismatch or NEL
+  (`PolicyError`) fails at once. It never repeats a rejected argument, which
+  could be a share link.
 - Both CLIs start through `isMainModule` (real paths on both sides), so they
   also run from a symlinked checkout instead of silently doing nothing.
 - The deploy workflow publishes the SHA-256 of every `dist/` file except
@@ -278,18 +325,20 @@ The workflow sets the value from the repository variable `vars.P2P_RELAY_URL`.
 the placeholders `[[OPERATOR_NAME]]`, `[[OPERATOR_ADDRESS]]`,
 `[[OPERATOR_REGISTRATION]]`, `[[EFFECTIVE_DATE]]`, and in `privacy.html`
 `[[RELAY_HOSTING_PROVIDER]]` and `[[RELAY_LOCATION]]`. The owner fills them.
-`build-web.sh` refuses to package while any `[[UPPER_CASE]]` token remains, so
+`build-web.sh` refuses to build while any `[[UPPER_CASE]]` token remains, so
 the deploy workflow fails until then. The pages describe the self-hosted relay
 at `relay.oxfer.app`, run from the VPS kit. Once they are filled,
-`build-web.sh` also refuses to package them unless `P2P_RELAY_URL` lists
-`https://relay.oxfer.app` (the relay go-live guard: `operator_relay` in
-`build-web.sh`, `OPERATOR_RELAY` and `--check-relay --require-relay=ORIGIN`
-in `package-cf-output.mjs`). It does not read the page text; instead
-`tests/web-pages.test.mjs` fails if `privacy.html` stops naming
-`relay.oxfer.app`, so the guard is changed with the pages
-([details](docs/cloudflare-workers.md#relay-go-live-guard)). The guards sit
-between `# BEGIN` and `# END` markers in `build-web.sh`, which that test runs
-on their own.
+`build-web.sh` also refuses unless `P2P_RELAY_URL` lists only
+`https://relay.oxfer.app` (the relay go-live guard). Both guards are
+`checkLegalPages` in `package-cf-output.mjs`, which `build-web.sh` runs on
+the source pages before the Trunk build
+(`node package-cf-output.mjs --check-relay --check-legal`); the relay is
+`OPERATOR_RELAY` there, and `build-web.sh` does not name it. The guard does
+not read the page text; instead `tests/web-pages.test.mjs` fails if
+`privacy.html` stops naming `relay.oxfer.app`, so the guard is changed with
+the pages ([details](docs/cloudflare-workers.md#relay-go-live-guard)). That
+test file also calls `checkLegalPages` directly and runs the CLI call
+against scratch copies of the pages.
 
 The pages and records are true for the VPS relay only. The kit's Fly.io
 variant would falsify statements on IP blocking, log retention, the
@@ -307,10 +356,17 @@ must change first.
   SHA-256. `setup.sh` merges the server's `/etc/oxfer-relay/denylist.txt`
   into the relay config (`setup.sh --denylist` does only that), reloads
   nftables only when its config changed, and starts a relay that has no
-  certificate yet only once public DNS points at the host. It also contains
-  `render.sh`, which generates `cloud-init.yaml` and `fly/config.toml`, and a
-  Fly.io variant in `fly/` (endpoint-ID blocks from the Fly secret
-  `OXFER_RELAY_DENYLIST`). Start with
+  certificate yet only once public DNS points at the host. `denylist.sh`
+  merges endpoint IDs into the relay config and has the relay binary parse
+  them, for `setup.sh` and the Fly entrypoint alike. `relay.env` is the relay
+  process's environment (the `RUST_LOG` filter): the systemd unit reads it
+  with `EnvironmentFile=` and `fly/entrypoint.sh` sources it. It also
+  contains `render.sh`, which generates `cloud-init.yaml`, and a Fly.io
+  variant in `fly/` (endpoint-ID blocks from the Fly secret
+  `OXFER_RELAY_DENYLIST`). Its image is built with `deploy/relay` as the
+  build context (`fly deploy --config fly/fly.toml --ha=false`, run from
+  `deploy/relay`), so it copies the kit's own `config.toml`, `relay.env` and
+  `denylist.sh`. Start with
   [`deploy/relay/README.md`](deploy/relay/README.md). Keep the relay version in
   step with the workspace's iroh version.
 - `docs/compliance/`: UK Online Safety Act assessments, the eSafety
@@ -343,8 +399,9 @@ records or on the server (`/etc/oxfer-relay/denylist.txt`,
   `<script>`, no `on*` event-handler attributes, no `javascript:` URLs and no
   cross-origin subresources. The CSP is `script-src 'self' 'wasm-unsafe-eval'`.
   New page script goes in an `assets/*.js` file with a Trunk `copy-file` entry
-  and a `cmp` line in `check.sh` and `build-web.sh`.
-  `tests/web-pages.test.mjs` enforces this.
+  in `index.html`; `--check-dist` byte-compares every such entry, so it needs
+  no other list. `tests/web-pages.test.mjs` enforces this, including that
+  every script and stylesheet a served page loads has a `copy-file` entry.
 - `P2P_RELAY_URL` is public: it is compiled into the WASM and rendered into a
   response header. Never put credentials in it. Change `src/node.rs` and
   `package-cf-output.mjs` together when the accepted format changes, and keep
@@ -353,7 +410,8 @@ records or on the server (`/etc/oxfer-relay/denylist.txt`,
   server added receives users' IP addresses, which would require updating
   `privacy.html` and the compliance records.
 - Relay wording in the UI and diagnostics derives from `RelayChoice`; do not
-  hard-code a relay operator.
+  hard-code a relay operator. Credit Oxfer only for a list of only its relay
+  (`RelayChoice::uses_only_operator_relay`).
 - Keep the `__p2p` global gated; never expose it unconditionally in release.
 - Keep the legal-page placeholder tokens exactly as written; the deploy guard
   relies on the `[[UPPER_CASE]]` form.
@@ -364,8 +422,9 @@ records or on the server (`/etc/oxfer-relay/denylist.txt`,
   `privacy.html` and `docs/compliance/ropa.md`.
 - Only saving with "Keep a copy" may create the `oxfer-resume` database and
   directory. Any new read, list, export or delete path in
-  `assets/resume-worker.js` opens them with `create` false and treats a
-  missing one as empty.
+  `assets/resume-worker.js` opens the database with mode `'probe'` (or
+  `'existing'` once `prepare` has found it), never `'create'`, and the
+  directory with `rootDirectory(false)`, and treats a missing one as empty.
 - Send `Cache-Control: no-transform` only for `/privacy`, `/terms` and
   `/abuse`: elsewhere it would stop Cloudflare compressing the wasm and
   JavaScript. Add no browser reporting (`report-uri`, `report-to`, NEL): the
@@ -373,8 +432,9 @@ records or on the server (`/etc/oxfer-relay/denylist.txt`,
   reporting headers.
 - The relay host keeps what "What is logged" in `deploy/relay/README.md`
   lists, and the privacy notice and `docs/compliance/ropa.md` rely on it: the
-  `RUST_LOG` filter in `deploy/relay/iroh-relay.service` keeps client IP
-  addresses, endpoint IDs and connection events out of the relay's logs
+  `RUST_LOG` filter in `deploy/relay/relay.env` (read by
+  `iroh-relay.service` and `fly/entrypoint.sh`) keeps client IP addresses,
+  endpoint IDs and connection events out of the relay's logs
   (`iroh_relay::server::http_server` must stay `off`: it would log the
   address and port of every refused reconnection); `key_cache_capacity = 0`
   keeps endpoint IDs in memory only while connected; the journal keeps at
@@ -393,14 +453,16 @@ records or on the server (`/etc/oxfer-relay/denylist.txt`,
 `local_test_*` must be deterministic and offline. `online_test_*` may require
 the public relay and must never convert a timeout into a silent pass. Native
 loopback endpoint tests use `RelayChoice::None` and should remain part of the
-normal suite. Relay-list parsing, probe URLs, footer links, the Report abuse
-links, relay wording (browser and desktop privacy boundary text, checked for
-both targets), the native IP note, browser theme storage (written only for a
-picked theme, legacy migration, native persistence kept) and
-`share_endpoint_id` (every link form, round trip through iroh-relay's
-`access.denylist` parse, no capability in any output, a real offline node's
-link) have offline `local_test_*` coverage in `src/tests.rs` and
-`src/app.rs`. The real browser data-channel integration test runs with:
+normal suite. Relay-list parsing, probe URLs, the operator-relay check
+(`uses_only_operator_relay`), footer links, the Report abuse links, relay
+wording (per operator, `Configured` included; browser and desktop privacy
+boundary text, checked for both targets), the native IP note, browser theme
+storage (written only for a picked theme, legacy migration, native
+persistence kept) and `share_endpoint_id` (every link form, round trip
+through iroh-relay's `access.denylist` parse, no capability in any output, a
+real offline node's link) have offline `local_test_*` coverage in
+`src/tests.rs` and `src/app.rs`. The real browser data-channel integration
+test runs with:
 
 ```sh
 wasm-pack test --headless --firefox -- --test webrtc_wasm
@@ -413,24 +475,41 @@ wasm-pack test --headless --firefox -- --test resume_wasm
 ```
 
 `./check.sh` and the `p2p-browser-integration` job in
-`../.github/workflows/ci.yml` both run these, plus:
+`../.github/workflows/ci.yml` both run these, plus
+`wasm-pack test --headless --firefox -- --test relay_wasm`: the n0 default
+relay map in the browser, including an empty `P2P_RELAY_URL`.
 
-- `wasm-pack test --headless --firefox -- --test relay_wasm`: the n0 default
-  relay map in the browser, including an empty `P2P_RELAY_URL`.
-- Every `node --test` suite in `tests/`. `resume_worker.test.mjs` injects
-  deterministic cross-worker races and failures, and its IndexedDB and OPFS
-  fakes create storage only when asked, so it checks that listing,
-  exporting and deleting on a fresh profile create nothing (with and without
-  `indexedDB.databases()`); `package-cf-output.test.mjs` covers relay-list
-  parsing (including the printable-ASCII rule and `--require-relay`), header
-  rendering, packaging, the `verify-deployment.mjs` header checks
-  (`no-transform` on the legal pages only, NEL) and both CLIs run through a
-  symlink; `web-pages.test.mjs` covers the CSP rules for served HTML, the
-  loader scripts, the legal-page copies, and runs `build-web.sh`'s relay-list
-  check and legal-page guard blocks against scratch `dist/` copies.
+`node --test tests/*.test.mjs` runs every node suite, in `./check.sh` and in
+CI's `p2p-web-checks` job, which needs no Rust toolchain and also runs
+`render.sh --check`:
 
-A test in `package-cf-output.test.mjs` fails when `check.sh` misses a suite in
-`tests/` or the CI job misses a `node --test`, `wasm-pack test` or
-`render.sh --check` line of `check.sh`, so a new suite goes into both files.
-CI does not run `check.sh`'s fmt, clippy, wasm32 check or Trunk build; run
-`./check.sh` locally.
+- `resume_worker.test.mjs` injects deterministic cross-worker races and
+  failures, and its IndexedDB and OPFS fakes create storage only when asked,
+  so it checks that listing, exporting and deleting on a fresh profile
+  create nothing (with and without `indexedDB.databases()`), and that a
+  write after another tab deleted the database fails without recreating it.
+- `package-cf-output.test.mjs` covers relay-list parsing (including the
+  printable-ASCII rule and the go-live rule, `operatorRelayProblem`), header
+  rendering, `headersForPath`, packaging, `trunkCopyFiles` and `checkDist`,
+  the `verify-deployment.mjs` header checks (every header exactly,
+  `no-transform` on the legal pages only, NEL), its per-path retries and
+  origin parsing against a fake `fetch`, the CLI refusing unknown arguments
+  (the retired `--require-relay` among them), and both CLIs run through a
+  symlink.
+- `web-pages.test.mjs` covers the CSP rules for served HTML, that every
+  script and stylesheet a served page loads has a Trunk `copy-file` entry,
+  the loader scripts, the legal-page copies, `checkLegalPages`, and
+  `build-web.sh`'s order (guards before the Trunk build, `--check-dist`
+  after it, then packaging) with its
+  `node package-cf-output.mjs --check-relay --check-legal` call run against
+  scratch pages.
+
+The test "CI runs the node suites, the relay kit check and every browser
+suite that check.sh runs" in `package-cf-output.test.mjs` fails when
+`check.sh` or `p2p-web-checks` lacks the `node --test tests/*.test.mjs` or
+`render.sh --check` line, when `p2p-web-checks` uses a Rust toolchain, or
+when `check.sh` or `p2p-browser-integration` lacks the `wasm-pack test` line
+of a `tests/*_wasm.rs` suite. A new node suite needs no new line; a new
+browser suite goes into both files. CI does not run `check.sh`'s fmt,
+clippy, wasm32 check, Trunk build or `--check-dist`; run `./check.sh`
+locally.
