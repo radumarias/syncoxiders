@@ -229,13 +229,14 @@ fn local_test_relay_setting_warning_names_the_entry_without_echoing_it() {
 #[test]
 fn local_test_relay_probe_urls_n0_and_none() {
     let n0 = relay_probe_urls(&RelayChoice::N0);
+    // n0's relays in their relay map's order, then the dotted WebKit canary, exactly.
     assert_eq!(
         n0,
         [
+            "wss://aps1-1.relay.n0.iroh.link/relay",
             "wss://euc1-1.relay.n0.iroh.link/relay",
             "wss://use1-1.relay.n0.iroh.link/relay",
             "wss://usw1-1.relay.n0.iroh.link/relay",
-            "wss://aps1-1.relay.n0.iroh.link/relay",
             "wss://euc1-1.relay.n0.iroh.link./relay",
         ]
     );
@@ -322,6 +323,44 @@ fn local_test_relay_probe_urls_never_carry_credentials_path_or_query() {
     }
 }
 
+#[test]
+fn local_test_operator_relay_only_when_every_relay_is_the_operators() {
+    for setting in [
+        "https://relay.oxfer.app",
+        "https://relay.oxfer.app/",
+        "https://relay.oxfer.app:443",
+        "https://RELAY.oxfer.app",
+        " https://relay.oxfer.app , https://relay.oxfer.app:8443 ",
+        "http://relay.oxfer.app:3340",
+    ] {
+        let relay = RelayChoice::from_setting(Some(setting));
+        assert!(matches!(relay, RelayChoice::Custom(_)), "{setting:?}");
+        assert!(relay.uses_only_operator_relay(), "{setting:?}");
+    }
+    for setting in [
+        "https://relay.oxfer.app, https://relay.example.test",
+        "https://relay.example.test, https://relay.oxfer.app",
+        "https://relay.example.test",
+        "https://oxfer.app",
+        "https://eu.relay.oxfer.app",
+        "https://relay.oxfer.app.example.test",
+        "https://relay.oxfer.app.",
+        "https://relay-oxfer.app",
+    ] {
+        let relay = RelayChoice::from_setting(Some(setting));
+        assert!(matches!(relay, RelayChoice::Custom(_)), "{setting:?}");
+        assert!(!relay.uses_only_operator_relay(), "{setting:?}");
+    }
+    for relay in [
+        RelayChoice::N0,
+        RelayChoice::N0WithoutTrailingDots,
+        RelayChoice::None,
+        RelayChoice::Custom(Vec::new()),
+    ] {
+        assert!(!relay.uses_only_operator_relay(), "{relay:?}");
+    }
+}
+
 #[tokio::test]
 async fn local_test_empty_custom_relay_list_is_refused_before_binding() {
     let files = Arc::new(Mutex::new(Vec::new()));
@@ -329,34 +368,6 @@ async fn local_test_empty_custom_relay_list_is_refused_before_binding() {
     assert!(matches!(node, Err(NodeError::Relay(_))));
     let diagnostic = DiagnosticNode::bind(RelayChoice::Custom(Vec::new())).await;
     assert!(matches!(diagnostic, Err(NodeError::Relay(_))));
-}
-
-#[test]
-fn local_test_fragment_dev_flag_matches_parse_fragment() {
-    let ticket = test_ticket();
-    let link = Node::link("https://oxfer.app/", &ticket, &test_cap(3), true);
-    let with_ticket = link.split_once('#').unwrap().1.to_string();
-    for (fragment, dev) in [
-        ("#dev", true),
-        ("dev", true),
-        ("#dev&relay", true),
-        ("#relay&dev", true),
-        ("#sink=sw&dev&win=8", true),
-        (with_ticket.as_str(), true),
-        ("", false),
-        ("#", false),
-        ("#devx", false),
-        ("#sink=dev", false),
-        ("#relay", false),
-        ("#diagnostics", false),
-    ] {
-        assert_eq!(Node::fragment_has_dev_flag(fragment), dev, "{fragment:?}");
-        assert_eq!(
-            Node::parse_fragment(fragment).dev,
-            dev,
-            "{fragment:?} disagrees with parse_fragment"
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -376,12 +387,13 @@ fn test_cap(seed: u8) -> [u8; CAP_LEN] {
     cap
 }
 
+/// A fresh directory under the system temp directory, removed on drop (also on panic).
 #[cfg(not(target_arch = "wasm32"))]
-struct TestDir(std::path::PathBuf);
+pub(crate) struct TestDir(pub(crate) std::path::PathBuf);
 
 #[cfg(not(target_arch = "wasm32"))]
 impl TestDir {
-    fn new(label: &str) -> Self {
+    pub(crate) fn new(label: &str) -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
@@ -1431,7 +1443,7 @@ async fn local_test_test_sinks_behave() {
 // ---------------------------------------------------------------------------------------
 
 /// A shared file backed by memory, hashed the way the app would hash it.
-fn shared_file(name: &str, data: &[u8]) -> SharedFile {
+pub(crate) fn shared_file(name: &str, data: &[u8]) -> SharedFile {
     SharedFile {
         meta: FileMeta {
             name: name.to_string(),

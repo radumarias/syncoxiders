@@ -71,15 +71,11 @@ thread_local! {
 /// Whether the newest `RTCPeerConnection` may be published as the page global `__p2p` for
 /// console debugging: in debug builds, or when the page's fragment carries the `dev` flag.
 ///
-/// Checked when each peer is created. The app's fragment scrub keeps `dev` while removing
-/// the ticket and access code, and the boot script's `#dev` reload restores the original
-/// URL, so a page opened with `#dev` still has it here. A release build opened without it
-/// never exposes the handle. [`debug_pc`] is unaffected: it stays in wasm memory.
+/// Checked when each peer is created; [`crate::node::page_has_dev_flag`] says why a page
+/// opened with `#dev` still has the flag then. A release build opened without it never
+/// exposes the handle. [`debug_pc`] is unaffected: it stays in wasm memory.
 fn expose_debug_handle() -> bool {
-    cfg!(debug_assertions)
-        || web_sys::window()
-            .and_then(|window| window.location().hash().ok())
-            .is_some_and(|hash| crate::node::Node::fragment_has_dev_flag(&hash))
+    cfg!(debug_assertions) || crate::node::page_has_dev_flag()
 }
 
 fn js_error(error: JsValue) -> TransportError {

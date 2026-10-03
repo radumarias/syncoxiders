@@ -1,35 +1,25 @@
 //! Print the endpoint ID of a reported Oxfer share, for the relay's `access.denylist`.
 //!
-//! An abuse report carries a share link, or the part of it the abuse page asks for: from
-//! `endpoint` up to, but not including, `&cap=`. The relay blocks a share by its endpoint ID,
-//! and that ID is encoded inside the link's ticket where it cannot be read by eye. This tool
-//! decodes it offline. It opens no connection, so the sharer is never contacted, and it does
-//! not open the link.
+//! The command-line wrapper around [`p2p_transfer::node::share_endpoint_id`], whose
+//! documentation gives the input it accepts (a share link, its fragment or the bare ticket)
+//! and the form of the ID it returns. It decodes offline: it opens no connection, so the
+//! sharer is never contacted, and it does not open the link.
 //!
 //! Run it from `p2p-transfer/`, so that directory's `rust-toolchain` applies:
 //!
 //! ```sh
-//! cargo run -q -p p2p-transfer --example ticket-endpoint-id -- '<share link or fragment>'
+//! cargo run -q -p p2p-transfer --example ticket-endpoint-id -- '<share link, fragment or ticket>'
 //! ```
 //!
-//! Input, as the only argument:
+//! Pass the input as the only argument, quoted: a link contains `&`, which the shell would
+//! otherwise read as "run in the background". The argument `-` reads the input from standard
+//! input instead (paste it, then press Ctrl-D).
 //!
-//! - the whole link, `https://oxfer.app/#endpoint…&cap=…`;
-//! - its fragment, with or without the `#`;
-//! - the bare ticket, the part that starts with `endpoint` (what the abuse page asks for).
-//!
-//! Quote it: a link contains `&`, which the shell would otherwise read as "run in the
-//! background". Whitespace and line breaks inside it, as in a link wrapped in an email, are
-//! ignored, and so are `<`, `>` and quotes around it. The argument `-` reads the input from
-//! standard input instead (paste it, then press Ctrl-D).
-//!
-//! Output: one line on standard output, the endpoint ID as 64 lowercase hex digits. That is
-//! the form iroh-relay 1.1.0 parses in `access.denylist = ["<endpoint id>"]` (as
-//! `Vec<EndpointId>`, each entry through `PublicKey::from_str`). Nothing else goes to
-//! standard output. If no ticket can be read, a fixed message goes to standard error and the
-//! exit status is 1; with no argument or more than one, a usage line and status 2. Where the
-//! ID goes on the relay, and how the block is recorded: `deploy/relay/README.md` ("Abuse
-//! blocking") and `docs/compliance/incident-runbook.md`.
+//! On success the ID is the only line on standard output. If the input cannot be read or
+//! holds no ticket, a fixed message goes to standard error and the exit status is 1; with no
+//! argument or more than one, a usage line and status 2. Where the ID goes on the relay, and
+//! how the block is recorded: `deploy/relay/README.md` ("Abuse blocking") and
+//! `docs/compliance/incident-runbook.md`.
 //!
 //! The capability after `cap=` is a bearer secret: anyone holding it can download the share.
 //! The tool ignores it, never prints or logs it, and no message repeats the input. Two
@@ -40,9 +30,6 @@
 //!   that);
 //! - `cargo run` without `-q` echoes the command line, argument included, in its `Running`
 //!   status line on standard error.
-//!
-//! The same decoding is `p2p_transfer::node::share_endpoint_id`, which the unit tests check
-//! against iroh-relay's parse.
 
 use std::io::Read;
 use std::process::ExitCode;

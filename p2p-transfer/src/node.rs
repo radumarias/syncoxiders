@@ -7,7 +7,7 @@ use log::info;
 use n0_future::{task, Stream};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
 };
 use tokio::sync::mpsc;
 
@@ -545,6 +545,10 @@ const LOCAL_ADDR_TIMEOUT: Duration = Duration::from_secs(3);
 /// Poll interval while waiting for that address.
 const LOCAL_ADDR_POLL: Duration = Duration::from_millis(100);
 
+/// Host of the relay this deployment's operator runs (`deploy/relay/`), the one the legal
+/// pages describe. `OPERATOR_RELAY` in `package-cf-output.mjs` is the same relay.
+pub const OPERATOR_RELAY_HOST: &str = "relay.oxfer.app";
+
 /// Which relay infrastructure a node uses.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RelayChoice {
@@ -568,8 +572,14 @@ pub enum RelayChoice {
 impl RelayChoice {
     /// The relays this build was compiled for: `P2P_RELAY_URL` at compile time, read with
     /// [`RelayChoice::from_setting`].
+    ///
+    /// The value is parsed once per process, so an invalid one logs its warning once; every
+    /// call returns a copy of that result.
     pub fn from_env() -> Self {
-        Self::from_setting(option_env!("P2P_RELAY_URL"))
+        static CHOICE: OnceLock<RelayChoice> = OnceLock::new();
+        CHOICE
+            .get_or_init(|| Self::from_setting(option_env!("P2P_RELAY_URL")))
+            .clone()
     }
 
     /// Interpret a `P2P_RELAY_URL` value: a comma-separated list of relay URLs of the form
@@ -606,6 +616,22 @@ impl RelayChoice {
             Self::N0
         }
     }
+
+    /// Whether every relay is the operator's own, [`OPERATOR_RELAY_HOST`]: true only for a
+    /// non-empty [`RelayChoice::Custom`] list in which each URL has exactly that host (any
+    /// scheme or port). A list that also names another relay, n0's relays and no relay at all
+    /// are not the operator's, so the UI does not call them "operated by Oxfer".
+    pub fn uses_only_operator_relay(&self) -> bool {
+        match self {
+            Self::Custom(urls) => {
+                !urls.is_empty()
+                    && urls
+                        .iter()
+                        .all(|url| url.host_str() == Some(OPERATOR_RELAY_HOST))
+            }
+            Self::N0 | Self::N0WithoutTrailingDots | Self::None => false,
+        }
+    }
 }
 
 /// Parse a non-empty, comma-separated relay list. The error names an entry by its 1-based
@@ -639,40 +665,44 @@ pub(crate) fn parse_relay_list(setting: &str) -> Result<Vec<RelayUrl>, String> {
 /// Path of the relay's WebSocket endpoint, as dialled by the iroh relay client.
 const RELAY_WEBSOCKET_PATH: &str = "/relay";
 
-/// The browser WebSocket URLs probed for n0's presets: the four iroh 1.1 production relays
-/// without DNS trailing dots, plus one dotted spelling to detect the WebKit incompatibility.
-const N0_PROBE_URLS: &[&str] = &[
-    "wss://euc1-1.relay.n0.iroh.link/relay",
-    "wss://use1-1.relay.n0.iroh.link/relay",
-    "wss://usw1-1.relay.n0.iroh.link/relay",
-    "wss://aps1-1.relay.n0.iroh.link/relay",
-    "wss://euc1-1.relay.n0.iroh.link./relay",
-];
+/// The dotted spelling of n0's EU relay, probed after n0's relays to detect the WebKit
+/// incompatibility with fully qualified DNS names (see [`RelayChoice::N0WithoutTrailingDots`]).
+const N0_DOTTED_PROBE_URL: &str = "wss://euc1-1.relay.n0.iroh.link./relay";
 
 /// The WebSocket URLs the browser diagnostics page probes for `relay`, in order and without
 /// duplicates; empty for [`RelayChoice::None`].
 ///
-/// A custom relay is probed as `scheme://host[:port]/relay`, with the iroh relay client's
-/// scheme mapping (`http` dials `ws`, anything else `wss`). The URL is rebuilt from its
-/// scheme, host and port only: credentials, path, query and fragment never reach a copied
-/// diagnostics report.
+/// n0's presets probe the relays of `n0_relays_without_trailing_dots`, in that map's order,
+/// then `N0_DOTTED_PROBE_URL`. A custom relay is probed as `scheme://host[:port]/relay`,
+/// with the iroh relay client's scheme mapping (`http` dials `ws`, anything else `wss`). The
+/// URL is rebuilt from its scheme, host and port only: credentials, path, query and fragment
+/// never reach a copied diagnostics report.
 pub fn relay_probe_urls(relay: &RelayChoice) -> Vec<String> {
     match relay {
         RelayChoice::N0 | RelayChoice::N0WithoutTrailingDots => {
-            N0_PROBE_URLS.iter().map(|url| (*url).to_string()).collect()
-        }
-        RelayChoice::Custom(urls) => {
-            let mut probes: Vec<String> = Vec::with_capacity(urls.len());
-            for url in urls {
-                let probe = relay_probe_url(url);
-                if !probes.contains(&probe) {
-                    probes.push(probe);
-                }
-            }
+            // Cannot fail for iroh's built-in maps, whose every URL has a DNS host.
+            let n0: Vec<RelayUrl> = n0_relays_without_trailing_dots()
+                .map(|map| map.urls())
+                .unwrap_or_default();
+            let mut probes = unique_probe_urls(&n0);
+            probes.push(N0_DOTTED_PROBE_URL.to_string());
             probes
         }
+        RelayChoice::Custom(urls) => unique_probe_urls(urls),
         RelayChoice::None => Vec::new(),
     }
+}
+
+/// [`relay_probe_url`] of each URL, in order, without duplicates.
+fn unique_probe_urls(urls: &[RelayUrl]) -> Vec<String> {
+    let mut probes: Vec<String> = Vec::with_capacity(urls.len());
+    for url in urls {
+        let probe = relay_probe_url(url);
+        if !probes.contains(&probe) {
+            probes.push(probe);
+        }
+    }
+    probes
 }
 
 fn relay_probe_url(url: &RelayUrl) -> String {
@@ -1053,20 +1083,6 @@ impl Node {
         params
     }
 
-    /// Whether a URL fragment (with or without its leading `#`) carries the bare `dev` flag.
-    ///
-    /// The same token test as [`Node::parse_fragment`] and the page's boot script, without
-    /// parsing a ticket or an access code. The app's fragment scrub keeps `dev` when
-    /// it removes a ticket and capability, so on a page opened with `#dev` this stays true
-    /// after the scrub.
-    pub fn fragment_has_dev_flag(fragment: &str) -> bool {
-        fragment
-            .strip_prefix('#')
-            .unwrap_or(fragment)
-            .split('&')
-            .any(|token| token == "dev")
-    }
-
     /// Stop serving. Idempotent, and takes `&self` because both the app and the sessions hold
     /// the same `Arc<Node>`.
     pub async fn shutdown(&self) {
@@ -1074,6 +1090,25 @@ impl Node {
             log::debug!("router shutdown: {e}");
         }
         self.endpoint.close().await;
+    }
+}
+
+/// Whether this page's URL fragment carries the `dev` flag, read with
+/// [`Node::parse_fragment`]; always false outside the browser.
+///
+/// The app's fragment scrub keeps `dev` when it removes a ticket and access code, and the
+/// boot script's `#dev` reload restores the original URL, so a page opened with `#dev` keeps
+/// the flag through both.
+pub fn page_has_dev_flag() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|window| window.location().hash().ok())
+            .is_some_and(|hash| Node::parse_fragment(&hash).dev)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
     }
 }
 
