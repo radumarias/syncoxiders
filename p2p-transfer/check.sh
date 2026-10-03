@@ -18,6 +18,7 @@ node --test tests/theme.test.mjs
 node --test tests/favicon.test.mjs
 node --test tests/package-cf-output.test.mjs
 node --test tests/web-pages.test.mjs
+sh deploy/relay/render.sh --check
 wasm-pack test --headless --firefox -- --test webrtc_wasm
 wasm-pack test --headless --firefox -- --test relay_wasm
 wasm-pack test --headless --firefox -- --test resume_wasm
@@ -36,7 +37,9 @@ cmp privacy.html dist/privacy.html
 cmp terms.html dist/terms.html
 cmp abuse.html dist/abuse.html
 # Trunk.toml inject_scripts = false: no inline loader for the CSP to block.
-if grep -q -E '<script( type="module")?>' dist/index.html; then
+# Any <script> without a src attribute counts, whatever else it carries
+# (a nonce, type or defer).
+node -e 'if (/<script\b(?![^>]*\ssrc\s*=)[^>]*>/i.test(require("fs").readFileSync(process.argv[1], "utf8"))) process.exit(1)' dist/index.html || {
     echo "dist/index.html contains an inline <script>; the CSP would block it." >&2
     exit 1
-fi
+}

@@ -74,9 +74,11 @@ function validateGroup(group, requested) {
 // of creating it. It asks indexedDB.databases() first, because opening a
 // missing database leaves its name on disk even when the open is undone. Where
 // that is unavailable, or another tab deleted the database meanwhile, it aborts
-// the version-change transaction that would create it.
-async function database(create) {
-  if (!create && typeof indexedDB.databases === 'function') {
+// the version-change transaction that would create it. `known` skips that
+// listing on the write path, where `prepare` has already found or created the
+// database: the abort still keeps a deleted one from being recreated.
+async function database(create, { known = false } = {}) {
+  if (!create && !known && typeof indexedDB.databases === 'function') {
     const existing = await indexedDB.databases();
     if (!existing.some(info => info.name === DB_NAME)) return null;
   }
@@ -129,9 +131,10 @@ async function transact(mode, body, { create = false } = {}) {
   }
 }
 
-// Reads never create the database: a missing one holds no group.
-async function getGroup(id) {
-  const db = await database(false);
+// Reads never create the database: a missing one holds no group. Pass
+// `{ known: true }` once `prepare` has found or created it.
+async function getGroup(id, options) {
+  const db = await database(false, options);
   if (!db) return undefined;
   try {
     return await new Promise((resolve, reject) => {
@@ -212,7 +215,7 @@ async function prepare(message) {
     // checkpoint read before lock acquisition was only sufficient to locate those files:
     // another tab may have advanced it while this worker waited. Reread it now, then perform
     // recovery from this authoritative snapshot.
-    group = await getGroup(message.id);
+    group = await getGroup(message.id, { known: true });
     validateGroup(group, requested);
     for (const entry of opened) {
       const meta = group.files[entry.index];
@@ -276,7 +279,7 @@ async function write(message) {
   }
   await call(entry.access, 'flush');
   const next = entry.written + consumed;
-  const group = await getGroup(entry.id);
+  const group = await getGroup(entry.id, { known: true });
   if (!group || group.files[entry.index].written !== String(entry.written)) {
     throw new Error('resume checkpoint changed unexpectedly');
   }
@@ -292,7 +295,7 @@ async function finish(message) {
   if (entry.written !== entry.size) throw new Error('download is incomplete');
   await call(entry.access, 'flush');
   await closeEntry(entry);
-  const group = await getGroup(message.id);
+  const group = await getGroup(message.id, { known: true });
   if (!group || group.files[message.index].written !== group.files[message.index].size) {
     throw new Error('resume checkpoint changed unexpectedly');
   }

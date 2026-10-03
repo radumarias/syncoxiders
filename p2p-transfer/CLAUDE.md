@@ -59,16 +59,17 @@ from the workspace root may select the user's stable toolchain instead.
   `.github/workflows/oxfer-web.yml`.
 - `./check.sh`: required gate. Native and wasm checks, fmt, clippy with
   `-D warnings` on both targets, tests, doctests, every `node --test` suite in
-  `tests/`, real Firefox WebRTC, relay and persistence tests, then
-  `trunk build` with byte comparisons of copied files and an inline-script
-  guard on `dist/index.html`. It requires Node.js, Firefox, `wasm-pack`, and
-  Trunk.
+  `tests/`, the relay kit's `render.sh --check`, real Firefox WebRTC, relay
+  and persistence tests, then `trunk build` with byte comparisons of copied
+  files and an inline-script guard on `dist/index.html`. It requires Node.js,
+  Firefox, `wasm-pack`, and Trunk.
 - `cargo test <substring>`: run a focused unit test.
 - `sh deploy/relay/render.sh --check`: fails if the relay kit's generated
   `cloud-init.yaml` or `fly/config.toml` is stale; without `--check` it
   regenerates them. `cloud-init.yaml` embeds each kit file as `gz+b64`
   (plain text would exceed Hetzner's 32 KiB user-data limit); `--check`
-  decodes and compares every payload.
+  decodes and compares every payload, and also fails if `fly/entrypoint.sh`'s
+  default `RUST_LOG` differs from `iroh-relay.service`'s.
 
 Cloudflare: this crate has no Wrangler config. Use `cf` (`cf --help`,
 `cf cli search …`). Do not fall back to Wrangler. `cf deploy` without
@@ -429,6 +430,7 @@ wasm-pack test --headless --firefox -- --test resume_wasm
   check and legal-page guard blocks against scratch `dist/` copies.
 
 A test in `package-cf-output.test.mjs` fails when `check.sh` misses a suite in
-`tests/` or the CI job misses a `node --test` or `wasm-pack test` line of
-`check.sh`, so a new suite goes into both files. CI does not run `check.sh`'s
-fmt, clippy, wasm32 check or Trunk build; run `./check.sh` locally.
+`tests/` or the CI job misses a `node --test`, `wasm-pack test` or
+`render.sh --check` line of `check.sh`, so a new suite goes into both files.
+CI does not run `check.sh`'s fmt, clippy, wasm32 check or Trunk build; run
+`./check.sh` locally.

@@ -83,6 +83,10 @@ jobs:
         node --test tests/package-cf-output.test.mjs
         node --test tests/web-pages.test.mjs
 
+    - name: Check the relay kit's generated files
+      working-directory: p2p-transfer
+      run: sh deploy/relay/render.sh --check
+
     - name: Test WebRTC in Firefox
       working-directory: p2p-transfer
       run: wasm-pack test --headless --firefox -- --test webrtc_wasm

@@ -569,15 +569,16 @@ test("--check-relay --require-relay fails unless the list includes that relay", 
     }
 });
 
-test("CI runs every node and browser suite that check.sh runs", async () => {
+test("CI runs every node and browser suite and the relay kit check that check.sh runs", async () => {
     const check = await read("../check.sh");
     const ci = await read("../../.github/workflows/ci.yml");
     const suites = (await readdir(new URL(".", import.meta.url))).filter(name => name.endsWith(".test.mjs")).sort();
     for (const suite of suites) {
         assert.match(check, new RegExp(`^node --test tests/${suite.replaceAll(".", "\\.")}$`, "m"), `check.sh runs ${suite}`);
     }
-    const commands = check.split("\n").filter(line => /^(node --test |wasm-pack test )/.test(line));
-    assert.ok(commands.length >= suites.length + 3);
+    const commands = check.split("\n").filter(line => /^(node --test |wasm-pack test |sh deploy\/relay\/render\.sh --check$)/.test(line));
+    assert.ok(commands.length >= suites.length + 4);
+    assert.ok(commands.includes("sh deploy/relay/render.sh --check"), "check.sh checks the relay kit's generated files");
     const start = ci.indexOf("\n  p2p-browser-integration:\n");
     assert.ok(start >= 0, "ci.yml has the p2p-browser-integration job");
     const next = ci.slice(start + 1).search(/\n  [\w-]+:\n/);

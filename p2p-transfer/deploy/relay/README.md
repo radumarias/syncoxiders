@@ -488,10 +488,16 @@ permanent ban. To extend a ban, run `oxfer-relay-ban add ADDRESS DAYS` again:
 the new expiry counts from then. Record the extension in the abuse log like
 the ban itself.
 
-`oxfer-relay-ban` adds the element to the `banned_v4` or `banned_v6` set
-with a timeout and writes it, with its absolute expiry, to
-`/etc/nftables.d/bans.nft` (mode 0600), which `nftables.conf` includes. It
-checks the whole ruleset with `nft -c` before keeping a change. The kernel
+`ADDRESS` must be an address or prefix literal. A host name is refused:
+nft would resolve it every time it loads `bans.nft`, which fails at boot,
+before the network is up, and leaves the host with no ruleset. `del` matches
+the line as text, so give it the spelling `list` shows.
+
+`oxfer-relay-ban` writes the element, with its absolute expiry, to
+`/etc/nftables.d/bans.nft` (mode 0600), which `nftables.conf` includes, and
+adds it to the `banned_v4` or `banned_v6` set with a timeout. It checks the
+whole ruleset with `nft -c` before it changes the file or the loaded set, so
+a refused change leaves both as they were. The kernel
 lifts a ban at its timeout. After a reload or reboot the line is loaded again
 with the timeout it was written with, so `oxfer-relay-ban.timer` runs
 `oxfer-relay-ban prune` hourly to delete lines past their expiry, and their

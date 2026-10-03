@@ -8,7 +8,10 @@
 #   sh render.sh           rewrite both files
 #   sh render.sh --check   exit 1 if either is stale. It decodes every
 #                          embedded file and compares it with its source, so
-#                          another gzip build does not count as drift.
+#                          another gzip build does not count as drift. It also
+#                          fails if fly/entrypoint.sh's default RUST_LOG differs
+#                          from iroh-relay.service's, which "What is logged"
+#                          in README.md relies on for both variants.
 # Edit the sources and re-render; never edit the derived files by hand.
 set -eu
 cd "$(dirname -- "$0")"
@@ -102,6 +105,12 @@ if [ "${1:-}" = "--check" ]; then
 		stale=1
 	fi
 	cmp -s config.toml fly/config.toml || { echo "fly/config.toml is stale" >&2; stale=1; }
+	unit_log=$(sed -n 's/^Environment="RUST_LOG=\(.*\)"$/\1/p' iroh-relay.service)
+	fly_log=$(sed -n 's/^export RUST_LOG="\${RUST_LOG:-\(.*\)}"$/\1/p' fly/entrypoint.sh)
+	if [ -z "$unit_log" ] || [ "$unit_log" != "$fly_log" ]; then
+		echo "fly/entrypoint.sh's RUST_LOG default differs from iroh-relay.service's; keep them equal by hand" >&2
+		exit 1
+	fi
 	if [ "$stale" -ne 0 ]; then
 		echo "run: sh render.sh" >&2
 		exit 1

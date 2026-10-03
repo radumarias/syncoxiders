@@ -5,7 +5,13 @@
 // cache-first shell would shadow every later `trunk serve`/`trunk build`
 // forever. See CLAUDE.md and design §4.10.1.
 const cacheName = 'oxfer-v3';
-const shellSuffixes = ['/', '/index.html', '/p2p-transfer.js', '/p2p-transfer_bg.wasm', '/theme.html'];
+// index.html and theme.html carry no inline script (Trunk.toml inject_scripts =
+// false), so their loader scripts belong to the shell too: without them a cached
+// page could not start when the network fails.
+const shellSuffixes = [
+  '/', '/index.html', '/p2p-transfer.js', '/p2p-transfer_bg.wasm', '/theme.html',
+  '/assets/boot.js', '/assets/app-init.js', '/assets/theme-lab.js',
+];
 
 /* Take over immediately; activate() clears stale caches before this worker
    starts controlling pages. */

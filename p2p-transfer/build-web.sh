@@ -77,10 +77,12 @@ for page in theme.html privacy.html terms.html abuse.html; do
     cmp "$page" "dist/$page"
 done
 # Trunk.toml inject_scripts = false: the page must not carry an inline loader.
-if grep -q -E '<script( type="module")?>' dist/index.html; then
+# Any <script> without a src attribute counts, whatever else it carries
+# (a nonce, type or defer).
+node -e 'if (/<script\b(?![^>]*\ssrc\s*=)[^>]*>/i.test(require("fs").readFileSync(process.argv[1], "utf8"))) process.exit(1)' dist/index.html || {
     echo "dist/index.html contains an inline <script>; the CSP would block it." >&2
     exit 1
-fi
+}
 
 # BEGIN legal-page guards (tests/web-pages.test.mjs runs this block against
 # scratch dist copies)

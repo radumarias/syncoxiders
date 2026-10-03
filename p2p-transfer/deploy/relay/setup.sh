@@ -54,6 +54,9 @@ install_file() {
 # DENYLIST (one per line, # comments) in place of access = "everyone".
 # Returns 0 when CONF changed; keeps the old one as CONF.prev.
 install_relay_config() {
+	# A CONF.prev left by a run that stopped before check_relay is older than
+	# CONF; check_relay must never put that one back.
+	rm -f "$CONF.prev"
 	ids=""
 	if [ -f "$DENYLIST" ]; then
 		ids=$(awk '{ sub(/#.*/, ""); for (i = 1; i <= NF; i++) print tolower($i) }' "$DENYLIST" | sort -u)
@@ -61,10 +64,14 @@ install_relay_config() {
 	if [ -z "$ids" ]; then
 		cp "$KIT_DIR/config.toml" "$WORK/relay.toml"
 	else
+		set -f
 		for id in $ids; do
+			# The entry is not repeated: a pasted share link carries its
+			# capability, which must not reach a terminal or a log.
 			printf '%s\n' "$id" | grep -Eqx '[0-9a-f]{64}|[a-z2-7]{52}' ||
-				die "$DENYLIST: not an endpoint ID: $id"
+				die "$DENYLIST line $(grep -n -i -F -- "$id" "$DENYLIST" | head -n 1 | cut -d: -f1): not an endpoint ID (64 hex digits, as ticket-endpoint-id prints); entry not shown"
 		done
+		set +f
 		grep -qx 'access = "everyone"' "$KIT_DIR/config.toml" ||
 			die "config.toml lacks the line: access = \"everyone\""
 		{
