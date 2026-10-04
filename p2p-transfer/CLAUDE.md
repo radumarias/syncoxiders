@@ -509,7 +509,10 @@ suite that check.sh runs" in `package-cf-output.test.mjs` fails when
 `check.sh` or `p2p-web-checks` lacks the `node --test tests/*.test.mjs` or
 `render.sh --check` line, when `p2p-web-checks` uses a Rust toolchain, or
 when `check.sh` or `p2p-browser-integration` lacks the `wasm-pack test` line
-of a `tests/*_wasm.rs` suite. A new node suite needs no new line; a new
-browser suite goes into both files. CI does not run `check.sh`'s fmt,
-clippy, wasm32 check, Trunk build or `--check-dist`; run `./check.sh`
-locally.
+of a `tests/*_wasm.rs` suite, and when `p2p-web-release-build` stops running
+`bash build-web.sh` for n0 and for `https://relay.oxfer.app` with
+`OXFER_ALLOW_PLACEHOLDERS=1`, or gains a deploy step. That job runs the
+deploy job's release build (Trunk, `wasm-opt`, `--check-dist`, packaging) on
+every pull request and publishes nothing. A new node suite needs no new
+line; a new browser suite goes into both files. CI does not run `check.sh`'s
+fmt, clippy or wasm32 check; run `./check.sh` locally.

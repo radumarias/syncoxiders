@@ -771,6 +771,15 @@ test("CI runs the node suites, the relay kit check and every browser suite that 
         assert.ok(check.includes(command), `check.sh runs ${command}`);
         assert.ok(runs(browser, command), `ci.yml p2p-browser-integration runs ${command}`);
     }
+    // The release web build runs on every PR for n0 and for the Oxfer relay,
+    // with placeholders allowed, and never deploys.
+    const release = workflowJob(ci, "p2p-web-release-build");
+    assert.ok(runs(release, "bash build-web.sh"), "ci.yml p2p-web-release-build runs bash build-web.sh");
+    assert.match(release, /^\s+OXFER_ALLOW_PLACEHOLDERS: "1"$/m);
+    assert.match(release, /^\s+P2P_RELAY_URL: \$\{\{ matrix\.relay \}\}$/m);
+    assert.match(release, /^\s+relay: ""$/m, "one build uses n0's relays");
+    assert.match(release, /^\s+relay: https:\/\/relay\.oxfer\.app$/m, "one build uses the Oxfer relay");
+    assert.doesNotMatch(release, /deploy|CLOUDFLARE_|secrets\./, "the release build job never deploys");
 });
 
 test("trunkCopyFiles reads Trunk copy-file links and where Trunk puts each file", () => {

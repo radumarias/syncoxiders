@@ -512,7 +512,8 @@ list; `verify-deployment.mjs` checks them. The incident procedure is in
       account.
 - [ ] Protect `main` with a branch protection rule or ruleset that requires the
       `ci` workflow's checks (`ci (ubuntu-latest)`, `ci (macos-latest)`,
-      `ci (windows-latest)`, `p2p-web-checks`, `p2p-browser-integration`).
+      `ci (windows-latest)`, `p2p-web-checks`, `p2p-browser-integration`,
+      `p2p-web-release-build (n0)`, `p2p-web-release-build (oxfer-relay)`).
       Turn on "Do not allow bypassing" if the rule should bind administrators
       too.
 - [ ] `CLOUDFLARE_API_TOKEN` is an Account API token made from the **Edit
@@ -599,8 +600,8 @@ was turned on or off and why in the private records
 ## CI checks
 
 The `ci` workflow ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml))
-runs on pushes and pull requests to `main` and `release`. Two of its jobs run
-the same commands as `check.sh`:
+runs on pushes and pull requests to `main` and `release`. Three of its jobs
+run the same commands as `check.sh` or the deploy job:
 
 - `p2p-web-checks` needs no Rust toolchain, so it does not wait for the
   `wasm-pack` install. It runs `node --test tests/*.test.mjs`, every node
@@ -608,18 +609,27 @@ the same commands as `check.sh`:
   and `sh deploy/relay/render.sh --check`.
 - `p2p-browser-integration` installs nightly Rust and `wasm-pack` and runs
   the three Firefox tests `webrtc_wasm`, `relay_wasm` and `resume_wasm`.
+- `p2p-web-release-build` runs `bash build-web.sh`, the deploy job's release
+  build: the Trunk release build with `wasm-opt`, the 25 MiB asset limit,
+  `--check-dist` and cf packaging. It builds twice in parallel, for n0's
+  relays (`P2P_RELAY_URL` empty) and for `https://relay.oxfer.app`, because
+  the value is compiled into the wasm and rendered into the CSP. It sets
+  `OXFER_ALLOW_PLACEHOLDERS=1`, which only turns the legal-page guards into
+  warnings, and has no deploy step, so it publishes nothing.
 
 The test "CI runs the node suites, the relay kit check and every browser
 suite that check.sh runs" in `tests/package-cf-output.test.mjs` fails when
 `check.sh` or `p2p-web-checks` lacks the `node --test` or `render.sh --check`
 line, when `p2p-web-checks` uses a Rust toolchain, or when `check.sh` or
 `p2p-browser-integration` lacks the `wasm-pack test` line of a
-`tests/*_wasm.rs` suite. A new node suite needs no new line.
+`tests/*_wasm.rs` suite. It also fails when `p2p-web-release-build` stops
+running `bash build-web.sh` for both relay values with placeholders allowed,
+or gains a deploy step. A new node suite needs no new line.
 
-CI does not run `check.sh`'s fmt, clippy, wasm32 check, Trunk build or
-`--check-dist`. The deploy job's `build-web.sh` runs the release Trunk build
-and `--check-dist`, but only once the legal pages are filled: until then it
-stops at the placeholder guard, before the build. Run `./check.sh` locally.
+CI does not run `check.sh`'s fmt, clippy or wasm32 check; run `./check.sh`
+locally for those. The release build and `--check-dist` run on every pull
+request in `p2p-web-release-build`, so they are covered even while the
+deploy job stops at the placeholder guard before its build.
 
 ## Automatic deploys from `main`
 
