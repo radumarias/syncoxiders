@@ -49,6 +49,64 @@ jobs:
         name: syncoxiders_${{ matrix.runner }}
         path: target/release/syncoxiders.exe
 
+  # The node suites and the relay kit check need no Rust toolchain, so they
+  # run apart from the browser job and do not wait for its wasm-pack install.
+  # tests/package-cf-output.test.mjs fails if these two jobs miss a node,
+  # wasm-pack or render.sh line of p2p-transfer/check.sh.
+  p2p-web-checks:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    # Every node suite in p2p-transfer/tests: OPFS worker recovery, page
+    # scripts, the relay list parser, CSP rendering and packaging, the dist
+    # and legal-page guards, deployment header checks and the CSP rules for
+    # served pages.
+    - name: Test web scripts, headers and pages
+      working-directory: p2p-transfer
+      run: node --test tests/*.test.mjs
+
+    - name: Check the relay kit's generated files
+      working-directory: p2p-transfer
+      run: sh deploy/relay/render.sh --check
+
+  # The release web build that the oxfer-web deploy job runs (build-web.sh:
+  # release Trunk build with wasm-opt, the 25 MiB asset limit, --check-dist
+  # and cf packaging), so a change that breaks only the packaged site fails
+  # here instead of at the first real deploy. Built for n0's relays and for
+  # the Oxfer relay, because P2P_RELAY_URL is compiled into the wasm and
+  # rendered into the CSP. OXFER_ALLOW_PLACEHOLDERS only turns the legal-page
+  # guards into warnings; this job has no deploy step and publishes nothing.
+  p2p-web-release-build:
+    name: p2p-web-release-build (${{ matrix.relay-name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - relay-name: n0
+          relay: ""
+        - relay-name: oxfer-relay
+          relay: https://relay.oxfer.app
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Build and check the browser app
+      working-directory: p2p-transfer
+      env:
+        OXFER_ALLOW_PLACEHOLDERS: "1"
+        P2P_RELAY_URL: ${{ matrix.relay }}
+      run: bash build-web.sh
+
   p2p-browser-integration:
     runs-on: ubuntu-latest
     steps:
@@ -60,13 +118,13 @@ jobs:
     - name: Install wasm-pack
       run: cargo install wasm-pack --version 0.13.1 --locked
 
-    - name: Test OPFS worker recovery
-      working-directory: p2p-transfer
-      run: node --test tests/resume_worker.test.mjs
-
     - name: Test WebRTC in Firefox
       working-directory: p2p-transfer
       run: wasm-pack test --headless --firefox -- --test webrtc_wasm
+
+    - name: Test default relay map in Firefox
+      working-directory: p2p-transfer
+      run: wasm-pack test --headless --firefox -- --test relay_wasm
 
     - name: Test persistent resume in Firefox
       working-directory: p2p-transfer

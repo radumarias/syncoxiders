@@ -3,6 +3,10 @@
 // Data becomes acknowledged only after:
 //   write -> flush OPFS -> commit IndexedDB checkpoint.
 // Recovery truncates any tail beyond that checkpoint before hashing it.
+//
+// The IndexedDB database and the OPFS directory (both `oxfer-resume`) are
+// created only by `prepare`, when the receiver has ticked "Keep a copy" and
+// starts saving. Listing, exporting and deleting never create either.
 
 'use strict';
 
@@ -65,35 +69,67 @@ function validateGroup(group, requested) {
   }
 }
 
-function database() {
+// Opens the metadata database. `mode` says what to do when it is missing:
+//   'create'   creates it. Only saving uses this (see `putGroup`).
+//   'probe'    resolves null and creates nothing: listing, exporting, deleting
+//              and `prepare`'s first read. It asks indexedDB.databases() first,
+//              because opening a missing database leaves its name on disk even
+//              when the open is undone.
+//   'existing' resolves null and creates nothing, without that listing: the
+//              write path, where `prepare` has already found or created it.
+// Where databases() is unavailable, or another tab deleted the database
+// meanwhile, the non-creating modes abort the version-change transaction that
+// would create it.
+async function database(mode) {
+  if (mode === 'probe' && typeof indexedDB.databases === 'function') {
+    const existing = await indexedDB.databases();
+    if (!existing.some(info => info.name === DB_NAME)) return null;
+  }
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => {
+    let missing = false;
+    request.onupgradeneeded = event => {
+      if (mode !== 'create' && event.oldVersion === 0) {
+        missing = true;
+        request.transaction.abort();
+        return;
+      }
       if (!request.result.objectStoreNames.contains(STORE)) {
         request.result.createObjectStore(STORE, { keyPath: 'id' });
       }
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('could not open resume metadata'));
+    request.onerror = event => {
+      if (missing) {
+        event.preventDefault();
+        resolve(null);
+        return;
+      }
+      reject(request.error || new Error('could not open resume metadata'));
+    };
   });
 }
 
-async function transact(mode, body) {
-  const db = await database();
+// Runs the one request `body` makes on the store and resolves with its result
+// once the transaction commits. A database that `database(open)` finds missing
+// holds nothing: `body` does not run and this resolves undefined.
+async function transact(open, access, body) {
+  const db = await database(open);
+  if (!db) return undefined;
   try {
     return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, mode);
-      const store = tx.objectStore(STORE);
-      let result;
+      const tx = db.transaction(STORE, access);
+      let request;
       try {
-        result = body(store);
+        request = body(tx.objectStore(STORE));
       } catch (error) {
         tx.abort();
         reject(error);
         return;
       }
-      tx.oncomplete = () => resolve(result);
-      tx.onerror = () => reject(tx.error || new Error('resume metadata transaction failed'));
+      tx.oncomplete = () => resolve(request.result);
+      tx.onerror = event =>
+        reject(event?.target?.error || tx.error || new Error('resume metadata transaction failed'));
       tx.onabort = () => reject(tx.error || new Error('resume metadata transaction was aborted'));
     });
   } finally {
@@ -101,31 +137,25 @@ async function transact(mode, body) {
   }
 }
 
-async function getGroup(id) {
-  const db = await database();
-  try {
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readonly');
-      const request = tx.objectStore(STORE).get(id);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error || new Error('could not read resume metadata'));
-    });
-  } finally {
-    db.close();
-  }
+// `open` is 'probe' unless `prepare` has already found or created the database.
+async function getGroup(id, open = 'probe') {
+  return transact(open, 'readonly', store => store.get(id));
 }
 
+// Saving is the only path that creates the database (see `prepare`).
 async function putGroup(group) {
   group.updated = Date.now();
-  await transact('readwrite', store => store.put(group));
+  await transact('create', 'readwrite', store => store.put(group));
 }
 
-async function rootDirectory() {
+// The OPFS directory that holds kept copies. Only saving passes `create`;
+// without it a missing directory rejects with NotFoundError.
+async function rootDirectory(create) {
   if (!navigator.storage?.getDirectory) {
     throw new Error('this browser does not support resumable file storage');
   }
   const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle(ROOT, { create: true });
+  return root.getDirectoryHandle(ROOT, { create });
 }
 
 async function call(handle, method, ...args) {
@@ -159,7 +189,7 @@ async function prepare(message) {
 
   const opened = [];
   try {
-    const base = await rootDirectory();
+    const base = await rootDirectory(true);
     const directory = await base.getDirectoryHandle(message.id, { create: true });
     for (let index = 0; index < group.files.length; index++) {
       const file = await directory.getFileHandle(`${index}.part`, { create: true });
@@ -179,7 +209,7 @@ async function prepare(message) {
     // checkpoint read before lock acquisition was only sufficient to locate those files:
     // another tab may have advanced it while this worker waited. Reread it now, then perform
     // recovery from this authoritative snapshot.
-    group = await getGroup(message.id);
+    group = await getGroup(message.id, 'existing');
     validateGroup(group, requested);
     for (const entry of opened) {
       const meta = group.files[entry.index];
@@ -243,7 +273,7 @@ async function write(message) {
   }
   await call(entry.access, 'flush');
   const next = entry.written + consumed;
-  const group = await getGroup(entry.id);
+  const group = await getGroup(entry.id, 'existing');
   if (!group || group.files[entry.index].written !== String(entry.written)) {
     throw new Error('resume checkpoint changed unexpectedly');
   }
@@ -259,7 +289,7 @@ async function finish(message) {
   if (entry.written !== entry.size) throw new Error('download is incomplete');
   await call(entry.access, 'flush');
   await closeEntry(entry);
-  const group = await getGroup(message.id);
+  const group = await getGroup(message.id, 'existing');
   if (!group || group.files[message.index].written !== group.files[message.index].size) {
     throw new Error('resume checkpoint changed unexpectedly');
   }
@@ -272,32 +302,23 @@ async function release(message) {
 }
 
 async function list() {
-  const db = await database();
-  try {
-    const groups = await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readonly');
-      const request = tx.objectStore(STORE).getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error || new Error('could not list resume metadata'));
-    });
-    return groups.sort((a, b) => b.updated - a.updated);
-  } finally {
-    db.close();
-  }
+  const groups = await transact('probe', 'readonly', store => store.getAll());
+  return (groups ?? []).sort((a, b) => b.updated - a.updated);
 }
 
+// Deleting a copy that does not exist is a no-op and creates nothing.
 async function discard(message) {
   if (!validId(message.id)) throw new Error('invalid resumable transfer id');
   if ([...openFiles.values()].some(entry => entry.id === message.id)) {
     throw new Error('cancel or close the active transfer before deleting this copy');
   }
-  const base = await rootDirectory();
   try {
+    const base = await rootDirectory(false);
     await base.removeEntry(message.id, { recursive: true });
   } catch (error) {
     if (error?.name !== 'NotFoundError') throw error;
   }
-  await transact('readwrite', store => store.delete(message.id));
+  await transact('probe', 'readwrite', store => store.delete(message.id));
 }
 
 async function exportFile(message) {

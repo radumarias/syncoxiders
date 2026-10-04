@@ -1,7 +1,7 @@
 //! Browser-only, user-initiated reachability report. No tickets, capabilities,
 //! filenames, IP addresses or application logs are included in the copied report.
 
-use crate::node::{DiagnosticNode, RelayChoice};
+use crate::node::{relay_probe_urls, DiagnosticNode, RelayChoice};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(module = "/assets/diagnostics.js")]
@@ -11,32 +11,12 @@ extern "C" {
 }
 
 pub async fn collect() -> String {
-    // The default relay hosts are the iroh 1.1 N0 preset. For a custom relay,
-    // probe only that configured endpoint instead. This tests browser WSS access,
-    // not peer dial, relay authentication or the sender's network.
+    // n0's presets probe the iroh 1.1 production relays; custom relays probe each
+    // configured relay, rebuilt without credentials, path or query so a copied report
+    // never carries a private relay token. This tests browser WSS access, not peer dial,
+    // relay authentication or the sender's network.
     let relay = RelayChoice::from_env();
-    let urls = match &relay {
-        RelayChoice::Custom(url) => {
-            // Reconstruct without credentials, path or query parameters: a
-            // copied report must never include a private relay auth token.
-            let scheme = if url.scheme() == "http" { "ws" } else { "wss" };
-            let host = url.host_str().unwrap_or_default();
-            let port = url
-                .port()
-                .map(|port| format!(":{port}"))
-                .unwrap_or_default();
-            format!("{scheme}://{host}{port}/relay")
-        }
-        RelayChoice::N0 | RelayChoice::N0WithoutTrailingDots => [
-            "wss://euc1-1.relay.n0.iroh.link/relay",
-            "wss://use1-1.relay.n0.iroh.link/relay",
-            "wss://usw1-1.relay.n0.iroh.link/relay",
-            "wss://aps1-1.relay.n0.iroh.link/relay",
-            "wss://euc1-1.relay.n0.iroh.link./relay",
-        ]
-        .join(","),
-        RelayChoice::None => String::new(),
-    };
+    let urls = relay_probe_urls(&relay).join(",");
     let checks = match browser_diagnostics(&urls).await {
         Ok(value) => value.as_string().unwrap_or_else(|| "No result".into()),
         Err(_) => "Browser diagnostics failed to start".into(),
@@ -45,6 +25,11 @@ pub async fn collect() -> String {
     // iroh endpoint startup and relay registration as a real share. Never put
     // the generated ticket/key in the report.
     let compare_default = relay == RelayChoice::N0WithoutTrailingDots;
+    let endpoint_label = match &relay {
+        RelayChoice::Custom(_) => "browser, configured relays",
+        RelayChoice::None => "browser, no relay",
+        RelayChoice::N0 | RelayChoice::N0WithoutTrailingDots => "browser, DNS dots removed",
+    };
     let endpoint = match DiagnosticNode::bind(relay).await {
         Ok(node) => {
             let online = node.ticket().await.is_ok();
@@ -77,7 +62,7 @@ pub async fn collect() -> String {
         "not run (browser relay succeeded or a custom relay is configured)"
     };
     format!(
-        "Oxfer {}\n{checks}\nIroh endpoint (browser, DNS dots removed): {endpoint}\nIroh endpoint (legacy dotted DNS): {alternate}",
+        "Oxfer {}\n{checks}\nIroh endpoint ({endpoint_label}): {endpoint}\nIroh endpoint (legacy dotted DNS): {alternate}",
         crate::BUILD_LABEL
     )
 }

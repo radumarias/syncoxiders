@@ -1,0 +1,135 @@
+#!/bin/sh
+# IP bans for the Oxfer relay host that survive reboots, nftables reloads and
+# setup.sh reruns. Installed as /usr/local/sbin/oxfer-relay-ban by setup.sh.
+#   oxfer-relay-ban add ADDRESS [DAYS]  ban now and persist for DAYS days
+#                                       (1 to 365, default 30)
+#   oxfer-relay-ban del ADDRESS         lift now and persist
+#   oxfer-relay-ban list                bans and their expiry (UTC)
+#   oxfer-relay-ban prune               lift expired bans (hourly timer)
+# ADDRESS: an IPv4 or IPv6 address or prefix, e.g. 2001:db8:1:2::/64. Host
+# names and anything else nft would read as more than one address are refused.
+# del needs the spelling list shows: lines are matched as text.
+# Every ban expires. To extend one, run add again with the address and a
+# number of days; the new expiry counts from now.
+#
+# Bans are lines in /etc/nftables.d/bans.nft, which /etc/nftables.conf
+# includes, each with its absolute expiry:
+#   add element inet oxfer_relay banned_v4 { 203.0.113.7 timeout 2592000s } # expires 1793361600
+# The kernel lifts a ban at its timeout while the ruleset stays loaded. A
+# reload or reboot loads the line again with the timeout it was written with,
+# so the hourly prune deletes lines past their expiry, and their elements. A
+# ban line without an expiry, which this tool never writes, counts as expired.
+# prune prints no addresses, so none reach the journal.
+set -eu
+FILE=/etc/nftables.d/bans.nft
+DIR=${FILE%/*}
+MAX_DAYS=365
+die() { printf 'oxfer-relay-ban: %s\n' "$*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || die "run as root"
+exec 9>/run/oxfer-relay-ban.lock
+flock 9
+
+set_of() { case "$1" in *:*) echo banned_v6 ;; *) echo banned_v4 ;; esac; }
+
+# address ARG: ARG in lower case if it is an address or prefix literal.
+# A host name is refused: nft would resolve it each time it loads bans.nft,
+# which fails at boot before the network is up and leaves the host with no
+# ruleset at all. So are braces, commas, semicolons and spaces, which nft
+# reads as further elements or commands that bans.nft would then keep.
+address() {
+	v=$(printf '%s' "$1" | tr 'A-F' 'a-f')
+	case "$v" in
+	'' | /* | */ | */*/*) false ;;
+	*:*) case "$v" in *[!0-9a-f:./]*) false ;; esac ;;
+	*) case "$v" in *[!0-9./]*) false ;; esac ;;
+	esac || die "ADDRESS must be an IPv4 or IPv6 address or prefix, such as 203.0.113.7 or 2001:db8:1:2::/64"
+	printf '%s\n' "$v"
+}
+utc() { date -u -d "@$1" '+%Y-%m-%d %H:%M UTC'; }
+
+# Ban lines of FILE as "set address expiry"; a line without an expiry gets 0.
+entries() {
+	[ -f "$FILE" ] || return 0
+	awk '$1 == "add" && $2 == "element" && $4 == "oxfer_relay" && $5 ~ /^banned_v[46]$/ && $6 == "{" {
+		print $5, $7, (($8 == "timeout" && $12 == "expires" && $13 ~ /^[0-9]+$/) ? $13 : 0)
+	}' "$FILE"
+}
+
+# rewrite "ADDRESSES TO DROP" "LINE TO ADD": replace FILE atomically, then
+# check the whole ruleset with it and roll back if nft rejects it.
+rewrite() {
+	install -d -m 0755 "$DIR"
+	[ -f "$FILE" ] || printf '# Oxfer relay IP bans; edit with oxfer-relay-ban.\n' >"$FILE"
+	awk -v drop="$1" 'BEGIN { n = split(drop, a, " "); for (i = 1; i <= n; i++) skip[a[i]] = 1 }
+		!($1 == "add" && $2 == "element" && $4 == "oxfer_relay" && ($7 in skip))' \
+		"$FILE" >"$DIR/.bans.nft.new"
+	[ -z "$2" ] || printf '%s\n' "$2" >>"$DIR/.bans.nft.new"
+	chmod 0600 "$DIR/.bans.nft.new"
+	cp -p "$FILE" "$DIR/.bans.nft.old"
+	mv -f "$DIR/.bans.nft.new" "$FILE"
+	if ! out=$(nft -c -f /etc/nftables.conf 2>&1); then
+		mv -f "$DIR/.bans.nft.old" "$FILE"
+		[ -n "${QUIET:-}" ] || printf '%s\n' "$out" >&2
+		die "the ruleset does not validate with this change; $FILE left as it was"
+	fi
+	rm -f "$DIR/.bans.nft.old"
+}
+
+now=$(date +%s)
+case "${1:-}" in
+add)
+	[ $# -ge 2 ] && [ $# -le 3 ] || die "usage: oxfer-relay-ban add ADDRESS [DAYS]"
+	a=$(address "$2")
+	s=$(set_of "$a")
+	days=${3:-30}
+	case "$days" in
+	[1-9] | [1-9][0-9] | [1-9][0-9][0-9]) [ "$days" -le "$MAX_DAYS" ] ;;
+	*) false ;;
+	esac || die "DAYS must be a whole number from 1 to $MAX_DAYS; every ban expires"
+	nft -t list table inet oxfer_relay >/dev/null 2>&1 || die "firewall not loaded; run setup.sh"
+	secs=$((days * 86400))
+	# Persist first: rewrite checks the whole ruleset with the new line, so a
+	# ban that would not load is refused before the live set changes.
+	rewrite "$a" "add element inet oxfer_relay $s { $a timeout ${secs}s } # expires $((now + secs))"
+	# Deleting first lets a repeated add set a new expiry.
+	nft delete element inet oxfer_relay "$s" "{ $a }" 2>/dev/null || true
+	nft add element inet oxfer_relay "$s" "{ $a timeout ${secs}s }" ||
+		die "nft refused the address in the loaded ruleset; $FILE keeps the ban, which applies at the next reload"
+	echo "banned until $(utc $((now + secs)))"
+	;;
+del)
+	[ $# -eq 2 ] || die "usage: oxfer-relay-ban del ADDRESS"
+	a=$(address "$2")
+	persisted=$(entries | awk -v a="$a" '$2 == a { print; exit }')
+	# Persist first, so a ruleset that no longer validates changes nothing.
+	rewrite "$a" ""
+	if nft delete element inet oxfer_relay "$(set_of "$a")" "{ $a }" 2>/dev/null; then live=1; else live=0; fi
+	if [ -n "$persisted" ]; then
+		[ "$live" -eq 1 ] || echo "was not in the loaded ruleset"
+		echo "lifted"
+	elif [ "$live" -eq 1 ]; then
+		echo "lifted in the loaded ruleset, but $FILE has no line spelled $a; if list shows it under another spelling, run del with that one, or it returns at the next reload" >&2
+		exit 1
+	else
+		die "no ban for $a in $FILE or the loaded ruleset; use the spelling list shows"
+	fi
+	;;
+list)
+	entries | while read -r _ a e; do
+		if [ "$e" = 0 ]; then u="no expiry; the next prune lifts it"; else u=$(utc "$e"); fi
+		printf '%-43s %s\n' "$a" "$u"
+	done
+	;;
+prune)
+	QUIET=1
+	old=$(entries | awk -v now="$now" '$3 <= now')
+	[ -n "$old" ] || exit 0
+	# Persist first, so a ruleset that no longer validates lifts nothing.
+	rewrite "$(printf '%s\n' "$old" | awk '{ print $2 }')" ""
+	printf '%s\n' "$old" | while read -r s a _; do
+		nft delete element inet oxfer_relay "$s" "{ $a }" 2>/dev/null || true
+	done
+	echo "lifted $(printf '%s\n' "$old" | wc -l) expired ban(s)"
+	;;
+*) die "usage: oxfer-relay-ban add|del|list|prune (details at the top of $0)" ;;
+esac

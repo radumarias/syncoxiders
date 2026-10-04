@@ -1,0 +1,12 @@
+# Hourly check for expired Oxfer relay IP bans; after downtime it runs at
+# boot (Persistent). Installed as /etc/systemd/system/oxfer-relay-ban.timer.
+[Unit]
+Description=Lift expired Oxfer relay IP bans hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

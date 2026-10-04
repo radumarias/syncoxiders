@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<!--
+  Oxfer terms of use, served at /terms.
+
+  OWNER CHECKLIST. Replace each placeholder token below everywhere it appears
+  in this file. They are written here without their double square brackets, so
+  this list does not trip the placeholder check in build-web.sh, which refuses
+  to deploy while any token remains in privacy.html, terms.html or abuse.html.
+
+    OPERATOR_NAME           Legal name of the person or company that runs Oxfer.
+    OPERATOR_ADDRESS        Postal address: domicile (natural person) or
+                            registered office (company).
+    OPERATOR_REGISTRATION   Trade-register number and tax ID (company only).
+                            For a natural person, delete the whole line marked
+                            "delete for a natural person".
+    EFFECTIVE_DATE          Date this version takes effect, e.g. 1 November 2026.
+
+  These terms describe the VPS variant of the relay kit in deploy/relay/.
+  Sections 5.2, 7.1 and 7.3 (IP address blocks) are false on the Fly.io
+  variant; see "RELAY VARIANT" in privacy.html before using it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="The rules for using Oxfer, what the operator can and cannot do, and which law applies.">
+<title>Terms of use · Oxfer</title>
+<link rel="stylesheet" href="assets/legal.css">
+<link rel="icon" type="image/svg+xml" href="assets/oxfer-favicon-light.svg">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+    <a class="brand" href="/">
+        <picture>
+            <source srcset="assets/oxfer-wordmark-dark.svg" media="(prefers-color-scheme: dark)">
+            <img src="assets/oxfer-wordmark-light.svg" alt="Oxfer home" width="179" height="28">
+        </picture>
+    </a>
+    <a class="back-link" href="/">Back to the app</a>
+</header>
+
+<nav class="legal-nav" aria-label="Legal pages">
+    <ul>
+        <li><a href="/privacy">Privacy</a></li>
+        <li><a href="/terms" aria-current="page">Terms of use</a></li>
+        <li><a href="/abuse">Abuse and safety</a></li>
+    </ul>
+</nav>
+
+<main id="main">
+<article>
+    <h1>Terms of use</h1>
+    <p class="meta">Last updated: [[EFFECTIVE_DATE]]</p>
+
+    <section class="summary" aria-labelledby="summary-title">
+        <h2 id="summary-title">In short</h2>
+        <ul>
+            <li>Oxfer is a free tool for sending files directly from one device to another. We do not store your files.</li>
+            <li>Only send content you have the right to share and that is legal where you and the recipient are.</li>
+            <li>Never use Oxfer for child sexual abuse material, intimate images shared without consent, terrorist content, malware, copyright infringement or harassment.</li>
+            <li>The sender must keep Oxfer open until the transfer ends. Anyone with the complete link can download while the sender is sharing.</li>
+            <li>We cannot see, recover or delete files. To stop abuse, we can block access to our relay and cooperate with lawful requests.</li>
+            <li>Oxfer is provided free and as is. Romanian law applies, and the mandatory consumer rights of your country stay in place.</li>
+        </ul>
+    </section>
+
+    <nav class="toc" aria-labelledby="toc-title">
+        <h2 id="toc-title">Contents</h2>
+        <ol>
+            <li><a href="#about">1. About these terms</a></li>
+            <li><a href="#service">2. What Oxfer is</a></li>
+            <li><a href="#who">3. Who may use Oxfer</a></li>
+            <li><a href="#acceptable-use">4. Acceptable use</a></li>
+            <li><a href="#illegal-content">5. How we protect people from illegal content</a></li>
+            <li><a href="#reports">6. Reports, complaints and appeals</a></li>
+            <li><a href="#can-cannot">7. What we can and cannot do about abuse</a></li>
+            <li><a href="#markets">8. Where Oxfer is offered</a></li>
+            <li><a href="#sanctions">9. Sanctions and encryption rules</a></li>
+            <li><a href="#your-content">10. Your content and your responsibility</a></li>
+            <li><a href="#availability">11. Availability and changes to the service</a></li>
+            <li><a href="#warranty">12. No warranty</a></li>
+            <li><a href="#liability">13. Liability</a></li>
+            <li><a href="#changes">14. Changes to these terms</a></li>
+            <li><a href="#law">15. Governing law and disputes</a></li>
+            <li><a href="#contact">16. Contact</a></li>
+        </ol>
+    </nav>
+
+    <section id="about" aria-labelledby="about-title">
+        <h2 id="about-title">1. About these terms</h2>
+        <p>These terms apply to your use of Oxfer: the web app at oxfer.app, the Oxfer relay and the related pages. Oxfer is run by the operator named below ("we", "us"). By using Oxfer you agree to these terms. If you do not agree, do not use Oxfer.</p>
+        <address class="identity">
+            <dl>
+                <dt>Operator</dt>
+                <dd>[[OPERATOR_NAME]]</dd>
+                <dt>Postal address</dt>
+                <dd>[[OPERATOR_ADDRESS]]</dd>
+                <!-- delete for a natural person: remove the next line -->
+                <dt>Registration</dt><dd>[[OPERATOR_REGISTRATION]]</dd>
+                <dt>Email</dt>
+                <dd><a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a> for reports, complaints and authorities; <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a> for privacy</dd>
+                <dt>Website</dt>
+                <dd>oxfer.app</dd>
+            </dl>
+        </address>
+        <p>Our <a href="/privacy">privacy notice</a> explains how personal data is handled. Our <a href="/abuse">abuse and safety page</a> explains how to report problems.</p>
+    </section>
+
+    <section id="service" aria-labelledby="service-title">
+        <h2 id="service-title">2. What Oxfer is</h2>
+        <ul>
+            <li>Oxfer sends files from the sender's device to the recipient's device. When you share, the app creates a link. The recipient opens the link and the two devices connect.</li>
+            <li>Files are encrypted between the two devices. When the devices cannot connect directly, the encrypted data passes through our relay, which cannot read it.</li>
+            <li>Oxfer does not store files on a server. The sender must keep Oxfer open and connected until the recipient has finished downloading. If the sender closes the app or loses the connection, the transfer stops.</li>
+            <li>The link works like a key. Anyone who has the complete link can download the shared files for as long as the sender keeps sharing. Only the sender can end a share, and ending it ends it for everyone who has the link.</li>
+            <li>We cannot see your files, recover them if they are lost, or delete them from anyone's device.</li>
+            <li>Oxfer is free. There are no accounts.</li>
+            <li>The Oxfer software is open source under the MIT License or the Apache License 2.0, at your choice. Those licences govern the source code. These terms govern the service we run at oxfer.app and relay.oxfer.app.</li>
+        </ul>
+    </section>
+
+    <section id="who" aria-labelledby="who-title">
+        <h2 id="who-title">3. Who may use Oxfer</h2>
+        <ul>
+            <li>You must be at least 13 years old to use Oxfer.</li>
+            <li>If you are younger than the age at which you can agree to these terms yourself where you live (for example 16 in some EU countries), use Oxfer only with the permission of a parent or guardian.</li>
+            <li>Oxfer is a general-purpose tool. It is not directed at children or adolescents, and it does no profiling or advertising.</li>
+            <li>You must not use Oxfer if the law that applies to you forbids it, including sanctions laws (<a href="#sanctions">section 9</a>).</li>
+        </ul>
+    </section>
+
+    <section id="acceptable-use" aria-labelledby="acceptable-use-title">
+        <h2 id="acceptable-use-title">4. Acceptable use</h2>
+        <p>You must not use Oxfer to send, receive, offer or request:</p>
+        <ul>
+            <li>child sexual abuse material, or any content that sexualises children;</li>
+            <li>intimate or sexual images or videos of a person without that person's consent, including fake or altered images;</li>
+            <li>terrorist content, or content that promotes or supports terrorism;</li>
+            <li>malware, such as viruses, ransomware or spyware, or files meant to damage devices or steal data;</li>
+            <li>content that infringes copyright, trademarks or other rights of others;</li>
+            <li>content used to harass, threaten, stalk, blackmail or intimidate a person;</li>
+            <li>anything else that is illegal where you or the recipient are.</li>
+        </ul>
+        <p>You must also not:</p>
+        <ul>
+            <li>attack, overload, probe or disrupt Oxfer, our relay or the services we rely on;</li>
+            <li>try to get around a block or limit we apply;</li>
+            <li>use our relay for traffic that is not an Oxfer transfer;</li>
+            <li>pretend to be another person or organisation, or use Oxfer for fraud, phishing or spam.</li>
+        </ul>
+    </section>
+
+    <section id="illegal-content" aria-labelledby="illegal-content-title">
+        <h2 id="illegal-content-title">5. How we protect people from illegal content</h2>
+        <p>Oxfer is designed so that content is sent only to people the sender chooses. There is no search, no public directory, no feed, no profiles and no public pages. Files exist on the network only while the sender is actively sharing. We never hold a copy.</p>
+        <p>Because files are encrypted between the two devices and never pass through us unencrypted, we cannot inspect them. We therefore use no proactive technology, such as automated scanning, hash matching or content classifiers. A person reviews every report we receive.</p>
+        <h3 id="terrorism">5.1 Terrorism content</h3>
+        <p>Terrorism content is prohibited. Such content cannot be found through Oxfer by anyone who does not already have a link. When we learn that a share is used for terrorism content, we block it at our relay without delay (<a href="#can-cannot">section 7</a>) and inform the competent authorities.</p>
+        <h3 id="csea">5.2 Child sexual exploitation and abuse content</h3>
+        <p>Child sexual abuse material and any content that exploits children is prohibited. When we learn that a share is used for such content, we block it at our relay without delay, report it to the National Center for Missing &amp; Exploited Children (NCMEC) and to Romanian authorities, and block the network addresses involved where we know them.</p>
+        <h3 id="other-illegal">5.3 Other illegal content</h3>
+        <p>All other illegal content is prohibited. When we learn that a share is used for illegal content, we block it at our relay and inform the competent authorities where the law requires it.</p>
+        <h3 id="how-long">5.4 How long illegal content can be present, and how we take it down</h3>
+        <p>A share lasts only while the sender keeps it open. It ends when the sender stops sharing, closes the app or loses the connection. When we block a share at our relay, new connections to it through the relay stop. Browsers need our relay to connect, so in the browser app a block ends the share for new recipients. A block cannot stop a transfer that is already running on a direct connection, a direct connection between two desktop apps, or copies that recipients have already saved. We act on reports within the times given on the <a href="/abuse">abuse and safety page</a>.</p>
+        <h3 id="intimate-images">5.5 Intimate images shared without consent</h3>
+        <p>Sharing an intimate image or video of a person without their consent is prohibited (<a href="#acceptable-use">section 4</a>). The person shown, or someone acting for them, can report it as described on the <a href="/abuse#intimate-images">abuse and safety page</a>. This is how we meet the take-down duty for intimate image content reports under the UK Online Safety Act 2023 (section 10(3A)):</p>
+        <ul>
+            <li>We take the reported share down by blocking it at our relay as soon as reasonably practicable, and no later than 48 hours after we receive the report.</li>
+            <li>We also take down any other share that we identify as carrying the same, or substantially the same, images. We cannot see files, so we identify such shares only from reports, for example other links given to us.</li>
+            <li>We do not take a share down under this rule if we conclude that the content is not an intimate image shared without consent, or that the person reporting is neither the person shown nor acting for them. We then tell the person reporting, who can use our expedited complaints procedure (<a href="#reports">section 6</a>).</li>
+        </ul>
+    </section>
+
+    <section id="reports" aria-labelledby="reports-title">
+        <h2 id="reports-title">6. Reports, complaints and appeals</h2>
+        <p>Email <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a> to:</p>
+        <ul>
+            <li>report illegal content or a breach of these terms;</li>
+            <li>complain that we are not following these terms or the law, including our duties on freedom of expression and privacy;</li>
+            <li>appeal a block you believe is wrong.</li>
+        </ul>
+        <p>A person reads every message. We acknowledge within 24 hours and give our answer within 15 days. We decide appeals promptly. If we find that a block was wrong, we lift it. We never tell the person who shared the content, or any other user, that a report was made or who made it, and you can ask us to send you no further messages about your report. If you reported intimate images of yourself, or of the person you act for (<a href="#intimate-images">section 5.5</a>), a complaint about that content or about how we handled your report goes through our expedited procedure: we handle it before other messages and tell you the outcome within 48 hours. The <a href="/abuse">abuse and safety page</a> explains what to include, what not to send, who learns about a report, and faster handling for urgent cases.</p>
+    </section>
+
+    <section id="can-cannot" aria-labelledby="can-cannot-title">
+        <h2 id="can-cannot-title">7. What we can and cannot do about abuse</h2>
+        <h3 id="we-can">7.1 What we can do</h3>
+        <ul>
+            <li>Block a share at our relay, using the endpoint ID in its link. Each share has a new endpoint ID, so this affects only that share.</li>
+            <li>Block IP addresses from using our relay for a set period, normally 30 days, which we can extend or renew for repeated or serious abuse.</li>
+            <li>Limit how many connections and how much data our relay accepts.</li>
+            <li>Report child sexual abuse material to NCMEC and to Romanian authorities, and cooperate with lawful requests from competent authorities.</li>
+        </ul>
+        <h3 id="we-cannot">7.2 What we cannot do</h3>
+        <ul>
+            <li>See, scan, recover or delete files.</li>
+            <li>Identify who created a link, or give authorities records of past transfers. We keep none.</li>
+            <li>Revoke a link for one recipient while keeping it open for others.</li>
+            <li>Stop a transfer already running on a direct connection, or reach copies that recipients have saved.</li>
+        </ul>
+        <h3 id="repeat-infringers">7.3 Repeat infringers</h3>
+        <p>If we receive repeated valid notices that the same network addresses are used to infringe copyright or for other serious abuse, we block those addresses at our relay. This is our repeat-infringer policy. Many people can share one IP address, for example on mobile networks, VPNs or workplace networks, so an address block can affect others. We use address blocks for repeated or serious abuse and review them on request.</p>
+    </section>
+
+    <section id="markets" aria-labelledby="markets-title">
+        <h2 id="markets-title">8. Where Oxfer is offered</h2>
+        <p>Oxfer is offered from Romania under EU law, in English. It is not localised, marketed or supported in countries whose laws require foreign online services to register locally or to appoint a local representative. If you use Oxfer from such a country, you do so on your own initiative, and you are responsible for complying with local law, including any rules on encryption tools and file sharing.</p>
+        <p>Judicial authorities of other EU Member States can send European Production and Preservation Orders directly to us. Other authorities outside Romania can reach us through the legal channels open to them. The <a href="/abuse#authorities">abuse and safety page</a> explains both.</p>
+    </section>
+
+    <section id="sanctions" aria-labelledby="sanctions-title">
+        <h2 id="sanctions-title">9. Sanctions and encryption rules</h2>
+        <ul>
+            <li>You must not use Oxfer where sanctions that apply to you or to us prohibit it, including sanctions adopted by the European Union or the United Nations Security Council.</li>
+            <li>Our hosting and infrastructure providers apply their own sanctions and export-control rules. Oxfer may therefore be unavailable in some places.</li>
+            <li>Oxfer uses standard encryption. Some countries restrict the import or use of encryption software. You are responsible for following those rules where you are.</li>
+        </ul>
+    </section>
+
+    <section id="your-content" aria-labelledby="your-content-title">
+        <h2 id="your-content-title">10. Your content and your responsibility</h2>
+        <ul>
+            <li>You keep all rights in the files you send. We ask for no licence to them, because we never access them. Our relay only forwards encrypted data.</li>
+            <li>You are responsible for what you send and for who receives your link. Share links only with people you intend to receive the files.</li>
+            <li>If you receive files, you are responsible for what you open. Files from others can contain malware. Scan them before opening.</li>
+            <li>Oxfer keeps no backup. Keep your own copies of important files.</li>
+        </ul>
+    </section>
+
+    <section id="availability" aria-labelledby="availability-title">
+        <h2 id="availability-title">11. Availability and changes to the service</h2>
+        <p>Oxfer is a free service. We may change it, limit it, suspend it or stop it at any time, for example to fix a problem, protect users, or comply with the law. Transfers can fail because of network conditions, browser limits or outages at us or at the providers we use.</p>
+    </section>
+
+    <section id="warranty" aria-labelledby="warranty-title">
+        <h2 id="warranty-title">12. No warranty</h2>
+        <p>Oxfer is provided free of charge, "as is" and "as available". To the extent the law allows, we give no warranty that Oxfer will be available, free of errors, secure against every attack, or suitable for a particular purpose, or that a transfer will complete. This does not affect any right you have under mandatory law, including consumer protection law.</p>
+    </section>
+
+    <section id="liability" aria-labelledby="liability-title">
+        <h2 id="liability-title">13. Liability</h2>
+        <p>Nothing in these terms excludes or limits our liability:</p>
+        <ul>
+            <li>for damage we cause intentionally or through gross negligence;</li>
+            <li>for harm to a person's life, body, health, or physical or mental integrity;</li>
+            <li>in any other case where the applicable law does not allow liability to be excluded or limited.</li>
+        </ul>
+        <p>Otherwise, and only to the extent Romanian law allows, we are not liable for damage to your property caused by simple negligence, including lost, damaged or corrupted files or data. If you are a consumer, the mandatory rules of the country where you live also apply (<a href="#law">section 15</a>).</p>
+    </section>
+
+    <section id="changes" aria-labelledby="changes-title">
+        <h2 id="changes-title">14. Changes to these terms</h2>
+        <p>We may change these terms, for example when Oxfer or the law changes. We will publish the new version on this page and update the "Last updated" date. We will describe significant changes on this page before they take effect and, where we can, in the app. If you keep using Oxfer after a change takes effect, the new terms apply. If you do not agree, stop using Oxfer.</p>
+    </section>
+
+    <section id="law" aria-labelledby="law-title">
+        <h2 id="law-title">15. Governing law and disputes</h2>
+        <ul>
+            <li>These terms are governed by Romanian law.</li>
+            <li>If you are a consumer, this choice of law does not take away the protection of mandatory rules of the law of the country where you normally live.</li>
+            <li>If you are a consumer, wherever you live, you may bring a claim against us in the courts of Romania or in the courts of the place where you live, and we can bring a claim against you only in the courts of the place where you live. Otherwise, the courts of Romania have jurisdiction.</li>
+            <li>Please contact us first at <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a>. Most problems can be solved that way.</li>
+            <li>You can also complain about our compliance with the EU Digital Services Act to the Digital Services Coordinator of the EU country where you live. In Romania this is ANCOM (<a href="https://www.ancom.ro/en/category/servicii-digitale-en/">ancom.ro</a>).</li>
+        </ul>
+    </section>
+
+    <section id="contact" aria-labelledby="contact-title">
+        <h2 id="contact-title">16. Contact</h2>
+        <p>Reports, complaints, appeals and requests from authorities: <a href="mailto:abuse@oxfer.app">abuse@oxfer.app</a>. Privacy: <a href="mailto:privacy@oxfer.app">privacy@oxfer.app</a>. We accept messages in English and Romanian. Our postal address is in <a href="#about">section 1</a>.</p>
+    </section>
+</article>
+</main>
+
+<footer class="site-footer">
+    <ul>
+        <li><a href="/">Oxfer app</a></li>
+        <li><a href="/privacy">Privacy</a></li>
+        <li><a href="/terms" aria-current="page">Terms of use</a></li>
+        <li><a href="/abuse">Abuse and safety</a></li>
+    </ul>
+    <p>Terms of use. Last updated: [[EFFECTIVE_DATE]].</p>
+</footer>
+</body>
+</html>

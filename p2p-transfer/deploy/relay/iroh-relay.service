@@ -1,0 +1,74 @@
+# iroh-relay 1.1.0 for Oxfer (relay.oxfer.app).
+# Installed as /etc/systemd/system/iroh-relay.service by setup.sh.
+# Check:  systemd-analyze verify /etc/systemd/system/iroh-relay.service
+# Audit:  systemd-analyze security iroh-relay.service
+
+[Unit]
+Description=iroh relay server for Oxfer (relay.oxfer.app)
+Documentation=https://github.com/radumarias/syncoxiders/tree/main/p2p-transfer/deploy/relay
+Wants=network-online.target
+After=network-online.target nftables.service
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/iroh-relay --config-path /etc/iroh-relay/config.toml
+
+# Logging: the RUST_LOG filter in relay.env, shared with the Fly variant,
+# keeps client addresses, endpoint IDs and connection events out of the
+# journal. Without that file the relay does not start.
+EnvironmentFile=/etc/iroh-relay/relay.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=iroh-relay
+
+# The binary shuts down gracefully only on SIGINT (tokio::signal::ctrl_c,
+# src/main.rs:605-611).
+KillSignal=SIGINT
+TimeoutStopSec=15s
+Restart=on-failure
+RestartSec=5s
+
+# Identity and state. cert_dir (/var/lib/iroh-relay/certs) holds the ACME
+# account key and the certificate, so they survive restarts and upgrades.
+DynamicUser=yes
+StateDirectory=iroh-relay
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/iroh-relay
+UMask=0077
+
+# Ports 80 and 443 need CAP_NET_BIND_SERVICE; nothing else is granted.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+
+# One file descriptor per relayed WebSocket connection.
+LimitNOFILE=65536
+
+# Sandbox.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+DevicePolicy=closed
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

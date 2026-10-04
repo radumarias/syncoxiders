@@ -1,0 +1,504 @@
+# Oxfer privacy, safety and legal compliance plan
+
+Scope: the browser and native app in this crate as deployed at `oxfer.app`
+from a Cloudflare assets-only Worker, operated from Romania, usable from any
+country. This plan turns the September 2026 review into work items. It is an
+engineering plan, not legal advice; the terms and privacy notice should get a
+lawyer's read once traffic is more than testers.
+
+Design facts the plan relies on (verified in code):
+
+- No server code, no accounts, no analytics, no third-party scripts or fonts.
+- Share links carry the ticket and a bearer capability in the URL fragment,
+  which never reaches the web host. Every share uses a fresh key.
+- File bytes flow peer to peer over DTLS (WebRTC) or over QUIC through an
+  iroh relay. The relay sees ciphertext, endpoint IDs, IP addresses, timing
+  and volume, never plaintext or the capability.
+- Client-side storage is limited to a theme key, the service-worker app
+  cache, and opt-in OPFS local copies that the user can delete in the app.
+- Diagnostics are copied by the user; nothing is uploaded anywhere.
+
+What is missing today, in one line each: no privacy notice, no terms, no
+operator identity or abuse contact, production still uses n0's public relays
+and DNS discovery, browser ICE still sends every user's IP to Google STUN, no
+CSP, and no written risk assessments for the online-safety regimes that apply
+to file-sharing services regardless of size.
+
+## Implementation status (30 September 2026)
+
+Everything in this plan that can be done in the repository is implemented on
+branch `ccr-da11c28f-wrlb9h`. The item-by-item status, the owner's checklist
+and the review cadence live in [compliance/README.md](compliance/README.md),
+which is kept current; this plan is the original brief and is not updated line
+by line.
+
+| Area | Where it lives now |
+| --- | --- |
+| Relay list, STUN, debug handle, legal links, report link, browser storage | `src/node.rs`, `src/webrtc.rs`, `src/diagnostics.rs`, `src/app.rs` |
+| Endpoint-ID tool for abuse reports | `examples/ticket-endpoint-id.rs` |
+| No inline scripts, security headers, relay-aware CSP, deploy guards, bundle hashes | `Trunk.toml`, `index.html`, `assets/boot.js`, `assets/app-init.js`, `assets/_headers`, `package-cf-output.mjs`, `build-web.sh`, `verify-deployment.mjs`, `.github/workflows/` |
+| Privacy notice, terms, abuse and safety page | `privacy.html`, `terms.html`, `abuse.html` (served at `/privacy`, `/terms`, `/abuse`) |
+| Relay deploy kit (VPS and Fly.io) | `deploy/relay/` |
+| Assessments and records | `docs/compliance/` |
+
+Decisions taken: D1 self-hosted EU relay, provider still open; D2 comply;
+D3 as recommended; D5 drafts kept in this repository. D4 (natural person or
+company) is still open, so operator details are `[[...]]` placeholders, and
+the deploy refuses to publish the legal pages until they are filled and
+production uses the Oxfer relay.
+
+### What the work changed in this plan
+
+These corrections came out of implementation, verification and an
+adversarial review. Where they conflict with the sections below, they win.
+
+- **Redirects (C4, section 9).** No `_redirects` file is needed. Workers
+  static assets serve `/privacy` from `privacy.html` by default.
+- **CSP (B1).** Trunk's own inline loader also broke `script-src 'self'`, so
+  Trunk no longer injects scripts and `assets/app-init.js` loads the wasm. The
+  policy gained `style-src`, `font-src`, `manifest-src` and `frame-ancestors`,
+  and its `connect-src` is rendered from `P2P_RELAY_URL`. It ships as
+  report-only; the steps to enforce it are in `docs/cloudflare-workers.md`.
+  On n0 builds the Diags legacy dotted-DNS check cannot pass an enforced CSP.
+- **`no-transform`.** Sent only for the three legal pages, so Cloudflare
+  cannot rewrite them while the wasm keeps its compression.
+- **Relay config (section 4).** The config shown below has wrong keys:
+  `https_bind_addr` and `quic_bind_addr` belong under `[tls]`, the rate limit
+  table is `[limits.client.rx]`, and `accept_conn_limit` does nothing in
+  iroh-relay 1.1.0. Use `deploy/relay/config.toml`, which is derived from the
+  1.1.0 source and tested. Connection limits are enforced in nftables.
+- **Relay logging (A3, section 4).** iroh-relay has no access-log switch;
+  only `RUST_LOG` controls it, and at `info` it logs client addresses. The
+  kit's filter logs no addresses, endpoint IDs or connection events, the key
+  cache is off, and host login records are capped at three days.
+- **Blocking (section 4, section 7).** The relay denylist takes endpoint IDs,
+  not addresses, and each share has a fresh ID, so it blocks one share.
+  Address bans live in nftables. Both now survive reboots and upgrades.
+  `cargo run -q -p p2p-transfer --example ticket-endpoint-id -- '<link>'`
+  extracts the ID from a reported link without opening it.
+- **STUN (A4, D7).** Cloudflare's public STUN is used without an account, and
+  its customer DPA may not cover it; the records list it as a separate
+  recipient until Cloudflare confirms.
+- **Browser storage (section 5).** eframe also wrote `app` and
+  `egui_memory_ron`, and the start-up listing created an empty IndexedDB
+  database. Both are fixed: the web build stores only `oxfer.theme.v1` after
+  an explicit choice, and local-copy storage exists only after opting in.
+- **UK Online Safety Act (D1, D2, section 8).** Without age assurance or
+  usage data, Oxfer is treated as likely to be accessed by children, so a
+  children's risk assessment and the Protection of Children Codes apply; the
+  owner must choose a PCU B4 option. A medium risk of image-based CSAM makes
+  the service multi-risk, which adds governance, moderation and appeals
+  measures. The Crime and Policing Act 2026 added intimate-image report duties
+  (48-hour maximum, prescribed declarations, expedited complaints) from
+  29 June 2026. Hash matching (ICU C9) does not apply to private transfers.
+- **Australia (D3).** Oxfer is a designated internet service, but Tier 3 is
+  the result of a documented assessment, not a pre-set status. The 2026
+  Phase 2 code needs its own section (`docs/compliance/esafety.md`).
+- **India (section 7).** IT Rules amendment G.S.R. 120(E) cut grievance
+  resolution to 7 days from 20 February 2026; the abuse page uses 7 days for
+  India. The 2-hour and 36-hour windows are an open owner decision.
+- **Indonesia (E1).** Registration needs sworn translations, so it is not
+  free; stop and revisit D3 if a local representative is required.
+- **New regimes.** The EU e-Evidence Regulation applies from 18 August 2026;
+  whether Oxfer must designate an establishment is an open owner and lawyer
+  question. UK GDPR Art. 27 is not engaged while the UK is not targeted.
+- **Bundle hashes (B4).** Published in each deploy's job summary and as an
+  artifact, which GitHub keeps at most 90 days; copy them to a release.
+- **Cloudflare zone.** Network Error Logging is on by default and must be
+  turned off (verify-deployment checks). The old `oxfer.pages.dev` project
+  still serves an older build and should be deleted.
+- **Native links.** eframe's `links` feature is now enabled so the desktop
+  app can open the legal links.
+- **Monitoring (A10, "What you maintain").** Monitor
+  `https://relay.oxfer.app/healthz` for status 200 and the text `ok`, with
+  certificate-expiry alerts (Let's Encrypt no longer sends expiry emails),
+  plus a WebSocket probe of `wss://relay.oxfer.app/relay` offering the
+  `iroh-relay-v1` subprotocol.
+- **Relay state ("What you maintain").** The relay host is no longer
+  stateless: the blocks in force live in `/etc/oxfer-relay/denylist.txt` and
+  `/etc/nftables.d/bans.nft`. A rebuild copies them across or restores them
+  from the private abuse log; nothing else needs a backup.
+
+## 0. Decisions needed from the owner
+
+| # | Decision | Recommendation |
+| --- | --- | --- |
+| D1 | Relay hosting | Self-host `iroh-relay` on an EU VPS. Cloudflare Workers and Containers cannot host it (section 3). |
+| D2 | UK Online Safety Act posture | Comply: write the two assessments, keep a reporting channel, answer Ofcom on time. Geoblocking the UK is the fallback lever, not the default. |
+| D3 | Markets not offered | Do not localise, market or register in jurisdictions that require local registration or representatives for foreign online services. State this in the terms. Register in Indonesia only because it is free and enforced by blocking. |
+| D4 | Operating entity | Decide whether Oxfer is run by a natural person or a company. A company changes e-commerce disclosures and brings Brazil's Marco Civil log rule into play. |
+| D5 | Where assessments live | Keep the drafts under `docs/compliance/` in this repo, or move them to a private repo before filling in anything you would not want quoted back. |
+
+## 1. Workstreams
+
+### A. Infrastructure: relay, STUN, discovery
+
+| # | Item | Where | Notes |
+| --- | --- | --- | --- |
+| A1 | Provision one EU VPS for the relay | OVH VPS-1 in Gravelines, Strasbourg or Frankfurt; IONOS VPS S+ in Germany as the month-to-month fallback; Hetzner CX23 when its cost-optimised tier is orderable again | Smallest instance is enough; the relay needs well under 100 MB of RAM and idles at zero CPU. Traffic matters more than compute. Accept the provider's DPA in the account settings and keep a copy. Prices in section 4. |
+| A2 | DNS `relay.oxfer.app` A and AAAA records, DNS-only | Cloudflare DNS | Do not proxy this hostname. The relay needs long-lived WebSockets and UDP for QUIC address discovery, and proxying would add a US processor to the relay path. |
+| A3 | Run the official `iroh-relay` 1.1 binary or container image | VPS, systemd | Config in section 4. ACME TLS is built in. Open TCP 80 and 443, UDP 7842. Bind metrics to localhost. Disable access logging; set journald retention to a few days. |
+| A4 | STUN: use Cloudflare's, run none | `stun:stun.cloudflare.com:3478` | Documented as free and unlimited, no account needed. Cloudflare already serves the app shell under a DPA, so its STUN adds no recipient. A single STUN server is standard practice: if it is unreachable, direct WebRTC fails for NATed peers and the transfer takes the iroh relay. coturn returns only if A12 adopts TURN. |
+| A5 | Rate limits and access control on the relay | relay config `[limits]` | Per-connection byte rate and connection-accept limits. Keep `access = "everyone"` because shares use fresh keys, so allowlists cannot work. |
+| A6 | Point production builds at the relay | `.github/workflows/oxfer-web.yml`, `build-web.sh` | Export `P2P_RELAY_URL=https://relay.oxfer.app` before `trunk build`. `RelayChoice::from_env` in `src/node.rs` then selects `RelayChoice::Custom`, which uses `presets::Minimal`: no relay map from n0 and no publishing or lookup at `dns.iroh.link`. `tests/relay_wasm.rs` already tolerates the variable. |
+| A7 | Replace the ICE server list | `src/webrtc.rs` `ICE_SERVERS` | Cloudflare only: `stun:stun.cloudflare.com:3478`. Remove `stun.l.google.com`. Every listed STUN server receives the user's IP on every session, so the list stays at one name that is already a processor. |
+| A8 | Support several relays for later regions | `src/node.rs` `RelayChoice::Custom` | Parse a comma-separated `P2P_RELAY_URL` into `RelayMap::from_iter`. Not needed on day one. A non-EU relay you operate is still your infrastructure; the provider's DPA and SCCs cover the location. |
+| A9 | Update diagnostics and docs | `src/diagnostics.rs`, `docs/diagnostics.md`, `docs/cloudflare-workers.md` | The diagnostics probe already handles `RelayChoice::Custom`. Docs still describe the n0 preset. |
+| A10 | Monitoring | External uptime probe | A WebSocket probe against `wss://relay.oxfer.app/relay` with the `iroh-relay-v1` subprotocol, the same check `assets/diagnostics.js` performs. |
+| A11 | Upgrade policy | VPS | Unattended security upgrades for the OS. Relay upgrades follow the crate's iroh version; the protocol is versioned, so track `Cargo.lock`. |
+| A12 | TURN, only if measured | coturn on the VPS, or Cloudflare TURN | TURN services are WebRTC relays, not iroh relays, so they cannot replace A3. A TURN path only adds relayed WebRTC behind symmetric NATs; issue #53 holds the measurement plan. If adopted: coturn on the VPS with quotas, or Cloudflare TURN, which has a 1,000 GB free tier per its FAQ. Either way TURN needs credentials a static site cannot hide, so it also needs a small credential-minting Worker. |
+
+### B. Client and deployment hardening
+
+| # | Item | Where | Notes |
+| --- | --- | --- | --- |
+| B1 | Content Security Policy, report-only first | `assets/_headers`, `verify-deployment.mjs` | Directives the code needs: `default-src 'self'`; `script-src 'self' 'wasm-unsafe-eval'`; `connect-src 'self' https://relay.oxfer.app wss://relay.oxfer.app`; `worker-src 'self' blob:` for `assets/resume-store.js`; `frame-src blob: 'self'` and `img-src 'self' data: blob:` for the download sinks; `object-src 'none'`; `base-uri 'self'`; `form-action 'none'`. Move the inline boot script out of `index.html` into `assets/boot.js` or add its hash. Run as `Content-Security-Policy-Report-Only` through one full manual test matrix, then enforce. Extend `verify-deployment.mjs` to assert the header. |
+| B2 | `Permissions-Policy` | `assets/_headers` | Deny camera, microphone, geolocation, payment, usb. Keep `screen-wake-lock=(self)` for `assets/wake-lock.js`. HSTS is unnecessary: the `.app` TLD is HSTS-preloaded. |
+| B3 | Remove the debug handle from release | `src/webrtc.rs` line that sets `__p2p` | Gate on `cfg!(debug_assertions)` or the `#dev` fragment. |
+| B4 | Supply-chain protection | GitHub, Cloudflare | Two-factor auth on both accounts. Branch protection on `main` with required CI. Cloudflare API token limited to the Workers edit template, rotated yearly. Keep `verify-deployment.mjs` byte comparison in the deploy job. Publish the release bundle's SHA-256 in the GitHub release so anyone can compare with the served file. A tampered bundle is the one realistic way the encryption claims become false. |
+| B5 | Native ticket disclosure | `src/app.rs` share screen, native only | Tell native senders their link contains their direct IP addresses in addition to the relay address. |
+| B6 | Footer links | `src/app.rs` bottom bar | Privacy, Terms, Abuse and Source links, opened with `ui.hyperlink_to` on both targets. |
+
+### C. Legal pages and in-app disclosures
+
+| # | Item | Where | Notes |
+| --- | --- | --- | --- |
+| C1 | Privacy notice | `privacy.html`, copied by Trunk | Content in section 5. One global notice with a short regional annex. |
+| C2 | Terms of use | `terms.html` | Content in section 6. |
+| C3 | Abuse, safety and law-enforcement page | `abuse.html` | Content in section 7. One mailbox for everything. |
+| C4 | Clean paths | `assets/_redirects` | Workers static assets honour `_redirects`. Map `/privacy`, `/terms`, `/abuse` to the files with 200 rewrites so the SPA fallback does not swallow them. Add the three files to `verify-deployment.mjs`. |
+| C5 | Operator identity | footer of each page | Name, postal address or registered office, email. Required by Romanian Law 365/2002 art. 5 and DSA arts. 11 and 12 regardless of price. |
+| C6 | Keep the in-app "Technical details" honest | `src/app.rs` `show_how_it_works` | Update the relay sentence once the self-hosted relay is live. |
+
+### D. Assessments and records
+
+| # | Item | Where | Notes |
+| --- | --- | --- | --- |
+| D1 | UK OSA illegal-content risk assessment | `docs/compliance/osa-illegal-content.md` | Outline in section 8. Ofcom's small-service tool produces the skeleton. Dated and signed by the operator. |
+| D2 | UK OSA children's access assessment | `docs/compliance/osa-children-access.md` | General-audience tool, no child-directed content, no discovery, no feed. Record the conclusion and revisit yearly. |
+| D3 | Australia DIS Standard tier self-assessment | `docs/compliance/esafety-dis.md` | Tier 3 low-risk profile: terms prohibit class 1A and 1B material, report channel exists, eSafety notices are answered. |
+| D4 | GDPR Article 30 record and DPIA screening | `docs/compliance/ropa.md` | Processing activities: web hosting logs at Cloudflare, relay connection metadata on own infrastructure, peer address exchange. Screening note: no high-risk criteria, so no DPIA. |
+| D5 | Transparency and no-logs statement | `docs/compliance/transparency.md` and a section in `privacy.html` | What exists: nothing per user or per transfer. What a lawful request can obtain: nothing retroactively. |
+| D6 | Incident runbook | `docs/compliance/incident-runbook.md` | Primary scenario: compromised build or deploy pipeline. Steps: revoke tokens, redeploy a verified build, compare hashes, notify. Deadlines: GDPR 72 hours to ANSPDCP; India DPDP 72 hours to the Board from May 2027; CERT-In 6 hours on a best-effort basis. |
+| D7 | Processor list | inside `ropa.md` | Cloudflare (hosting, STUN), VPS provider (relay), GitHub (build). Link to each DPA. |
+
+### E. Registrations and market posture
+
+| # | Item | Notes |
+| --- | --- | --- |
+| E1 | Indonesia PSE registration | Free, through the OSS-RBA portal, foreign private PSE form. The sanction for not registering is nationwide blocking. |
+| E2 | UK | No registration. Be able to answer an Ofcom information request within its deadline; the first fine on a small file-sharing service was for silence, not for content. |
+| E3 | Markets not offered | Terms state that Oxfer is offered from Romania under EU law, is not localised, marketed or supported in jurisdictions that require local registration or a local representative for foreign online services, and that users are responsible for local rules on encryption tools. Authorities reach the operator through Romanian legal process. |
+| E4 | Geoblocking lever | Document a Cloudflare WAF custom rule per country in `docs/cloudflare-workers.md`. Available on the free plan. Off by default. |
+| E5 | Brazil | Terms say the service is not directed to minors and runs no profiling or advertising. Appointing a Brazilian representative is deferred until Brazilian traffic is material. |
+
+### F. Ongoing
+
+| # | Item | Cadence |
+| --- | --- | --- |
+| F1 | Review this plan, the notice and the assessments | Quarterly, and after any architecture change |
+| F2 | Watch list | EU CSAM regulation (interpersonal communications services; trilogue ongoing), UK OSA section 121 notices, India DPDP duties from 14 May 2027, US state privacy and child-safety laws, Brazil ECA Digital enforcement |
+| F3 | Triggers that reopen everything | Accounts, analytics, ads, payments or donations, a store-and-forward relay, or more than roughly 100k monthly visitors from any single country with threshold-based rules |
+
+## 2. Sequence
+
+| Phase | Items | Time |
+| --- | --- | --- |
+| 0. Quick fixes | A7 (Cloudflare STUN only), B3, B4, C5 draft | Days |
+| 1. Relay | A1 to A6, A9, A10, then redeploy | 1 to 2 weeks |
+| 2. Pages | C1 to C4, B6, C6 | 1 week, parallel with phase 1 |
+| 3. Hardening and records | B1 report-only then enforce, B2, B5, D1 to D7, E1 | 2 weeks |
+| 4. Steady state | F1 to F3, A8 when a second region is justified | Ongoing |
+
+## 3. Relay hosting options
+
+Why Cloudflare Workers and Containers do not fit:
+
+- `iroh-relay` is a native Rust server. It cannot compile to a Worker.
+- Containers only receive traffic through a Worker as HTTP or WebSocket. They
+  cannot accept inbound UDP, so QUIC address discovery for native clients is
+  impossible there.
+- Containers sleep after ten minutes by default, and Cloudflare picks their
+  location. A relay needs long-lived connections and a known region.
+- Containers need the Workers Paid plan, and relayed bytes would be billed as
+  compute time plus egress after the included allowance. A VPS with included
+  traffic is cheaper and simpler.
+- Cloudflare would also terminate TLS for the relay hop, which puts a US
+  processor on the relay path again. Encryption stays end to end, but the
+  jurisdictional gain of self-hosting would be lost.
+
+| Option | UDP for QAD | Region control | Long-lived WebSockets | Cost order | Data-protection position | Verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| EU VPS with `iroh-relay` (OVH, IONOS, Hetzner when in stock) | Yes | Yes | Yes | About EUR 4 to 6 per month, traffic included | You are the controller, EU provider under a DPA | Recommended |
+| n0 managed relays | Yes | Yes | Yes | Quote from n0 | Needs a DPA with n0 and confirmation of regions | Acceptable if you prefer not to operate a server |
+| Fly.io machine in an EU region (fra, ams, cdg, arn) | Yes, with a dedicated IPv4 | Yes, one machine per relay hostname | Yes, raw TCP passthrough on 443 | About USD 5 to 8 per month plus USD 0.02 per GB egress | US company (Fly.io Inc.), EU region, pre-signed DPA | Viable second choice; conditions in section 4 |
+| Cloudflare Workers or Containers | No | No | Limited | USD 5 plan plus usage | US processor on the relay hop | Not viable |
+| n0 public relays (today) | Yes | No | Yes | Free | No contract; hobby-use terms; US and Asia servers | Replace |
+
+Browser clients only ever use `wss://` on port 443 against the relay. UDP
+7842 matters for the native app's address discovery and can be omitted until
+native builds are distributed.
+
+Hosted STUN/TURN services (Metered Open Relay, Cloudflare TURN, Twilio) are
+not candidates for this table. They relay WebRTC only; an iroh endpoint
+cannot use them, and Oxfer's signalling and fallback stream run over iroh.
+See A4 and A7 for STUN and A12 for TURN.
+
+## 4. Relay runbook
+
+> Superseded by [`deploy/relay/README.md`](../deploy/relay/README.md) and
+> [`deploy/relay/config.toml`](../deploy/relay/config.toml). The config keys
+> below are wrong for iroh-relay 1.1.0; see the corrections at the top.
+
+Config for `iroh-relay` (adjust paths and contact address):
+
+```toml
+# /etc/iroh-relay/config.toml
+http_bind_addr = "0.0.0.0:80"
+https_bind_addr = "0.0.0.0:443"
+enable_quic_addr_discovery = true
+quic_bind_addr = "0.0.0.0:7842"
+access = "everyone"
+enable_metrics = true
+metrics_bind_addr = "127.0.0.1:9090"
+
+[tls]
+cert_mode = "LetsEncrypt"
+hostname = "relay.oxfer.app"
+contact = "ops@oxfer.app"
+prod_tls = true
+cert_dir = "/var/lib/iroh-relay/certs"
+
+[limits]
+accept_conn_limit = 100
+accept_conn_burst = 200
+
+[limits.client_rx]
+bytes_per_second = 26214400
+max_burst_bytes = 52428800
+```
+
+Check the key names against the `iroh-relay` version pinned by the
+workspace before deploying; the server config schema is versioned with the
+crate.
+
+STUN is Cloudflare's (A4); nothing else runs on this host.
+
+Firewall: allow TCP 80 and 443, UDP 7842, plus SSH from your addresses.
+Everything else closed.
+
+Logging: run the relay under systemd with `StandardOutput=journal`, set
+`SystemMaxUse=200M` and `MaxRetentionSec=3day` in `journald.conf`, and do
+not enable any access log. The relay's metrics are aggregate counters and
+stay on localhost.
+
+Client side: `P2P_RELAY_URL=https://relay.oxfer.app`. The diagnostics page
+derives `wss://relay.oxfer.app/relay` from it.
+
+### Fly.io variant
+
+Fly.io can host the relay. Verified against Fly's networking and pricing
+documentation in September 2026. Eight conditions, none of which apply to a
+plain VPS:
+
+1. **One machine per relay hostname.** Both peers of a transfer must reach
+   the same relay process. Fly's anycast and autoscaling would split them, so
+   set `auto_stop_machines = "off"`, `auto_start_machines = false`,
+   `min_machines_running = 1`, one region, one machine. A second region is a
+   second app with its own hostname.
+2. **Dedicated IPv4, USD 2 per month.** Shared IPv4 only carries Fly-terminated
+   HTTP and TLS. Raw TCP on 443 and any UDP need a dedicated address.
+3. **TLS stays in the relay.** Expose 443 with no handlers so `iroh-relay` runs
+   ACME itself; its rustls-acme implementation uses the TLS-ALPN challenge, so
+   port 80 is not needed for certificates. Persist `cert_dir` on a small
+   volume, or every redeploy asks Let's Encrypt for a new certificate.
+4. **Client addresses.** With raw passthrough the relay sees Fly's proxy
+   address, not the client's. Harmless here: the relay logs nothing and limits
+   per connection. Do not enable the PROXY protocol handler; `iroh-relay` does
+   not parse it.
+5. **UDP for QUIC address discovery, native clients only.** Fly preserves the
+   UDP source address, so discovery works, but the socket must bind to the
+   `fly-global-services` address and internal and external ports must match.
+   `quic_bind_addr` takes an IP, so an entrypoint script resolves
+   `fly-global-services` and writes the config before start. Skip until native
+   builds ship; browsers never use UDP against the relay.
+6. **STUN.** Nothing to run: STUN is Cloudflare's (A4).
+7. **Egress is metered from the first byte**, USD 0.02 per GB in Europe and
+   North America. A relayed 5 GB transfer costs about ten cents. A VPS with
+   included traffic has no such line item.
+8. **Bucharest is not a Fly region.** Nearest are Frankfurt, Amsterdam, Paris
+   and Stockholm. The relay's data-protection position is a US processor with
+   EU servers under Fly's pre-signed DPA, the same shape as Cloudflare.
+
+```toml
+# fly.toml
+app = "oxfer-relay-eu"
+primary_region = "fra"
+
+[build]
+dockerfile = "Dockerfile"   # FROM n0computer/iroh-relay:v1.1.0, COPY config.toml
+
+[mounts]
+source = "relay_certs"
+destination = "/var/lib/iroh-relay"
+
+[[services]]
+protocol = "tcp"
+internal_port = 443
+auto_stop_machines = "off"
+auto_start_machines = false
+min_machines_running = 1
+  [[services.ports]]
+  port = 443              # no handlers: the relay terminates TLS and runs ACME
+
+# Add only when native clients need address discovery:
+# [[services]]
+# protocol = "udp"
+# internal_port = 7842
+#   [[services.ports]]
+#   port = 7842
+```
+
+The image `n0computer/iroh-relay` is published on Docker Hub with tags
+matching iroh releases. Use the tag that matches the workspace's iroh
+version or a newer 1.x.
+
+### Provider prices, September 2026
+
+Checked on 30 September 2026. Prices exclude VAT unless noted and will
+drift; recheck before ordering.
+
+| Provider and plan | Specs | Traffic | Price | Term | Notes |
+| --- | --- | --- | --- | --- | --- |
+| OVH VPS-1, Gravelines, Strasbourg, Frankfurt, Warsaw | 2 vCPU, 4 GB, 40 GB NVMe, 500 Mbps | Unlimited | EUR 3.81 per month | 12 months | French company. Anti-DDoS included, which matters for a public relay endpoint. Best value today. |
+| IONOS VPS S+, Germany | 1 vCPU, 2 GB, 60 GB NVMe, up to 1 Gbps | Unlimited | About EUR 5 per month after a 3-month promo, EUR 10 setup | Monthly | German company. The month-to-month fallback. |
+| Hetzner CX23 or CAX11, Falkenstein, Nuremberg, Helsinki | 2 vCPU, 4 GB, 40 GB | 20 TB, then EUR 1 per TB | EUR 5.99 per month including IPv4, after the June 2026 increase | Hourly, no commitment | Best tooling: API, cloud-init, free cloud firewall, snapshots. The whole cost-optimised tier was marked unavailable in early September 2026; the cheapest orderable plan is CPX12 at EUR 11.99. Use it when it returns. |
+| Scaleway STARDUST1-S, Paris or Amsterdam | 1 vCPU, 1 GB, 100 Mbps | Included | About EUR 4.10 per month with a flexible IPv4 | Hourly | Cheapest on paper. Stock is limited and 100 Mbps caps relayed throughput. |
+| netcup VPS 500 G12.5, Nuremberg or Vienna | 2 vCPU, 4 GB, 64 GB | Flat rate | EUR 8.26 per month | 12 months | Solid, but pricier and committed. |
+| Fly.io shared-cpu-1x, Frankfurt | 1 shared vCPU, 512 MB to 1 GB | Metered | About USD 5 to 8 per month plus USD 0.02 per GB egress, plus USD 2 dedicated IPv4 | Hourly | Conditions in the Fly.io variant above. |
+| Oracle Cloud Always Free, Frankfurt | 2 Arm OCPU, 12 GB total since mid-2026 | 10 TB per month | Free | None | Idle instances are reclaimed after 7 days below 20 percent utilisation, and Arm capacity is often unavailable. Not for something that must stay up. |
+| n0 managed relay | Managed | 250 GB per month included, USD 0.09 per GB after | USD 199 per month per region on the Pro plan | Monthly | Zero maintenance, but priced for companies. |
+
+### What you maintain
+
+A relay is stateless and single-purpose, so the list is short. Budget one
+to two hours for the first setup and about fifteen minutes a month after
+that, plus half an hour whenever iroh is upgraded.
+
+| Area | What | Cadence | Effort |
+| --- | --- | --- | --- |
+| OS patches | `unattended-upgrades` with a nightly reboot window when a kernel update needs it | Automatic; glance at it monthly | Minutes |
+| Relay version | Pin the `n0computer/iroh-relay` image tag or release binary. Upgrade when the workspace's iroh version moves or n0 publishes a security fix. Verify with the app's Diags page afterwards. | Quarterly, or on advisories | 30 minutes |
+| TLS | ACME renewal is built into the relay. Nothing to do unless the uptime probe reports a certificate error. | Automatic | None |
+| Uptime and certificate monitoring | A free external monitor on `https://relay.oxfer.app/` (the relay serves a plain page) and TCP 443, alerting by email. | Automatic | None |
+| Traffic and capacity | Read the provider's traffic graph. Unlimited plans remove the overage worry; on Hetzner set an alert at 80 percent of 20 TB. The relay handles tens of thousands of concurrent connections on this hardware. | Monthly | Minutes |
+| Security hygiene | SSH keys only, password auth off, firewall allowing only 80, 443 and 7842, no other services on the box. Rotate SSH keys yearly. | Yearly | 15 minutes |
+| Logs and retention | journald capped at a few days, no access logs, metrics bound to localhost. Set once. | Once | None |
+| Abuse response | Block an offending IP at the firewall or via the relay's denylist access mode, and record it in the abuse log. | On demand | Minutes |
+| Rebuild capability | Keep the config, systemd units and a cloud-init file under `deploy/relay/` in this repo, so a fresh box is live in ten minutes. Rehearse once a year. | Yearly | 30 minutes |
+| Paperwork | Accept the provider's DPA once; keep it with the processor list; review with the quarterly plan review. | Quarterly | Minutes |
+| Cost | Check the invoice. | Monthly | Minutes |
+
+Backups are not needed: the relay holds no state, and certificates
+regenerate. On Fly.io the OS row disappears and the firewall row shrinks,
+but the image, monitoring, egress and paperwork rows stay.
+
+## 5. Privacy notice: content checklist
+
+Identity and contact of the operator. Supervisory authority: ANSPDCP, with
+the ICO for UK users.
+
+What is processed, by whom, and why:
+
+| Data | Who sees it | Purpose | Retention |
+| --- | --- | --- | --- |
+| IP address, user agent, request metadata for the app shell | Cloudflare, as processor | Serving and protecting the site | Cloudflare's own edge-log retention; none by the operator |
+| IP addresses, endpoint IDs, timing and volume of relayed connections | The operator's relay | Establishing and, if needed, relaying encrypted transfers | Not logged; aggregate counters only |
+| IP address in STUN binding requests | Cloudflare, as processor | NAT traversal | Cloudflare's own policy; none by the operator |
+| Peer IP addresses exchanged through ICE | The other party to the transfer | Direct connection | Held by the peer's browser for the session |
+| Theme preference, service-worker app cache | The user's browser only | Convenience, offline shell | Until cleared |
+| Opt-in local copies: file bytes, names, sizes, hashes | The user's browser only, OPFS and IndexedDB | Resumable receives | Until the user deletes them |
+| Diagnostics report: build label, user agent, timestamp, reachability results | Nobody unless the user shares it | Support | Not stored |
+
+Legal basis: legitimate interest and performance of the requested service.
+Transfers: Cloudflare under SCCs; relay in the EU. Rights: access, erasure
+and so on, with the honest note that there is nothing to retrieve. Share
+links are bearer tokens; anyone holding a complete link can download while
+the sender keeps sharing. No sale of data, no advertising, no profiling.
+
+Regional annex, one or two lines each: California (no sale, no tracking,
+Do Not Track not applicable), Brazil (LGPD contact channel), India (grievance
+contact and timelines), Singapore (data protection officer contact), Japan
+(list of third-party transmission destinations: relay, Cloudflare),
+Switzerland and UK (rights mirror GDPR).
+
+## 6. Terms of use: content checklist
+
+- Operator identity, governing law Romania, mandatory consumer-law carve-outs.
+- Service description: peer-to-peer transfer, sender must stay online, the
+  operator cannot see, recover, or selectively revoke content.
+- Acceptable use: no CSAM, no intimate images without consent, no terrorist
+  content, no malware, no copyright infringement, no harassment.
+- Abuse handling: what the operator can do (block addresses at the relay,
+  cooperate with lawful requests) and cannot do (inspect or delete content).
+  This is the repeat-infringer policy for US purposes.
+- Age: not for users under 13; users under 16 in the EU need parental consent
+  where national law requires it.
+- Market posture from E3 and the user's responsibility for local rules on
+  encryption tools.
+- Sanctions notice: hosting providers apply their own sanctions rules.
+- No warranty, limitation of liability within what Romanian consumer law
+  allows, changes to the terms, contact.
+
+## 7. Abuse, safety and law-enforcement page: content checklist
+
+- One mailbox, monitored, with an expected acknowledgement within 24 hours
+  and resolution or answer within 15 days. Those figures satisfy India's IT
+  Rules and are reasonable everywhere else.
+- Non-consensual intimate imagery: response within 48 hours, matching the US
+  TAKE IT DOWN Act even if Oxfer is not a covered platform.
+- CSAM: reports with actual knowledge are forwarded to NCMEC and to Romanian
+  authorities; the operator holds no content to remove.
+- What the operator holds: nothing per user or per transfer. What legal
+  process can obtain: nothing retroactively. Requests go through Romanian
+  authorities and MLAT.
+- Named grievance officer for India, which can be the operator.
+- Ofcom and eSafety contact acknowledgement: information requests are
+  answered within their deadlines.
+
+## 8. UK OSA illegal-content risk assessment: outline
+
+1. Service description: one-to-one transfers via unguessable bearer links;
+   no search, feed, directory, profiles, comments or public URLs; content is
+   never stored or visible to the operator; the sender must stay online.
+2. User base: general audience, English only, no UK targeting; estimated UK
+   share from Cloudflare aggregate analytics.
+3. Risk by priority offence category, each rated with reasons. The structural
+   arguments: no discoverability, no persistence, no amplification, sender
+   attribution to a live network connection, and no capacity for the
+   operator to scan content. Grooming and CSAM distribution risk is limited
+   to parties who already share a link out of band.
+4. Measures in place: terms, abuse channel with defined timelines, relay
+   address blocking, cooperation with lawful requests, no anonymity beyond
+   what the relay path provides.
+5. Measures considered and not adopted, with reasons: hash matching is not
+   possible without access to plaintext; account gating would defeat the
+   privacy design and add personal data.
+6. Review date and owner.
+
+## 9. Code changes summary
+
+| File | Change |
+| --- | --- |
+| `src/webrtc.rs` | New `ICE_SERVERS`: Cloudflare only, Google removed. Gate the `__p2p` handle |
+| `src/node.rs` | Optional: comma-separated relay list in `RelayChoice::Custom` |
+| `src/app.rs` | Footer links; native ticket IP note; updated relay sentence |
+| `src/diagnostics.rs` | No change required; verify probe against the custom relay |
+| `assets/_headers` | CSP report-only, then enforced; Permissions-Policy |
+| `assets/_redirects` | Clean paths for the legal pages |
+| `index.html` | Boot script moved to `assets/boot.js` or hashed; copy-file entries for the new pages and `_redirects` |
+| `privacy.html`, `terms.html`, `abuse.html` | New static pages |
+| `build-web.sh`, `.github/workflows/oxfer-web.yml` | `P2P_RELAY_URL` export; add the new pages and headers to verification |
+| `verify-deployment.mjs` | Assert CSP and Permissions-Policy; check the new pages |
+| `docs/diagnostics.md`, `docs/cloudflare-workers.md` | Relay and geoblocking documentation |
+| `docs/compliance/*.md` | Assessments, records, runbook |

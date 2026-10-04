@@ -2,6 +2,18 @@
   Cache-Control: public, max-age=0, must-revalidate
   Referrer-Policy: no-referrer
   X-Content-Type-Options: nosniff
+  Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' {{RELAY_CONNECT_SRC}}; worker-src 'self' blob:; frame-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'self'
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), midi=(), screen-wake-lock=(self)
+  X-Frame-Options: SAMEORIGIN
 
 /sw.js
   Cache-Control: no-cache, no-store, must-revalidate
+
+/privacy
+  Cache-Control: no-transform
+
+/terms
+  Cache-Control: no-transform
+
+/abuse
+  Cache-Control: no-transform

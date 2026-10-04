@@ -5,7 +5,17 @@
 // cache-first shell would shadow every later `trunk serve`/`trunk build`
 // forever. See CLAUDE.md and design §4.10.1.
 const cacheName = 'oxfer-v3';
-const shellSuffixes = ['/', '/index.html', '/p2p-transfer.js', '/p2p-transfer_bg.wasm', '/theme.html'];
+// index.html and theme.html carry no inline script (Trunk.toml inject_scripts =
+// false), so their loader scripts belong to the shell too: without them a cached
+// page could not start when the network fails.
+const shellSuffixes = [
+  '/', '/index.html', '/p2p-transfer.js', '/p2p-transfer_bg.wasm', '/theme.html',
+  '/assets/boot.js', '/assets/app-init.js', '/assets/theme-lab.js',
+];
+// p2p-transfer.js statically imports wasm-bindgen's snippet modules
+// (snippets/<crate>-<hash>/assets/*.js), so a cached shell cannot start
+// offline without them either.
+const snippetPrefix = new URL('snippets/', self.registration.scope).pathname;
 
 /* Take over immediately; activate() clears stale caches before this worker
    starts controlling pages. */
@@ -175,6 +185,7 @@ self.addEventListener('message', event => {
 
 function isShellRequest(request, pathname) {
   if (request.mode === 'navigate') return true;
+  if (pathname.startsWith(snippetPrefix)) return true;
   return shellSuffixes.some((suffix) => pathname.endsWith(suffix));
 }
 
@@ -193,8 +204,14 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       fetch(e.request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(cacheName).then((cache) => cache.put(e.request, copy));
+          // Keep the last good copy: an error page (a 5xx during a deploy) must
+          // not replace what the offline fallback serves.
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(cacheName)
+              .then((cache) => cache.put(e.request, copy))
+              .catch((error) => console.warn('App shell cache update failed:', error));
+          }
           return response;
         })
         .catch(() => caches.match(e.request))
