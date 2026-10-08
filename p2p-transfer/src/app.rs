@@ -1830,6 +1830,8 @@ impl P2PTransfer {
         v.widgets.inactive.corner_radius = radius;
         v.widgets.hovered.corner_radius = radius;
         v.widgets.active.corner_radius = radius;
+        // An open menu button draws with `open`; without this it snaps to egui's 2.
+        v.widgets.open.corner_radius = radius;
         v.window_corner_radius = tc.corner(6);
         v.menu_corner_radius = tc.corner(6);
         if theme == Theme::Phosphor {
@@ -1848,7 +1850,6 @@ impl P2PTransfer {
                 state.weak_bg_fill = tc.surface_high;
             }
             v.widgets.open.bg_stroke = Stroke::new(1.0_f32, tc.primary);
-            v.widgets.open.corner_radius = radius;
             v.selection.stroke = Stroke::new(1.0_f32, tc.primary);
             v.hyperlink_color = tc.secondary;
             v.warn_fg_color = tc.error;
@@ -1961,26 +1962,34 @@ fn card(tc: &Tc) -> egui::Frame {
         .inner_margin(egui::Margin::same(22))
 }
 
+fn primary_text(label: &str) -> RichText {
+    RichText::new(label.to_string()).strong().size(15.0)
+}
+
 fn primary_button(tc: &Tc, label: &str) -> Button<'static> {
-    Button::new(
-        RichText::new(label.to_string())
-            .color(tc.on_primary)
-            .strong()
-            .size(15.0),
-    )
-    .fill(tc.primary)
-    .stroke(Stroke::new(1.0, tc.primary))
-    .corner_radius(CornerRadius::same(tc.theme.control_radius()))
-    .min_size(egui::vec2(0.0, 46.0))
+    Button::new(primary_text(label).color(tc.on_primary))
+        .fill(tc.primary)
+        .stroke(Stroke::new(1.0, tc.primary))
+        .corner_radius(CornerRadius::same(tc.theme.control_radius()))
+        .min_size(egui::vec2(0.0, 46.0))
+}
+
+const fn copy_label(copied: bool) -> &'static str {
+    if copied {
+        "✓ Copied to clipboard"
+    } else {
+        "Copy link"
+    }
 }
 
 fn copy_button(tc: &Tc, copied: bool) -> Button<'static> {
+    let button = primary_button(tc, copy_label(copied));
     if copied {
-        primary_button(tc, "✓ Copied to clipboard")
+        button
             .fill(tc.secondary)
             .stroke(Stroke::new(1.0, tc.secondary))
     } else {
-        primary_button(tc, "Copy link")
+        button
     }
 }
 
@@ -1996,9 +2005,10 @@ fn outline_button(tc: &Tc, label: &str, color: Color32) -> Button<'static> {
         .min_size(egui::vec2(0.0, 46.0))
 }
 
-/// The width an outline button needs to show `label` on one line in the current font.
-fn outline_button_width(ui: &Ui, label: &str) -> f32 {
-    let text = egui::WidgetText::from(outline_text(label)).into_galley(
+/// The width a button needs to show `text` on one line in the current font. Fixed-width
+/// buttons take the larger of this and their design width, so monospace labels still fit.
+fn button_width(ui: &Ui, text: RichText) -> f32 {
+    let text = egui::WidgetText::from(text).into_galley(
         ui,
         Some(egui::TextWrapMode::Extend),
         f32::INFINITY,
@@ -2700,8 +2710,14 @@ impl P2PTransfer {
                         }
                     } else {
                         ui.horizontal(|ui| {
-                            let copy_width = 212.0;
-                            let stop_width = 140.0;
+                            // Wide enough for either copy label, so the row stays centered
+                            // and does not shift when the link is copied.
+                            let copy_width = [false, true]
+                                .map(|copied| button_width(ui, primary_text(copy_label(copied))))
+                                .into_iter()
+                                .fold(212.0, f32::max);
+                            let stop_width =
+                                button_width(ui, outline_text("Stop sharing")).max(140.0);
                             let row_width = copy_width + stop_width + ui.spacing().item_spacing.x;
                             ui.add_space(((ui.available_width() - row_width) / 2.0).max(0.0));
                             if ui
@@ -3475,13 +3491,13 @@ impl P2PTransfer {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(CONTROL_EDGE_INSET);
                 let dark = ui.visuals().dark_mode;
-                // Wide enough for either label, so the toggle does not jump when flipped.
-                let toggle_width = ["Light mode", "Dark mode"]
-                    .map(|label| outline_button_width(ui, label))
-                    .into_iter()
-                    .fold(108.0, f32::max);
-                if !compact
-                    && ui
+                if !compact {
+                    // Wide enough for either label, so the toggle does not jump when flipped.
+                    let toggle_width = ["Light mode", "Dark mode"]
+                        .map(|label| button_width(ui, outline_text(label)))
+                        .into_iter()
+                        .fold(108.0, f32::max);
+                    if ui
                         .add_sized(
                             [toggle_width, 44.0],
                             outline_button(
@@ -3491,10 +3507,11 @@ impl P2PTransfer {
                             ),
                         )
                         .clicked()
-                {
-                    let next_dark = !dark;
-                    Self::apply_theme(ctx, ui, self.theme, next_dark);
-                    self.last_dark_mode = Some(next_dark);
+                    {
+                        let next_dark = !dark;
+                        Self::apply_theme(ctx, ui, self.theme, next_dark);
+                        self.last_dark_mode = Some(next_dark);
+                    }
                 }
                 ui.menu_button("Theme", |ui| {
                     ui.label(RichText::new("Appearance").strong());
