@@ -1,0 +1,45 @@
+# Oxfer
+
+> Oxfer (https://oxfer.app) sends files directly from one browser to another,
+> encrypted in transit, with no copy on any server. The HTML you fetched is only
+> an app shell: the user interface is a WebAssembly program drawn on a WebGL
+> canvas, so an HTTP client sees "Loading…" and nothing else. There is no HTTP
+> download URL for a shared file and no REST API; a browser is the only client.
+
+## Which kind of link do you have?
+
+- `https://oxfer.app/` with no `#` fragment is the home page. Open it to SEND.
+- `https://oxfer.app/#endpoint…&cap=…` is a share link. Open it to RECEIVE.
+  Everything after `#` is a bearer capability: the browser never sends it to
+  the server, so fetching a share link over HTTP returns the same shell as the
+  home page. Keep the link whole. Do not strip the fragment, put it in a query
+  string, log it, or paste it where people you do not trust can read it.
+- `https://oxfer.app/diags` is a connectivity diagnostics page, not a file link.
+
+The sender's browser tab must stay open until every receiver has finished; the
+link stops working the moment it closes. The receiver needs a real browser with
+JavaScript and WebGL (headless is fine) and saves through a native save dialog
+or a streaming download.
+
+## Automation (scripts, CI, AI agents)
+
+A Playwright-based helper is served from this site. It drives the canvas UI,
+answers the file chooser, captures the share link, and verifies the download.
+
+    curl -fsSLO https://oxfer.app/oxfer-agent.mjs
+    npm init -y >/dev/null && npm i playwright@1.56.1 pngjs@7.0.0
+    # Needs Node >= 22 and Google Chrome, or: npx playwright install chromium
+
+    node oxfer-agent.mjs send ./report.pdf            # prints "LINK https://oxfer.app/#…"
+                                                      # then keeps sharing until Ctrl-C
+    node oxfer-agent.mjs send ./report.pdf --once     # exits after one verified transfer
+    node oxfer-agent.mjs recv "https://oxfer.app/#…" ./downloads
+                                                      # prints "SAVED <path> <bytes> <sha256>"
+                                                      # and "VERIFIED", then exits
+
+Hand the LINK line to the receiving party exactly as printed. Exit code 0 means
+success on both sides. Run with `--verbose` to see the app's own log, and
+`--snap <dir>` to save screenshots of each step.
+
+Full guide: https://github.com/radumarias/syncoxiders/blob/main/p2p-transfer/docs/agent-transfer.md
+Source: https://github.com/radumarias/syncoxiders/tree/main/p2p-transfer

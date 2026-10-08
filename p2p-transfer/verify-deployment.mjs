@@ -15,6 +15,8 @@ const checks = [
     ["/p2p-transfer_bg.wasm", "p2p-transfer_bg.wasm", "application/wasm"],
     ["/sw.js", "sw.js", "javascript"],
     ["/theme.html", "theme.html", "text/html"],
+    ["/llms.txt", "llms.txt", "text/plain"],
+    ["/oxfer-agent.mjs", "oxfer-agent.mjs", "javascript"],
     ["/assets/favicon.js", "assets/favicon.js", "javascript"],
     ["/assets/oxfer-favicon-light.svg", "assets/oxfer-favicon-light.svg", "image/svg+xml"],
     ["/assets/oxfer-favicon-dark.svg", "assets/oxfer-favicon-dark.svg", "image/svg+xml"],

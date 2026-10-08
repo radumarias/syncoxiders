@@ -3,6 +3,7 @@
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="description" content="Oxfer sends files directly between two browsers, encrypted, with no cloud copy. This page is an app shell drawn by WebAssembly. A link with a #endpoint…&amp;cap=… fragment is a share link to receive from; the bare origin is where sending starts. Automation: /llms.txt">
 
 <head>
     <title>Oxfer</title>
@@ -29,6 +30,8 @@
     <link data-trunk rel="copy-file" href="assets/theme.js" data-target-path="assets"/>
     <link data-trunk rel="copy-file" href="assets/manifest.json" data-target-path="assets"/>
     <link data-trunk rel="copy-file" href="assets/_headers"/>
+    <link data-trunk rel="copy-file" href="assets/llms.txt"/>
+    <link data-trunk rel="copy-file" href="agent/oxfer-agent.mjs"/>
     <link data-trunk rel="copy-file" href="assets/icon-1024.png" data-target-path="assets"/>
     <link data-trunk rel="copy-file" href="assets/icon-256.png" data-target-path="assets"/>
     <link data-trunk rel="copy-file" href="assets/icon_ios_touch_192.png" data-target-path="assets"/>
@@ -146,6 +149,10 @@
 
 <body>
     <canvas id="the_canvas_id"></canvas>
+    <noscript>
+        <p>Oxfer needs JavaScript and WebAssembly. It sends files directly from one browser to another, encrypted, with no copy on a server.</p>
+        <p>Automated clients: this page is only an app shell, and the part of a link after <code>#</code> never reaches the server. A link with a <code>#endpoint…&amp;cap=…</code> fragment is a share link to receive from; <code>https://oxfer.app/</code> alone is where sending starts. Read <a href="/llms.txt">/llms.txt</a> for the scripted sender and receiver (<a href="/oxfer-agent.mjs">/oxfer-agent.mjs</a>).</p>
+    </noscript>
     <div class="centered" id="loading_text">
         <img class="brand-logo brand-logo-light" src="assets/oxfer-wordmark-light.svg" alt="Oxfer" width="256" height="40">
         <img class="brand-logo brand-logo-dark" src="assets/oxfer-wordmark-dark.svg" alt="Oxfer" width="256" height="40">
