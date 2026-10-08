@@ -126,7 +126,8 @@ export function findPrimaryButton(rgba, width, height, { minY = HEADER_HEIGHT, m
             if (blue) {
                 if (start < 0) start = x;
                 last = x;
-            } else if (start >= 0 && x - last > gap) {
+            } else if (start >= 0 && (x - last > gap || x === width)) {
+                // A run ends after a wide enough gap, or at the right edge of the bitmap.
                 if (last - start + 1 >= minWidth) runs.push([start, last]);
                 start = -1;
             }
@@ -456,7 +457,11 @@ async function send(files, options) {
         await session.open(origin);
         await session.snap("home");
 
+        // Armed before the click so the event is not missed; its timeout is only observed
+        // below, so a rejection must not surface as an unhandled one while we wait for the
+        // button (Node would abort the process).
         const chooser = session.page.waitForEvent("filechooser", { timeout: 15_000 });
+        chooser.catch(() => {});
         await session.clickPrimaryButton("Send files");
         await (await chooser).setFiles(files.map(f => path.resolve(f)));
         await session.waitForLog(/ready to share/, session.timeoutMs, "file hashing to finish (\"ready to share\")");
@@ -474,6 +479,11 @@ async function send(files, options) {
         if (classifyLink(link) !== "share") throw new Error(`did not get a share link from the app (got ${link ? "something else" : "nothing"})`);
         await session.snap("sharing");
         if (options["link-file"]) await writeFile(options["link-file"], `${link}\n`, { mode: 0o600 });
+        // Counting starts before the link leaves this process, so no receipt can precede it.
+        // "serve complete" only means the sender finished writing; the receiver's verified
+        // receipt ("receiver verified …") is the success signal.
+        session.counter(/serve complete/, n => session.say(`SERVED ${n}`));
+        const verified = session.counter(/receiver verified/, n => session.say(`COMPLETE ${n}`));
         session.say(`LINK ${link}`);
         session.say(`SHARING ${files.map(f => path.basename(f)).join(" ")}`);
 
@@ -489,10 +499,6 @@ async function send(files, options) {
             session.say("CHAT posted the share link");
         }
 
-        // "serve complete" only means the sender finished writing; the receiver's verified
-        // receipt ("receiver verified …") is the success signal.
-        session.counter(/serve complete/, n => session.say(`SERVED ${n}`));
-        const verified = session.counter(/receiver verified/, n => session.say(`COMPLETE ${n}`));
         const wanted = options.once ? 1 : Number(options.count ?? Infinity);
         while (verified.n < wanted) await sleep(500);
         if (chatPage) {

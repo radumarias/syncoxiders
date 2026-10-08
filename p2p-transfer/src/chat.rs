@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use iroh::endpoint::Connection;
+use iroh::endpoint::{ApplicationClose, Connection, ConnectionError};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{EndpointId, SecretKey};
 use iroh_tickets::endpoint::EndpointTicket;
@@ -24,10 +24,11 @@ use n0_future::time::{timeout, Duration, Instant};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::file_io::truncate_utf8;
 use crate::node::{self, Node, NodeError, RelayChoice};
 use crate::protocol::{
     cap_eq, clean_chat_name, clean_chat_text, decode_chat, encode_chat, ChatMsg, CAP_LEN,
-    CHAT_ALPN, CHAT_VERSION, MAX_CHAT_MEMBERS,
+    CHAT_ALPN, CHAT_VERSION, MAX_CHAT_MEMBERS, MAX_CHAT_NAME,
 };
 use crate::transfer::{split_control, split_control_with_queue, ControlTx, FrameRx, FrameTx, Path};
 
@@ -210,8 +211,11 @@ impl Room {
     /// Queue a frame for every member. A member whose queue is full is behind by
     /// [`OUTBOUND_QUEUE`] frames and is disconnected rather than slowing the room.
     fn broadcast(&self, frame: &Bytes) {
-        let members = self.members.lock().unwrap();
-        for member in members.iter() {
+        Self::broadcast_to(&self.members.lock().unwrap(), frame);
+    }
+
+    fn broadcast_to(members: &[Member], frame: &Bytes) {
+        for member in members {
             if !matches!(member.tx.try_send(frame.clone()), Ok(true)) {
                 member.cancel.cancel();
             }
@@ -223,22 +227,30 @@ impl Room {
         if text.is_empty() {
             return;
         }
-        let seq = self.seq.fetch_add(1, Ordering::AcqRel) + 1;
-        let Ok(frame) = encode_chat(&ChatMsg::Said {
-            from: from.to_string(),
-            text: text.clone(),
-            seq,
-        }) else {
-            return;
-        };
-        {
-            let mut history = self.history.lock().unwrap();
-            if history.len() >= HISTORY {
-                history.pop_front();
+        // Sequence, record and fan out under the members lock, the one `register` holds
+        // while it replays the history: a guest registering between the history push and
+        // the broadcast would otherwise get the message twice, and two concurrent speakers
+        // could reach the members in the opposite order of their `seq`.
+        let seq = {
+            let members = self.members.lock().unwrap();
+            let seq = self.seq.fetch_add(1, Ordering::AcqRel) + 1;
+            let Ok(frame) = encode_chat(&ChatMsg::Said {
+                from: from.to_string(),
+                text: text.clone(),
+                seq,
+            }) else {
+                return;
+            };
+            {
+                let mut history = self.history.lock().unwrap();
+                if history.len() >= HISTORY {
+                    history.pop_front();
+                }
+                history.push_back(frame.clone());
             }
-            history.push_back(frame.clone());
-        }
-        self.broadcast(&frame);
+            Self::broadcast_to(&members, &frame);
+            seq
+        };
         self.out.publish(ChatEvent::Message {
             from: from.to_string(),
             text,
@@ -268,7 +280,14 @@ impl Room {
             return base;
         }
         (2..)
-            .map(|n| format!("{base} {n}"))
+            .map(|n| {
+                // The suffix has to fit in [`MAX_CHAT_NAME`] too, or the name would fail the
+                // frame bounds and every `Welcome`, `Joined` and `Said` carrying it would be
+                // dropped on the floor.
+                let suffix = format!(" {n}");
+                let base = truncate_utf8(&base, MAX_CHAT_NAME - suffix.len()).trim_end();
+                format!("{base}{suffix}")
+            })
             .find(|candidate| !taken(candidate))
             .expect("an unused name exists")
     }
@@ -386,7 +405,13 @@ async fn serve_guest(room: Arc<Room>, connection: Connection) -> std::io::Result
     let outcome = loop {
         let frame = tokio::select! {
             biased;
-            _ = member_cancel.cancelled() => break Ok(()),
+            // The member token ends with the room, or alone when `broadcast` found this
+            // guest's queue full; only the latter is an error worth telling the guest.
+            _ = member_cancel.cancelled() => break if room.cancel.is_cancelled() {
+                Ok(())
+            } else {
+                Err(io_error("disconnected: too far behind the room"))
+            },
             frame = rx.recv() => frame,
         };
         match frame {
@@ -400,8 +425,9 @@ async fn serve_guest(room: Arc<Room>, connection: Connection) -> std::io::Result
                         recent.pop_front();
                     }
                     if recent.len() >= RATE_LIMIT {
-                        let _ = tx.try_send(reject("too many messages; slow down"));
-                        break Err(io_error("rate limit"));
+                        let message = "too many messages; slow down";
+                        let _ = tx.try_send(reject(message));
+                        break Err(io_error(message));
                     }
                     recent.push_back(now);
                     room.say(&name, &text);
@@ -422,7 +448,12 @@ async fn serve_guest(room: Arc<Room>, connection: Connection) -> std::io::Result
         room.out.publish(ChatEvent::Left { name: name.clone() });
         log::info!("chat: {name} left");
     }
-    connection.close(0u8.into(), b"bye");
+    // `close` may discard a queued `Error` frame, so the close reason repeats the message:
+    // the guest shows it if the frame never arrived. Code 0 is a normal end of the session.
+    match &outcome {
+        Ok(()) => connection.close(0u8.into(), b"bye"),
+        Err(error) => connection.close(1u8.into(), error.to_string().as_bytes()),
+    }
     outcome
 }
 
@@ -573,22 +604,45 @@ async fn guest_session(
                     Ok(ChatMsg::Joined { name }) => out.send(ChatEvent::Joined { name }).await,
                     Ok(ChatMsg::Left { name }) => out.send(ChatEvent::Left { name }).await,
                     Ok(ChatMsg::Error { message }) => {
-                        break Err(NodeError::Connect(if message == "unauthorized" {
-                            "the room rejected this link (wrong or expired access code)".into()
-                        } else {
-                            message
-                        }));
+                        break Err(NodeError::Connect(rejection(&message)));
                     }
                     Ok(_) => break Err(NodeError::Connect("unexpected chat frame".into())),
                     Err(error) => break Err(NodeError::Connect(error.to_string())),
                 },
                 Ok(None) => break Ok(()),
-                Err(error) => break Err(NodeError::Connect(error.to_string())),
+                Err(error) => break match host_close(&connection) {
+                    // The host closed the connection: code 0 is the room ending (or our own
+                    // leave), anything else carries the reason, which is also the `Error`
+                    // frame the host queued just before closing in case `close` dropped it.
+                    Some((0, _)) => Ok(()),
+                    Some((_, reason)) => Err(NodeError::Connect(rejection(&reason))),
+                    None => Err(NodeError::Connect(error.to_string())),
+                },
             },
         }
     };
     connection.close(0u8.into(), b"bye");
     outcome
+}
+
+/// What a guest shows for a message the host rejected it with.
+fn rejection(message: &str) -> String {
+    if message == "unauthorized" {
+        "the room rejected this link (wrong or expired access code)".to_string()
+    } else {
+        clean_chat_text(message)
+    }
+}
+
+/// `(code, reason)` of the host's application close, if the host closed the connection.
+fn host_close(connection: &Connection) -> Option<(u64, String)> {
+    match connection.close_reason()? {
+        ConnectionError::ApplicationClosed(ApplicationClose { error_code, reason }) => Some((
+            error_code.into_inner(),
+            String::from_utf8_lossy(&reason).into_owned(),
+        )),
+        _ => None,
+    }
 }
 
 // ── Machine-readable events (browser bridge) ─────────────────────────────────

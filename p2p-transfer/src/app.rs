@@ -1370,12 +1370,8 @@ impl P2PTransfer {
         let params = Node::parse_fragment(hash);
         if params.chat && params.ticket.is_none() && params.cap.is_none() && params.error.is_none()
         {
-            // `#chat` (optionally `#chat&agent`) with no ticket: open a new room here.
-            self.last_fragment = Some(format!(
-                "{}{}",
-                window.location().pathname().unwrap_or_default(),
-                hash
-            ));
+            // `#chat` (optionally `#chat&agent`) with no ticket: open a new room here. The
+            // URL is kept as is, and `check_fragment_change` already recorded it.
             self.start_chat_host(params.agent);
             return;
         }
@@ -3739,12 +3735,20 @@ impl P2PTransfer {
     ) {
         #[cfg(target_arch = "wasm32")]
         self.reset_peer_diagnostics();
+        // Leave the current room first: dropping an old `ChatBridge` removes the page-script
+        // sender, which would undo a bridge installed before the old state is gone.
+        self.mode = Mode::Home;
         let mut state = ChatState::new(role, handle, for_agents);
         if let Some(error) = error {
+            // Nothing will run to report this, so tell page scripts here.
+            #[cfg(target_arch = "wasm32")]
+            emit_chat_event(&crate::chat::event_json(&ChatEvent::Failed(error.clone())));
             state.status = ChatStatus::Failed(error);
         }
+        // Only a running session can send; without one `window.oxfer.chat` stays absent, so
+        // a script's `send` throws instead of vanishing.
         #[cfg(target_arch = "wasm32")]
-        {
+        if state.handle.is_some() {
             state.bridge = Some(ChatBridge::install(self.repaint.clone()));
         }
         self.mode = Mode::Chat(Box::new(state));
