@@ -33,6 +33,11 @@ packaged first. Details: [`docs/cloudflare-workers.md`](docs/cloudflare-workers.
   real Firefox WebRTC and persistence tests, and `trunk build`. It requires
   Node.js, Firefox, `wasm-pack`, and Trunk.
 - `cargo test <substring>` — run a focused unit test.
+- `npm run agent -- send <file>` / `npm run agent -- recv <link> <dir>` — scripted
+  sender and receiver for automation and AI agents (`agent/oxfer-agent.mjs`,
+  served as `/oxfer-agent.mjs`; see [`docs/agent-transfer.md`](docs/agent-transfer.md)).
+  Buttons are found by primary-blue colour in screenshots, so a palette change
+  must update `PRIMARY_BLUE` there.
 
 There must be one workspace `../Cargo.lock`. A gitignored
 `p2p-transfer/Cargo.lock` is stale local state and can make Trunk run a

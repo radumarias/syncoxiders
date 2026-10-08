@@ -1592,6 +1592,9 @@ pub(crate) async fn run_sender_on<T: FrameTx, R: FrameRx, F: DcFactory>(
                             break;
                         }
                         verified = true;
+                        // Automation keys on this line: it is the only sender-side
+                        // signal that the receiver verified every byte (docs/agent-transfer.md).
+                        log::info!("receiver verified {count} files ({bytes} bytes)");
                         receipt_deadline = Some(Instant::now() + opts.aux_deadline);
                         progress.send_modify(|p| {
                             p.file_done = p.file_total;
