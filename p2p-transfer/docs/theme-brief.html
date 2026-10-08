@@ -27,7 +27,7 @@
 <body>
 <h1>Oxfer theme brief</h1>
 <p><strong>Live lab:</strong> designers should use <a href="/theme.html">/theme.html</a> (color pickers, preview, JSON/zip export). This page is the static spec behind it.</p>
-<p>Hand this to a designer proposing a new in-app theme. A theme is a named palette (like today’s <strong>Clean</strong> and <strong>Rusty</strong>) with a <strong>light</strong> and <strong>dark</strong> mode. Clean is the default.</p>
+<p>Hand this to a designer proposing a new in-app theme. A theme is a named palette (like today’s <strong>Clean</strong>, <strong>Rusty</strong>, and <strong>Phosphor</strong>) with a <strong>light</strong> and <strong>dark</strong> mode. Clean is the default.</p>
 
 <div class="note">
   <strong>What to return:</strong> a theme name, the 13 tokens below filled in for both light and dark, a corner-radius choice, browser chrome colors, and one mock of the home screen plus one of the send/receive header. Keep token <em>names</em> — the app maps UI to these slots, not to raw hex.
@@ -37,7 +37,7 @@
 <ul>
   <li><strong>Oxfer</strong> — peer-to-peer file transfer. No cloud. Browser and desktop, same UI.</li>
   <li>Rendered in <strong>egui</strong> (immediate-mode), not CSS. Themes are color + radius tokens, not stylesheets.</li>
-  <li>Users pick a theme (Clean / Rusty / proposed) and independently toggle light/dark.</li>
+  <li>Users pick a theme (Clean / Rusty / Phosphor / proposed) and independently toggle light/dark.</li>
   <li>Live app: <a href="https://oxfer.app">oxfer.app</a></li>
 </ul>
 
@@ -144,14 +144,62 @@
   </div>
 </div>
 
+<h2>Existing alternate — Phosphor</h2>
+<p>A vector CRT: one green phosphor on black, as on an early wireframe display. Light mode is the same machine’s green-bar line-printer paper. Same 13 tokens, plus four theme-level traits the other themes leave off:</p>
+<ul>
+  <li><strong>Monospace everywhere</strong> — every egui text style uses the monospace family, so the whole UI reads as a terminal. The full header needs a wider window before it leaves its compact layout (760 instead of 680).</li>
+  <li><strong>Near-square corners</strong> — controls 2, cards 4, and every other rounded frame, pill, or icon tile capped at 4.</li>
+  <li><strong>Glow (dark only)</strong> — cards and popups cast a zero-offset <code>primary</code> halo (18 blur, ≈13% opacity) instead of a shadow.</li>
+  <li><strong>Backdrop</strong> — dark mode draws a wireframe floor receding to a horizon in <code>outline_var</code>; light mode draws 54-point green-bar bands in <code>surface</code>. Cards stay opaque, so either shows only in gutters and gaps.</li>
+</ul>
+<p><code>error</code> is red-orange, not a second green: it stays distinct from body text by hue and by brightness.</p>
+<div class="pair">
+  <div class="card">
+    <h3>Phosphor light (green-bar paper)</h3>
+    <table>
+      <tr><td>bg</td><td><span class="swatch" style="background:#f1f7ec"></span><span class="hex">#f1f7ec</span></td></tr>
+      <tr><td>surface_lowest</td><td><span class="swatch" style="background:#fbfdf9"></span><span class="hex">#fbfdf9</span></td></tr>
+      <tr><td>surface_low</td><td><span class="swatch" style="background:#fafdf6"></span><span class="hex">#fafdf6</span></td></tr>
+      <tr><td>surface</td><td><span class="swatch" style="background:#dcecd2"></span><span class="hex">#dcecd2</span></td></tr>
+      <tr><td>surface_high</td><td><span class="swatch" style="background:#c7e2b8"></span><span class="hex">#c7e2b8</span></td></tr>
+      <tr><td>primary</td><td><span class="swatch" style="background:#17701a"></span><span class="hex">#17701a</span></td></tr>
+      <tr><td>on_primary</td><td><span class="swatch" style="background:#f4ffee"></span><span class="hex">#f4ffee</span></td></tr>
+      <tr><td>secondary</td><td><span class="swatch" style="background:#3f6a00"></span><span class="hex">#3f6a00</span></td></tr>
+      <tr><td>on_surface</td><td><span class="swatch" style="background:#0f2a10"></span><span class="hex">#0f2a10</span></td></tr>
+      <tr><td>on_surface_var</td><td><span class="swatch" style="background:#3d5a3a"></span><span class="hex">#3d5a3a</span></td></tr>
+      <tr><td>outline</td><td><span class="swatch" style="background:#44703c"></span><span class="hex">#44703c</span></td></tr>
+      <tr><td>outline_var</td><td><span class="swatch" style="background:#b5d1a6"></span><span class="hex">#b5d1a6</span></td></tr>
+      <tr><td>error</td><td><span class="swatch" style="background:#b23a14"></span><span class="hex">#b23a14</span></td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3>Phosphor dark (vector CRT)</h3>
+    <table>
+      <tr><td>bg</td><td><span class="swatch" style="background:#030a04"></span><span class="hex">#030a04</span></td></tr>
+      <tr><td>surface_lowest</td><td><span class="swatch" style="background:#000000"></span><span class="hex">#000000</span></td></tr>
+      <tr><td>surface_low</td><td><span class="swatch" style="background:#061208"></span><span class="hex">#061208</span></td></tr>
+      <tr><td>surface</td><td><span class="swatch" style="background:#0a1a0c"></span><span class="hex">#0a1a0c</span></td></tr>
+      <tr><td>surface_high</td><td><span class="swatch" style="background:#133a14"></span><span class="hex">#133a14</span></td></tr>
+      <tr><td>primary</td><td><span class="swatch" style="background:#39ff14"></span><span class="hex">#39ff14</span></td></tr>
+      <tr><td>on_primary</td><td><span class="swatch" style="background:#021a02"></span><span class="hex">#021a02</span></td></tr>
+      <tr><td>secondary</td><td><span class="swatch" style="background:#c6ff3d"></span><span class="hex">#c6ff3d</span></td></tr>
+      <tr><td>on_surface</td><td><span class="swatch" style="background:#b8ffa0"></span><span class="hex">#b8ffa0</span></td></tr>
+      <tr><td>on_surface_var</td><td><span class="swatch" style="background:#74d65c"></span><span class="hex">#74d65c</span></td></tr>
+      <tr><td>outline</td><td><span class="swatch" style="background:#4fd13a"></span><span class="hex">#4fd13a</span></td></tr>
+      <tr><td>outline_var</td><td><span class="swatch" style="background:#1e5c1b"></span><span class="hex">#1e5c1b</span></td></tr>
+      <tr><td>error</td><td><span class="swatch" style="background:#ff6a3d"></span><span class="hex">#ff6a3d</span></td></tr>
+    </table>
+  </div>
+</div>
+
 <h2>Shape, type, space (shared unless you propose changing them)</h2>
 <table>
-  <tr><th>Token</th><th>Clean</th><th>Rusty</th></tr>
-  <tr><td>Control / primary button radius</td><td>18</td><td>10</td></tr>
-  <tr><td>Card radius</td><td>20</td><td>16</td></tr>
-  <tr><td>Outline button radius</td><td>10</td><td>10</td></tr>
-  <tr><td>Pill radius</td><td>20</td><td>20</td></tr>
-  <tr><td>Favicon / mark radius</td><td colspan="2">22% of square (224 / 1024)</td></tr>
+  <tr><th>Token</th><th>Clean</th><th>Rusty</th><th>Phosphor</th></tr>
+  <tr><td>Control / primary button radius</td><td>18</td><td>10</td><td>2</td></tr>
+  <tr><td>Card radius</td><td>20</td><td>16</td><td>4</td></tr>
+  <tr><td>Outline button radius</td><td>10</td><td>10</td><td>4</td></tr>
+  <tr><td>Pill radius</td><td>20</td><td>20</td><td>4</td></tr>
+  <tr><td>Favicon / mark radius</td><td colspan="3">22% of square (224 / 1024)</td></tr>
 </table>
 <table>
   <tr><th>Measure</th><th>Value</th></tr>
@@ -183,7 +231,7 @@
 
 <h2>Logo and chrome (mostly outside the theme)</h2>
 <ul>
-  <li>Wordmark is a black/white SVG pair, not recolored per theme. Light mode uses the black cut, dark mode the white cut.</li>
+  <li>Wordmark is a black/white SVG pair. Light mode uses the black cut, dark mode the white cut. The app may tint the raster per theme: Phosphor dark multiplies the white cut by <code>primary</code>.</li>
   <li>Favicon OX sits on <code>surface</code> with <code>on_surface</code> letters (Clean values today).</li>
   <li>Browser <code>theme-color</code> / body = header <code>surface</code> and page <code>bg</code>.</li>
   <li>Loading spinner = dark primary <code>#50a2e9</code>; loading label = light primary <code>#2077c1</code>. A new theme should name replacements.</li>
@@ -215,8 +263,8 @@
   <tr><td>outline</td><td></td></tr>
   <tr><td>outline_var</td><td></td></tr>
   <tr><td>error</td><td></td></tr>
-  <tr><td>Control radius (Clean=18, Rusty=10)</td><td></td></tr>
-  <tr><td>Card radius (Clean=20, Rusty=16)</td><td></td></tr>
+  <tr><td>Control radius (Clean=18, Rusty=10, Phosphor=2)</td><td></td></tr>
+  <tr><td>Card radius (Clean=20, Rusty=16, Phosphor=4)</td><td></td></tr>
   <tr><td>theme-color (header)</td><td>usually = surface</td></tr>
   <tr><td>Loading spinner / label</td><td></td></tr>
 </table>

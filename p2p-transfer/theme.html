@@ -132,6 +132,7 @@
   <div class="actions">
     <button type="button" id="load-clean">Start from Clean</button>
     <button type="button" id="load-rusty">Start from Rusty</button>
+    <button type="button" id="load-phosphor">Start from Phosphor</button>
     <label class="file-btn">Upload palette image<input id="palette-image" type="file" accept="image/*" hidden></label>
     <label class="file-btn">Import JSON<input id="import" type="file" accept=".json,application/json" hidden></label>
     <button type="button" class="primary" id="export-json">Export JSON</button>
@@ -225,6 +226,23 @@ const RUSTY = {
     error: "#ffb5a4",
   },
   control_radius: 10, card_radius: 16,
+};
+// The app also sets Phosphor in monospace, adds a glow and wireframe floor in dark mode, and
+// green-bar bands in light mode; the lab previews its colors and radii only.
+const PHOSPHOR = {
+  light: {
+    bg: "#f1f7ec", surface_lowest: "#fbfdf9", surface_low: "#fafdf6", surface: "#dcecd2",
+    surface_high: "#c7e2b8", primary: "#17701a", on_primary: "#f4ffee", secondary: "#3f6a00",
+    on_surface: "#0f2a10", on_surface_var: "#3d5a3a", outline: "#44703c", outline_var: "#b5d1a6",
+    error: "#b23a14",
+  },
+  dark: {
+    bg: "#030a04", surface_lowest: "#000000", surface_low: "#061208", surface: "#0a1a0c",
+    surface_high: "#133a14", primary: "#39ff14", on_primary: "#021a02", secondary: "#c6ff3d",
+    on_surface: "#b8ffa0", on_surface_var: "#74d65c", outline: "#4fd13a", outline_var: "#1e5c1b",
+    error: "#ff6a3d",
+  },
+  control_radius: 2, card_radius: 4,
 };
 
 const state = {
@@ -678,6 +696,7 @@ document.getElementById("prev-wide").onclick = () => { state.compact = false; se
 document.getElementById("prev-compact").onclick = () => { state.compact = true; setPressed("prev-wide", false); setPressed("prev-compact", true); renderAll(); };
 document.getElementById("load-clean").onclick = () => applyPreset(CLEAN, state.name);
 document.getElementById("load-rusty").onclick = () => applyPreset(RUSTY, state.name || "Rusty");
+document.getElementById("load-phosphor").onclick = () => applyPreset(PHOSPHOR, state.name || "Phosphor");
 document.getElementById("export-json").onclick = () => {
   const json = JSON.stringify(bundle(), null, 2);
   download(`oxfer-theme-${slug()}.json`, new Blob([json], { type: "application/json" }));
