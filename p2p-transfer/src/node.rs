@@ -529,16 +529,16 @@ const INCOMPLETE_LINK: &str = "this link is incomplete; ask the sender for the f
 /// Context string of the capability derivation. Changing it invalidates every live link.
 const CAP_CONTEXT: &str = "syncoxiders/p2p-transfer cap v1";
 /// Budget for `Endpoint::online()` before a share reports itself offline.
-const ONLINE_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const ONLINE_TIMEOUT: Duration = Duration::from_secs(15);
 /// Endpoint construction includes browser relay setup and must never leave the UI spinning.
-const BIND_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const BIND_TIMEOUT: Duration = Duration::from_secs(15);
 /// Budget for one dial, for callers that bring no options of their own. A receive session
 /// passes its own `ReceiveOptions::connect_timeout`, which is defined from this same value.
-const DIAL_TIMEOUT: Duration = crate::transfer::CONNECT_TIMEOUT;
+pub(crate) const DIAL_TIMEOUT: Duration = crate::transfer::CONNECT_TIMEOUT;
 /// How long a relay-less node waits for a local address to appear.
-const LOCAL_ADDR_TIMEOUT: Duration = Duration::from_secs(3);
+pub(crate) const LOCAL_ADDR_TIMEOUT: Duration = Duration::from_secs(3);
 /// Poll interval while waiting for that address.
-const LOCAL_ADDR_POLL: Duration = Duration::from_millis(100);
+pub(crate) const LOCAL_ADDR_POLL: Duration = Duration::from_millis(100);
 
 /// Which relay infrastructure a node uses.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -617,7 +617,7 @@ pub(crate) fn without_trailing_relay_dots(addr: EndpointAddr) -> Result<Endpoint
     Ok(EndpointAddr::from_parts(addr.id, addrs))
 }
 
-fn browser_relay_addr(addr: EndpointAddr) -> Result<EndpointAddr, NodeError> {
+pub(crate) fn browser_relay_addr(addr: EndpointAddr) -> Result<EndpointAddr, NodeError> {
     if cfg!(target_arch = "wasm32") {
         without_trailing_relay_dots(addr)
     } else {
@@ -675,6 +675,12 @@ pub struct FragmentParams {
     pub cap: Option<[u8; CAP_LEN]>,
     pub ticket: Option<EndpointTicket>,
     pub error: Option<String>,
+    /// `chat`: the ticket and cap open a chat room, not a file share.
+    pub chat: bool,
+    /// `agent`: the link was copied for an automated agent (informational; see `llms.txt`).
+    pub agent: bool,
+    /// `name=`: the display name to join a chat room with (letters, digits, `_`, `-`, `.`).
+    pub name: Option<String>,
 }
 
 /// One connected peer, as the sender's UI sees it.
@@ -871,6 +877,30 @@ impl Node {
         link
     }
 
+    /// Build a chat room link: `{base}#chat&{ticket}&cap={32 hex}[&agent]`.
+    ///
+    /// Same grammar as a share link plus the `chat` token, so [`Node::parse_fragment`] reads
+    /// both; the `agent` token only tells a reader that an automated agent was meant to open
+    /// it (`/llms.txt` explains what to do with it).
+    pub fn chat_link(
+        base_url: &str,
+        ticket: &EndpointTicket,
+        cap: &[u8; CAP_LEN],
+        agent: bool,
+    ) -> String {
+        let base = base_url.split('#').next().unwrap_or(base_url);
+        let mut link = String::with_capacity(base.len() + 140);
+        link.push_str(base);
+        link.push_str("#chat&");
+        link.push_str(&ticket.to_string());
+        link.push_str("&cap=");
+        link.push_str(&cap_to_hex(cap));
+        if agent {
+            link.push_str("&agent");
+        }
+        link
+    }
+
     /// Parse a URL fragment (with or without its leading `#`).
     ///
     /// Tokens are separated by `&` and are order-insensitive. What an unrecognised token means
@@ -892,6 +922,19 @@ impl Node {
         for token in fragment.split('&').filter(|t| !t.is_empty()) {
             if token == "dev" {
                 params.dev = true;
+            } else if token == "chat" {
+                params.chat = true;
+            } else if token == "agent" {
+                params.agent = true;
+            } else if let Some(value) = token.strip_prefix("name=") {
+                if !value.is_empty()
+                    && value.len() <= crate::protocol::MAX_CHAT_NAME
+                    && value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+                {
+                    params.name = Some(value.to_string());
+                }
             } else if token == "relay" {
                 params.force_relay = true;
             } else if let Some(value) = token.strip_prefix("sink=") {
@@ -943,6 +986,41 @@ impl Node {
     }
 }
 
+/// An endpoint builder with the relay configuration `relay` asks for. Shared by every
+/// ephemeral endpoint (diagnostics, chat) so the relay rules live in one place.
+pub(crate) fn endpoint_builder(relay: &RelayChoice) -> Result<iroh::endpoint::Builder, NodeError> {
+    Ok(match relay {
+        RelayChoice::N0 => Endpoint::builder(presets::N0),
+        RelayChoice::N0WithoutTrailingDots => Endpoint::builder(presets::N0)
+            .relay_mode(RelayMode::Custom(n0_relays_without_trailing_dots()?)),
+        RelayChoice::Custom(url) => Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(RelayMap::from(url.clone()))),
+        RelayChoice::None => Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled),
+    })
+}
+
+/// A ticket other devices can dial: waits for relay registration, or for a local address
+/// when relays are disabled.
+pub(crate) async fn dialable_ticket(
+    endpoint: &Endpoint,
+    relay: &RelayChoice,
+) -> Result<EndpointTicket, NodeError> {
+    if *relay == RelayChoice::None {
+        let deadline = Instant::now() + LOCAL_ADDR_TIMEOUT;
+        while endpoint.addr().ip_addrs().next().is_none() {
+            if Instant::now() >= deadline {
+                return Err(NodeError::Offline);
+            }
+            n0_future::time::sleep(LOCAL_ADDR_POLL).await;
+        }
+        return Ok(EndpointTicket::new(endpoint.addr()));
+    }
+    timeout(ONLINE_TIMEOUT, endpoint.online())
+        .await
+        .map_err(|_| NodeError::Offline)?;
+    Ok(EndpointTicket::new(browser_relay_addr(endpoint.addr())?))
+}
+
 /// Separate ALPN and no file handler: opening a diagnostics link never serves a
 /// shared file or turns it into a valid transfer link.
 const DIAGNOSTIC_ALPN: &[u8] = b"oxfer/diagnostics/1";
@@ -964,16 +1042,7 @@ impl DiagnosticNode {
     }
 
     pub async fn bind(relay: RelayChoice) -> Result<Self, NodeError> {
-        let builder = match &relay {
-            RelayChoice::N0 => Endpoint::builder(presets::N0),
-            RelayChoice::N0WithoutTrailingDots => Endpoint::builder(presets::N0)
-                .relay_mode(RelayMode::Custom(n0_relays_without_trailing_dots()?)),
-            RelayChoice::Custom(url) => Endpoint::builder(presets::Minimal)
-                .relay_mode(RelayMode::Custom(RelayMap::from(url.clone()))),
-            RelayChoice::None => {
-                Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
-            }
-        };
+        let builder = endpoint_builder(&relay)?;
         let endpoint = timeout(
             BIND_TIMEOUT,
             builder
@@ -997,22 +1066,7 @@ impl DiagnosticNode {
     }
 
     pub async fn ticket(&self) -> Result<EndpointTicket, NodeError> {
-        if self.relay == RelayChoice::None {
-            let deadline = Instant::now() + LOCAL_ADDR_TIMEOUT;
-            while self.endpoint.addr().ip_addrs().next().is_none() {
-                if Instant::now() >= deadline {
-                    return Err(NodeError::Offline);
-                }
-                n0_future::time::sleep(LOCAL_ADDR_POLL).await;
-            }
-            return Ok(EndpointTicket::new(self.endpoint.addr()));
-        }
-        timeout(ONLINE_TIMEOUT, self.endpoint.online())
-            .await
-            .map_err(|_| NodeError::Offline)?;
-        Ok(EndpointTicket::new(browser_relay_addr(
-            self.endpoint.addr(),
-        )?))
+        dialable_ticket(&self.endpoint, &self.relay).await
     }
 
     pub async fn probe(&self, ticket: &EndpointTicket) -> Result<(), NodeError> {
@@ -1077,7 +1131,7 @@ impl ProtocolHandler for DiagnosticHandler {
 }
 
 /// Derive a share's capability from its secret key (design §4.7).
-fn derive_cap(secret: &SecretKey) -> [u8; CAP_LEN] {
+pub(crate) fn derive_cap(secret: &SecretKey) -> [u8; CAP_LEN] {
     let derived = blake3::derive_key(CAP_CONTEXT, &secret.to_bytes());
     let mut cap = [0u8; CAP_LEN];
     cap.copy_from_slice(&derived[..CAP_LEN]);

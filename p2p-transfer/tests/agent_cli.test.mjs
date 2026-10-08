@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { classifyLink, findPrimaryButton, parseArgs, PRIMARY_BLUE } from "../agent/oxfer-agent.mjs";
+import {
+    classifyLink,
+    findPrimaryButton,
+    findShareLink,
+    parseArgs,
+    withChatName,
+    PRIMARY_BLUE,
+} from "../agent/oxfer-agent.mjs";
 
 const read = path => readFile(new URL(path, import.meta.url), "utf8");
 const share = "https://oxfer.app/#endpointadgxn5zl2zfsyzz7clou244grpcaza4t4e62rxsl3agmhvdmo4c7gaiaejuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zp&cap=b12d9525bb44971d1375bf8f2bcf4e9e";
@@ -18,6 +25,19 @@ test("classifyLink tells the home page, share links and diagnostics apart", () =
     assert.equal(classifyLink(share.replace("&cap=b12d9525bb44971d1375bf8f2bcf4e9e", "")), "invalid", "a link without its access code");
     assert.equal(classifyLink("https://oxfer.app/?cap=b12d9525bb44971d1375bf8f2bcf4e9e"), "invalid", "the capability must stay in the fragment");
     assert.equal(classifyLink("not a url"), "invalid");
+    const room = share.replace("/#", "/#chat&");
+    assert.equal(classifyLink(room), "chat");
+    assert.equal(classifyLink(`${room}&agent`), "chat");
+    assert.equal(classifyLink(`${room}&name=agent1`), "chat");
+});
+
+test("share links are found inside chat text and names are appended safely", () => {
+    assert.equal(findShareLink(`Sharing a.bin (97 bytes). Open this link to receive it: ${share}`), share);
+    assert.equal(findShareLink(`here: ${share}.`), share, "trailing punctuation is not part of the link");
+    assert.equal(findShareLink("no link here https://oxfer.app/"), null);
+    assert.equal(findShareLink(`room ${share.replace("/#", "/#chat&")}`), null, "a room link is not a share link");
+    assert.equal(withChatName("https://oxfer.app/#chat&x&cap=y", "agent-1"), "https://oxfer.app/#chat&x&cap=y&name=agent-1");
+    assert.equal(withChatName("https://oxfer.app/#chat&x&cap=y", "no spaces"), "https://oxfer.app/#chat&x&cap=y");
 });
 
 test("parseArgs separates positionals, flags and values", () => {
@@ -65,5 +85,12 @@ test("the site tells HTTP-only clients how to drive it", async () => {
     assert.match(llms, /oxfer-agent\.mjs send/);
     assert.match(llms, /oxfer-agent\.mjs recv/);
     assert.match(llms, /#endpoint…&cap=…/);
+    assert.match(llms, /#chat&endpoint…&cap=…/);
+    assert.match(llms, /oxfer-agent\.mjs chat/);
+    assert.match(llms, /send .* --chat/);
+    assert.match(html, /<noscript>[\s\S]*#chat&amp;[\s\S]*<\/noscript>/);
+    const bridge = await read("../assets/chat-bridge.js");
+    assert.match(bridge, /oxfer:chat/);
+    assert.match(bridge, /export function installChatSender/);
     assert.doesNotMatch(llms, /cap=[0-9a-f]{32}/, "never publish a real capability");
 });

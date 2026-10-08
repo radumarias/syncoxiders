@@ -3287,3 +3287,265 @@ async fn online_test_node_ticket() {
     assert_eq!(ticket.endpoint_addr().id, node.id());
     node.shutdown().await;
 }
+
+// ---------------------------------------------------------------------------------------
+// Chat rooms
+// ---------------------------------------------------------------------------------------
+
+#[test]
+fn local_test_chat_frames_round_trip_within_bounds() {
+    use crate::protocol::{
+        clean_chat_name, clean_chat_text, decode_chat, encode_chat, ChatMsg, MAX_CHAT_NAME,
+        MAX_CHAT_TEXT,
+    };
+
+    let hello = ChatMsg::Hello {
+        version: crate::protocol::CHAT_VERSION,
+        cap: test_cap(7),
+        name: "Ana".into(),
+    };
+    let frame = encode_chat(&hello).unwrap();
+    assert_eq!(decode_chat(&frame).unwrap(), hello);
+    assert!(
+        !format!("{hello:?}").contains(&cap_to_hex(&test_cap(7))),
+        "Debug must redact the capability"
+    );
+
+    // A file-protocol frame is not a chat frame.
+    let control = encode_control(&Control::UseRelay).unwrap();
+    assert!(matches!(
+        decode_chat(&control),
+        Err(ProtocolError::UnknownTag(0))
+    ));
+
+    // Over-long text is refused on both sides, so a peer can never make us allocate it.
+    let long = ChatMsg::Say {
+        text: "x".repeat(MAX_CHAT_TEXT + 1),
+    };
+    assert!(matches!(
+        encode_chat(&long),
+        Err(ProtocolError::TooLarge(_))
+    ));
+
+    assert_eq!(
+        clean_chat_text("  hi\u{0}there \n"),
+        "hi\u{0}there".replace('\u{0}', "")
+    );
+    assert_eq!(clean_chat_text("a\tb\nc"), "a\tb\nc");
+    assert_eq!(clean_chat_name("  Ana   Maria \n"), "Ana Maria");
+    assert_eq!(clean_chat_name("\u{7}"), "");
+    assert!(clean_chat_name(&"é".repeat(40)).len() <= MAX_CHAT_NAME);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_test_chat_room_relays_messages_between_guests_over_loopback() {
+    use crate::chat::{ChatCommand, ChatEvent, ChatHandle};
+    use crate::node::Node;
+
+    async fn next_event(handle: &mut ChatHandle, step: &str) -> ChatEvent {
+        timeout(Duration::from_secs(10), handle.events.recv())
+            .await
+            .unwrap_or_else(|_| panic!("chat event timed out at: {step}"))
+            .unwrap_or_else(|| panic!("chat session ended at: {step}"))
+    }
+
+    let _ = env_logger::builder().is_test(true).try_init();
+    timeout(Duration::from_secs(40), async {
+        let mut host = ChatHandle::host(
+            RelayChoice::None,
+            "Radu".into(),
+            "https://oxfer.app/".into(),
+        );
+        let (link, agent_link) = match next_event(&mut host, "host ready").await {
+            ChatEvent::Ready {
+                link,
+                agent_link,
+                you,
+            } => {
+                assert_eq!(you, "Radu");
+                (link, agent_link)
+            }
+            other => panic!("expected Ready, got {other:?}"),
+        };
+        assert!(agent_link.ends_with("&agent"));
+        let fragment = link.split('#').nth(1).unwrap();
+        let params = Node::parse_fragment(fragment);
+        assert!(params.chat && !params.agent && params.error.is_none());
+        assert!(Node::parse_fragment(agent_link.split('#').nth(1).unwrap()).agent);
+        let ticket = params.ticket.clone().unwrap();
+        let cap = params.cap.unwrap();
+
+        let mut ana = ChatHandle::join(RelayChoice::None, ticket.clone(), cap, "Ana".into());
+        match next_event(&mut ana, "ana connected").await {
+            ChatEvent::Connected { you, members } => {
+                assert_eq!(you, "Ana");
+                assert_eq!(members, vec!["Radu".to_string()]);
+            }
+            other => panic!("expected Connected, got {other:?}"),
+        }
+        assert_eq!(
+            next_event(&mut host, "host sees ana").await,
+            ChatEvent::Joined { name: "Ana".into() }
+        );
+
+        // A second guest with the same requested name gets a distinct one.
+        let mut ana2 = ChatHandle::join(RelayChoice::None, ticket.clone(), cap, "Ana".into());
+        match next_event(&mut ana2, "ana2 connected").await {
+            ChatEvent::Connected { you, members } => {
+                assert_eq!(you, "Ana 2");
+                assert_eq!(members, vec!["Radu".to_string(), "Ana".to_string()]);
+            }
+            other => panic!("expected Connected, got {other:?}"),
+        }
+        assert_eq!(
+            next_event(&mut host, "host sees ana2").await,
+            ChatEvent::Joined {
+                name: "Ana 2".into()
+            }
+        );
+        assert_eq!(
+            next_event(&mut ana, "ana sees ana2").await,
+            ChatEvent::Joined {
+                name: "Ana 2".into()
+            }
+        );
+
+        // One guest speaks: the host and every guest (the author included) see it once.
+        ana.commands
+            .send(ChatCommand::Say("hello \u{0}room".into()))
+            .await
+            .unwrap();
+        let expected = ChatEvent::Message {
+            from: "Ana".into(),
+            text: "hello room".into(),
+            seq: 1,
+        };
+        assert_eq!(
+            next_event(&mut host, "host gets ana's message").await,
+            expected
+        );
+        assert_eq!(next_event(&mut ana, "ana gets own message").await, expected);
+        assert_eq!(
+            next_event(&mut ana2, "ana2 gets ana's message").await,
+            expected
+        );
+
+        // The host speaks too, and blank messages are dropped.
+        host.commands
+            .send(ChatCommand::Say("   ".into()))
+            .await
+            .unwrap();
+        host.commands
+            .send(ChatCommand::Say("welcome".into()))
+            .await
+            .unwrap();
+        let expected = ChatEvent::Message {
+            from: "Radu".into(),
+            text: "welcome".into(),
+            seq: 2,
+        };
+        assert_eq!(
+            next_event(&mut host, "host gets own message").await,
+            expected
+        );
+        assert_eq!(
+            next_event(&mut ana, "ana gets host message").await,
+            expected
+        );
+        assert_eq!(
+            next_event(&mut ana2, "ana2 gets host message").await,
+            expected
+        );
+
+        // A late guest gets the conversation so far, in order, before anything new.
+        let mut late = ChatHandle::join(RelayChoice::None, ticket.clone(), cap, "Late".into());
+        assert!(matches!(
+            next_event(&mut late, "late connected").await,
+            ChatEvent::Connected { .. }
+        ));
+        assert_eq!(
+            next_event(&mut late, "late replay 1").await,
+            ChatEvent::Message {
+                from: "Ana".into(),
+                text: "hello room".into(),
+                seq: 1,
+            }
+        );
+        assert_eq!(
+            next_event(&mut late, "late replay 2").await,
+            ChatEvent::Message {
+                from: "Radu".into(),
+                text: "welcome".into(),
+                seq: 2,
+            }
+        );
+        drop(late);
+        for (handle, step) in [
+            (&mut host, "host sees late"),
+            (&mut ana, "ana sees late"),
+            (&mut ana2, "ana2 sees late"),
+        ] {
+            assert_eq!(
+                next_event(handle, step).await,
+                ChatEvent::Joined {
+                    name: "Late".into()
+                }
+            );
+            assert_eq!(
+                next_event(handle, step).await,
+                ChatEvent::Left {
+                    name: "Late".into()
+                }
+            );
+        }
+
+        // A wrong access code is rejected before anything else happens.
+        let mut intruder = ChatHandle::join(
+            RelayChoice::None,
+            ticket.clone(),
+            test_cap(99),
+            "Eve".into(),
+        );
+        match next_event(&mut intruder, "intruder rejected").await {
+            ChatEvent::Failed(message) => assert!(message.contains("rejected"), "{message}"),
+            other => panic!("expected Failed, got {other:?}"),
+        }
+
+        // Leaving is announced; closing the room ends every guest session.
+        drop(ana2);
+        assert_eq!(
+            next_event(&mut host, "host sees ana2 leave").await,
+            ChatEvent::Left {
+                name: "Ana 2".into()
+            }
+        );
+        assert_eq!(
+            next_event(&mut ana, "ana sees ana2 leave").await,
+            ChatEvent::Left {
+                name: "Ana 2".into()
+            }
+        );
+        drop(host);
+        assert!(matches!(
+            next_event(&mut ana, "ana sees room close").await,
+            ChatEvent::Closed | ChatEvent::Failed(_)
+        ));
+    })
+    .await
+    .expect("chat loopback test timed out");
+}
+
+#[test]
+fn local_test_chat_event_json_escapes_strings() {
+    use crate::chat::{event_json, ChatEvent};
+    let json = event_json(&ChatEvent::Message {
+        from: "A \"B\"".into(),
+        text: "line1\nline2\\ \u{1}".into(),
+        seq: 3,
+    });
+    assert_eq!(
+        json,
+        r#"{"type":"message","from":"A \"B\"","text":"line1\nline2\\ \u0001","seq":3}"#
+    );
+    assert_eq!(event_json(&ChatEvent::Closed), r#"{"type":"closed"}"#);
+}

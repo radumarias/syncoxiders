@@ -13,6 +13,7 @@ use n0_future::task::{self, AbortOnDropHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
+use crate::chat::{ChatCommand, ChatEvent, ChatHandle};
 use crate::file_io::{self, FileOrigin, FileSnapshot, SharedFile, SharedFiles};
 use crate::logging;
 #[cfg(target_arch = "wasm32")]
@@ -41,6 +42,17 @@ extern "C" {
 extern "C" {
     #[wasm_bindgen(js_name = setBrowserTheme)]
     fn set_browser_theme(theme: &str, dark: bool);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(module = "/assets/chat-bridge.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = installChatSender)]
+    fn install_chat_sender(callback: &wasm_bindgen::JsValue);
+    #[wasm_bindgen(js_name = removeChatSender)]
+    fn remove_chat_sender();
+    #[wasm_bindgen(js_name = emitChatEvent)]
+    fn emit_chat_event(json: &str);
 }
 
 /// Shown next to a link, because the link *is* the credential (design §2.6).
@@ -292,6 +304,7 @@ enum Mode {
         preparing: Vec<PrepareHandle>,
     },
     Receive(Box<ReceiveState>),
+    Chat(Box<ChatState>),
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -304,6 +317,182 @@ struct DiagnosticPeer {
     outcome: Option<String>,
     busy: bool,
     generation: u64,
+}
+
+// ── Chat rooms ───────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChatRole {
+    Host,
+    Guest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ChatStatus {
+    Starting,
+    Open,
+    Failed(String),
+    Closed,
+}
+
+struct ChatLine {
+    /// `None` for a room notice (someone joined, the room closed).
+    from: Option<String>,
+    text: String,
+    mine: bool,
+}
+
+/// One open room, hosted here or joined from a link. Dropping it leaves the room.
+struct ChatState {
+    role: ChatRole,
+    you: Option<String>,
+    link: Option<String>,
+    agent_link: Option<String>,
+    /// Which link was copied last, for the button label.
+    copied: Option<&'static str>,
+    members: Vec<String>,
+    lines: Vec<ChatLine>,
+    input: String,
+    status: ChatStatus,
+    handle: Option<ChatHandle>,
+    /// Created from the "For agents" menu or opened from an `&agent` link.
+    for_agents: bool,
+    focus_input: bool,
+    #[cfg(target_arch = "wasm32")]
+    bridge: Option<ChatBridge>,
+}
+
+impl ChatState {
+    fn new(role: ChatRole, handle: Option<ChatHandle>, for_agents: bool) -> Self {
+        Self {
+            role,
+            you: None,
+            link: None,
+            agent_link: None,
+            copied: None,
+            members: Vec::new(),
+            lines: Vec::new(),
+            input: String::new(),
+            status: ChatStatus::Starting,
+            handle,
+            for_agents,
+            focus_input: true,
+            #[cfg(target_arch = "wasm32")]
+            bridge: None,
+        }
+    }
+
+    fn polling(&self) -> bool {
+        self.handle.is_some() && matches!(self.status, ChatStatus::Starting | ChatStatus::Open)
+    }
+
+    fn say(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        if let Some(handle) = &self.handle {
+            // A full queue means the session is already behind by 16 messages; dropping
+            // one typed line is better than blocking the frame.
+            let _ = handle.commands.try_send(ChatCommand::Say(text.to_string()));
+        }
+    }
+
+    fn note(&mut self, text: impl Into<String>) {
+        self.lines.push(ChatLine {
+            from: None,
+            text: text.into(),
+            mine: false,
+        });
+    }
+
+    fn apply(&mut self, event: ChatEvent) {
+        match event {
+            ChatEvent::Ready {
+                link,
+                agent_link,
+                you,
+            } => {
+                self.members = vec![you.clone()];
+                self.you = Some(you);
+                self.link = Some(link);
+                self.agent_link = Some(agent_link);
+                self.status = ChatStatus::Open;
+                self.note("Room open. Send the link to the person you want to talk to.");
+            }
+            ChatEvent::Connected { you, members } => {
+                self.you = Some(you);
+                self.members = members;
+                self.status = ChatStatus::Open;
+                self.note("You're in.");
+            }
+            ChatEvent::Message { from, text, .. } => {
+                let mine = self.you.as_deref() == Some(from.as_str());
+                self.lines.push(ChatLine {
+                    from: Some(from),
+                    text,
+                    mine,
+                });
+            }
+            ChatEvent::Joined { name } => {
+                if !self.members.contains(&name) {
+                    self.members.push(name.clone());
+                }
+                self.note(format!("{name} joined"));
+            }
+            ChatEvent::Left { name } => {
+                self.members.retain(|m| *m != name);
+                self.note(format!("{name} left"));
+            }
+            ChatEvent::Failed(message) => {
+                self.status = ChatStatus::Failed(message);
+                self.handle = None;
+            }
+            ChatEvent::Closed => {
+                self.status = ChatStatus::Closed;
+                self.handle = None;
+                self.note("The room is closed.");
+            }
+        }
+    }
+}
+
+/// Page-script access to the open room (`assets/chat-bridge.js`): events go out as DOM
+/// events, and `window.oxfer.chat.send` queues text that `poll_chat` turns into messages.
+#[cfg(target_arch = "wasm32")]
+struct ChatBridge {
+    outbox: Arc<Mutex<Vec<String>>>,
+    _closure: wasm_bindgen::closure::Closure<dyn FnMut(String)>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl ChatBridge {
+    fn install(repaint: egui::Context) -> Self {
+        let outbox: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let closure = wasm_bindgen::closure::Closure::new({
+            let outbox = outbox.clone();
+            move |text: String| {
+                outbox.lock().unwrap().push(text);
+                repaint.request_repaint();
+            }
+        });
+        install_chat_sender(closure.as_ref());
+        Self {
+            outbox,
+            _closure: closure,
+        }
+    }
+
+    fn drain(&self) -> Vec<String> {
+        std::mem::take(&mut *self.outbox.lock().unwrap())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for ChatBridge {
+    fn drop(&mut self) {
+        remove_chat_sender();
+    }
 }
 
 /// Browser-only library of opt-in local copies. Neither this state nor any share link is
@@ -832,6 +1021,10 @@ impl P2PTransfer {
     fn start_receive(&mut self, input: &str) {
         let fragment = input.split_once('#').map(|(_, f)| f).unwrap_or(input);
         let params = Node::parse_fragment(fragment);
+        if params.chat && params.error.is_none() {
+            self.start_chat_join(&params);
+            return;
+        }
 
         if let Some(error) = params.error.clone() {
             self.set_receive(params, Some(input.to_string()), None, Some(error), false);
@@ -1173,7 +1366,34 @@ impl P2PTransfer {
             return;
         }
         let params = Node::parse_fragment(hash);
+        if params.chat && params.ticket.is_none() && params.cap.is_none() && params.error.is_none()
+        {
+            // `#chat` (optionally `#chat&agent`) with no ticket: open a new room here.
+            self.last_fragment = Some(format!(
+                "{}{}",
+                window.location().pathname().unwrap_or_default(),
+                hash
+            ));
+            self.start_chat_host(params.agent);
+            return;
+        }
         if params.ticket.is_none() && params.cap.is_none() && params.error.is_none() {
+            return;
+        }
+        if params.chat && params.error.is_none() {
+            // A room link: scrub it like a share link, then join instead of receiving.
+            let href = window.location().href().unwrap_or_default();
+            let base = href.split('#').next().unwrap_or(&href).to_string();
+            if let Ok(history) = window.history() {
+                let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&base));
+            }
+            self.last_fragment = Some(format!(
+                "{}{}",
+                window.location().pathname().unwrap_or_default(),
+                window.location().hash().unwrap_or_default()
+            ));
+            self.reset_peer_diagnostics();
+            self.start_chat_join(&params);
             return;
         }
 
@@ -1360,6 +1580,7 @@ impl P2PTransfer {
             || match &self.mode {
                 Mode::Send { preparing } => !preparing.is_empty(),
                 Mode::Receive(r) => r.opening || r.handle.is_some(),
+                Mode::Chat(c) => c.polling(),
                 Mode::Home => false,
                 #[cfg(target_arch = "wasm32")]
                 Mode::Diagnostics => false,
@@ -1379,6 +1600,8 @@ impl P2PTransfer {
                         progress.as_ref().map(|p| &p.phase),
                     )
                 }
+                // A room lives only while its page is awake.
+                Mode::Chat(c) => c.polling(),
                 Mode::Home | Mode::Diagnostics => false,
             }
     }
@@ -2184,6 +2407,16 @@ impl P2PTransfer {
                     .clicked()
                 {
                     self.pick_file();
+                }
+                ui.add_space(8.0);
+                if ui
+                    .add_sized(
+                        [width, 44.0],
+                        outline_button("Start a chat room", tc.outline),
+                    )
+                    .clicked()
+                {
+                    self.start_chat_host(false);
                 }
                 ui.add_space(12.0);
                 ui.add(
@@ -3220,6 +3453,7 @@ impl P2PTransfer {
                 Mode::Diagnostics => "DIAG",
                 Mode::Send { .. } => "TX",
                 Mode::Receive(_) => "RX",
+                Mode::Chat(_) => "CHAT",
             };
             if !compact {
                 ui.add_space(8.0);
@@ -3276,10 +3510,24 @@ impl P2PTransfer {
                         self.show_terminal_view = true;
                         ui.close();
                     }
+                    if compact
+                        && ui
+                            .add_enabled(
+                                !self.is_preparing_share(),
+                                Button::new("Start a room for agents"),
+                            )
+                            .clicked()
+                    {
+                        self.start_chat_host(true);
+                        ui.close();
+                    }
                 });
+                if !compact {
+                    self.show_agents_menu(ui);
+                }
                 if !compact
                     && !at_home
-                    && !matches!(self.mode, Mode::Receive(_))
+                    && !matches!(self.mode, Mode::Receive(_) | Mode::Chat(_))
                     && ui.add(primary_button(tc, "Choose File")).clicked()
                 {
                     self.pick_file();
@@ -3459,6 +3707,378 @@ impl P2PTransfer {
 
 // ── eframe glue ──────────────────────────────────────────────────────────────
 
+// ── Chat rooms: flows and rendering ─────────────────────────────────────────
+
+impl P2PTransfer {
+    /// Open a room here. Idempotent while this page already hosts one.
+    fn start_chat_host(&mut self, for_agents: bool) {
+        if let Mode::Chat(state) = &mut self.mode {
+            if state.role == ChatRole::Host && state.polling() {
+                state.for_agents |= for_agents;
+                return;
+            }
+        }
+        if self.is_preparing_share() {
+            return;
+        }
+        let handle = ChatHandle::host(RelayChoice::from_env(), String::new(), Self::base_url());
+        self.enter_chat(ChatRole::Host, Some(handle), for_agents, None);
+    }
+
+    /// Join the room a parsed link points at.
+    fn start_chat_join(&mut self, params: &FragmentParams) {
+        let (Some(ticket), Some(cap)) = (params.ticket.clone(), params.cap) else {
+            self.enter_chat(
+                ChatRole::Guest,
+                None,
+                params.agent,
+                Some(MISSING_CAP.to_string()),
+            );
+            return;
+        };
+        let name = params.name.clone().unwrap_or_default();
+        let handle = ChatHandle::join(RelayChoice::from_env(), ticket, cap, name);
+        self.enter_chat(ChatRole::Guest, Some(handle), params.agent, None);
+    }
+
+    fn enter_chat(
+        &mut self,
+        role: ChatRole,
+        handle: Option<ChatHandle>,
+        for_agents: bool,
+        error: Option<String>,
+    ) {
+        #[cfg(target_arch = "wasm32")]
+        self.reset_peer_diagnostics();
+        let mut state = ChatState::new(role, handle, for_agents);
+        if let Some(error) = error {
+            state.status = ChatStatus::Failed(error);
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            state.bridge = Some(ChatBridge::install(self.repaint.clone()));
+        }
+        self.mode = Mode::Chat(Box::new(state));
+    }
+
+    /// Per frame: hand page-script text to the session and apply what the session reported.
+    fn poll_chat(&mut self) {
+        let Mode::Chat(state) = &mut self.mode else {
+            return;
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            let queued = state
+                .bridge
+                .as_ref()
+                .map(ChatBridge::drain)
+                .unwrap_or_default();
+            for text in queued {
+                state.say(&text);
+            }
+        }
+        let events = state
+            .handle
+            .as_mut()
+            .map(ChatHandle::drain)
+            .unwrap_or_default();
+        for event in events {
+            #[cfg(target_arch = "wasm32")]
+            emit_chat_event(&crate::chat::event_json(&event));
+            state.apply(event);
+        }
+    }
+
+    fn show_agents_menu(&mut self, ui: &mut Ui) {
+        ui.menu_button("For agents", |ui| {
+            ui.set_max_width(340.0);
+            ui.label(RichText::new("Let AI agents talk and send files").strong());
+            ui.label(
+                "Start a room and copy the agent link. Give it to your agent, and send the \
+                 same link to the other person for their agent. The link tells an agent how \
+                 to join this room, talk, and send files through it.",
+            );
+            ui.add_space(6.0);
+            let agent_link = match &self.mode {
+                Mode::Chat(state) if state.role == ChatRole::Host => state.agent_link.clone(),
+                _ => None,
+            };
+            match agent_link {
+                Some(link) => {
+                    if ui.button("Copy link for agent").clicked() {
+                        ui.ctx().copy_text(link);
+                        if let Mode::Chat(state) = &mut self.mode {
+                            state.copied = Some("agent");
+                        }
+                        ui.close();
+                    }
+                }
+                None => {
+                    if ui
+                        .add_enabled(
+                            !self.is_preparing_share(),
+                            Button::new("Start a room for agents"),
+                        )
+                        .clicked()
+                    {
+                        self.start_chat_host(true);
+                        ui.close();
+                    }
+                }
+            }
+        });
+    }
+
+    fn show_chat(&mut self, ui: &mut Ui) {
+        let tc = Tc::of(self.theme, ui.visuals().dark_mode);
+        let compact = compact(ui);
+        let Mode::Chat(state) = &mut self.mode else {
+            return;
+        };
+        let mut leave = false;
+        let mut submit: Option<String> = None;
+        let host = state.role == ChatRole::Host;
+        card(&tc).show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.heading(RichText::new("Chat room").color(tc.on_surface));
+                pill(ui, &tc, "ENCRYPTED", true);
+            });
+            ui.add_space(6.0);
+            match &state.status {
+                ChatStatus::Starting => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(if host {
+                            "Opening the room…"
+                        } else {
+                            "Connecting to the room…"
+                        });
+                    });
+                }
+                ChatStatus::Open => {
+                    ui.label(
+                        RichText::new(if host {
+                            "Keep this page open: the room closes when you leave it."
+                        } else {
+                            "Keep this page open while you talk."
+                        })
+                        .color(tc.on_surface_var)
+                        .size(13.0),
+                    );
+                }
+                ChatStatus::Failed(message) => {
+                    ui.label(RichText::new(message.as_str()).color(tc.error));
+                }
+                ChatStatus::Closed => {
+                    ui.label(RichText::new("The room is closed.").color(tc.on_surface_var));
+                }
+            }
+
+            if let (true, Some(link)) = (host, state.link.clone()) {
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("Send this link to the person you want to talk to.")
+                        .color(tc.on_surface)
+                        .strong(),
+                );
+                link_box(ui, &tc, &link);
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_sized(
+                            [200.0, 44.0],
+                            copy_button(&tc, state.copied == Some("link")),
+                        )
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(link.clone());
+                        state.copied = Some("link");
+                    }
+                    if let Some(agent_link) = state.agent_link.clone() {
+                        let label = if state.copied == Some("agent") {
+                            "✓ Copied agent link"
+                        } else {
+                            "Copy link for agent"
+                        };
+                        if ui
+                            .add_sized([200.0, 44.0], outline_button(label, tc.outline))
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(agent_link);
+                            state.copied = Some("agent");
+                            state.for_agents = true;
+                        }
+                    }
+                });
+                ui.label(
+                    RichText::new(
+                        "Anyone with this link can join while this page is open. Send it only \
+                         to people you trust.",
+                    )
+                    .color(tc.error)
+                    .size(12.0),
+                );
+            }
+
+            if state.for_agents {
+                ui.add_space(8.0);
+                egui::CollapsingHeader::new(RichText::new("For agents").strong())
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(
+                                "An agent that opens the agent link finds instructions in the \
+                                 page itself (/llms.txt): how to join this room, read and post \
+                                 messages, and send a file by sharing it here and posting the \
+                                 share link in the room. Both agents need the same link.",
+                            )
+                            .color(tc.on_surface_var)
+                            .size(13.0),
+                        );
+                        if let Some(agent_link) = &state.agent_link {
+                            link_box(ui, &tc, agent_link);
+                        }
+                    });
+            }
+
+            ui.add_space(10.0);
+            if !state.members.is_empty() {
+                ui.label(
+                    RichText::new(format!("In the room: {}", state.members.join(", ")))
+                        .color(tc.on_surface_var)
+                        .size(13.0),
+                );
+            }
+            ui.add_space(6.0);
+            egui::Frame::new()
+                .fill(tc.surface_lowest)
+                .corner_radius(CornerRadius::same(10))
+                .stroke(Stroke::new(1.0, tc.outline_var))
+                .inner_margin(egui::Margin::same(10))
+                .show(ui, |ui| {
+                    ui.set_min_height(180.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(if compact { 280.0 } else { 360.0 })
+                        .stick_to_bottom(true)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 4.0;
+                            if state.lines.is_empty() {
+                                ui.label(
+                                    RichText::new("No messages yet.").color(tc.on_surface_var),
+                                );
+                            }
+                            for line in &state.lines {
+                                match &line.from {
+                                    None => {
+                                        ui.label(
+                                            RichText::new(&line.text)
+                                                .italics()
+                                                .color(tc.on_surface_var)
+                                                .size(13.0),
+                                        );
+                                    }
+                                    Some(from) => {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label(
+                                                RichText::new(format!("{from}:")).strong().color(
+                                                    if line.mine {
+                                                        tc.primary
+                                                    } else {
+                                                        tc.on_surface
+                                                    },
+                                                ),
+                                            );
+                                            ui.label(
+                                                RichText::new(&line.text).color(tc.on_surface),
+                                            );
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                });
+            ui.add_space(8.0);
+            let open = matches!(state.status, ChatStatus::Open);
+            ui.horizontal(|ui| {
+                let send_width = 84.0;
+                let input_width =
+                    (ui.available_width() - send_width - ui.spacing().item_spacing.x).max(80.0);
+                let response = egui::Frame::new()
+                    .fill(tc.surface_lowest)
+                    .corner_radius(CornerRadius::same(10))
+                    .stroke(Stroke::new(1.0, tc.outline_var))
+                    .inner_margin(egui::Margin::symmetric(12, 10))
+                    .show(ui, |ui| {
+                        ui.add_enabled(
+                            open,
+                            egui::TextEdit::singleline(&mut state.input)
+                                .hint_text("Type a message and press Enter")
+                                .frame(egui::Frame::new())
+                                .text_color(tc.on_surface)
+                                .desired_width(input_width - 24.0),
+                        )
+                    })
+                    .inner;
+                if open && state.focus_input {
+                    response.request_focus();
+                    state.focus_input = false;
+                }
+                let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let clicked = ui
+                    .add_enabled_ui(open, |ui| {
+                        ui.add_sized([send_width, 40.0], primary_button(&tc, "Send"))
+                    })
+                    .inner
+                    .clicked();
+                if open && (enter || clicked) && !state.input.trim().is_empty() {
+                    submit = Some(std::mem::take(&mut state.input));
+                    state.focus_input = true;
+                }
+            });
+            ui.add_space(10.0);
+            let leave_label = match (host, &state.status) {
+                (true, ChatStatus::Open | ChatStatus::Starting) => "Close room",
+                (false, ChatStatus::Open | ChatStatus::Starting) => "Leave room",
+                _ => "Back to home",
+            };
+            if ui
+                .add_sized([140.0, 44.0], outline_button(leave_label, tc.outline))
+                .clicked()
+            {
+                leave = true;
+            }
+        });
+        if let Some(text) = submit {
+            state.say(&text);
+        }
+        if leave {
+            self.mode = Mode::Home;
+        }
+    }
+}
+
+/// A wrapped, selectable monospace link inside a quiet frame.
+fn link_box(ui: &mut Ui, tc: &Tc, link: &str) {
+    egui::Frame::new()
+        .fill(tc.surface_lowest)
+        .corner_radius(CornerRadius::same(10))
+        .stroke(Stroke::new(1.0, tc.outline_var))
+        .inner_margin(egui::Margin::same(10))
+        .show(ui, |ui| {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(link)
+                        .monospace()
+                        .size(12.0)
+                        .color(tc.on_surface),
+                )
+                .wrap()
+                .selectable(true),
+            );
+        });
+}
+
 impl eframe::App for P2PTransfer {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
@@ -3473,6 +4093,7 @@ impl eframe::App for P2PTransfer {
         self.prune_preparing();
         self.adopt_pending_handle();
         self.poll_receive();
+        self.poll_chat();
         self.drain_error();
 
         #[cfg(target_arch = "wasm32")]
@@ -3579,14 +4200,17 @@ impl eframe::App for P2PTransfer {
                             Mode::Diagnostics => self.show_diagnostics(ui),
                             Mode::Send { .. } => self.show_send(ui),
                             Mode::Receive(_) => self.show_receive(ui),
+                            Mode::Chat(_) => self.show_chat(ui),
                         }
                         #[cfg(target_arch = "wasm32")]
-                        if !matches!(self.mode, Mode::Diagnostics) {
+                        if !matches!(self.mode, Mode::Diagnostics | Mode::Chat(_)) {
                             self.show_received_files(ui);
                             self.show_local_copies(ui);
                         }
                         #[cfg(not(target_arch = "wasm32"))]
-                        self.show_received_files(ui);
+                        if !matches!(self.mode, Mode::Chat(_)) {
+                            self.show_received_files(ui);
+                        }
                     });
                 });
             });
