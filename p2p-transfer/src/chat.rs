@@ -6,9 +6,9 @@
 //! message to every member in one order, and announces joins and leaves. Nothing is stored:
 //! the room ends when the host's page closes.
 //!
-//! Transport pieces are shared with the file protocol: [`split_control`] for the framed
-//! stream, [`cap_eq`] for the access code, and the same relay selection as every other
-//! endpoint. The frames themselves are [`ChatMsg`] on their own ALPN.
+//! Transport pieces are shared with the file protocol: [`split_control_with_queue`] for the
+//! framed stream, [`cap_eq`] for the access code, and the node helpers for binding, dialling
+//! and accepting. The frames themselves are [`ChatMsg`] on their own ALPN.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,9 +19,9 @@ use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{EndpointId, SecretKey};
 use iroh_tickets::endpoint::EndpointTicket;
-use n0_future::task::{self, AbortOnDropHandle, JoinHandle};
+use n0_future::task::{self, JoinHandle};
 use n0_future::time::{timeout, Duration, Instant};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::node::{self, Node, NodeError, RelayChoice};
@@ -29,12 +29,12 @@ use crate::protocol::{
     cap_eq, clean_chat_name, clean_chat_text, decode_chat, encode_chat, ChatMsg, CAP_LEN,
     CHAT_ALPN, CHAT_VERSION, MAX_CHAT_MEMBERS,
 };
-use crate::transfer::{split_control, FrameRx, FrameTx, Path};
+use crate::transfer::{split_control, split_control_with_queue, ControlTx, FrameRx, FrameTx, Path};
 
 /// How long a guest has to send `Hello` after connecting, and a host to answer it.
 const HELLO_DEADLINE: Duration = Duration::from_secs(10);
-/// Frames queued per guest before the host stops waiting for that guest. Larger than
-/// [`HISTORY`] so a join can replay the whole history without filling the queue.
+/// Frames queued for one guest before the host disconnects it rather than wait. Larger than
+/// [`HISTORY`] so a join can replay the whole history in one go.
 const OUTBOUND_QUEUE: usize = 128;
 /// Messages replayed to a guest that joins late, so a share link posted a moment before
 /// the other side arrived is not lost.
@@ -86,6 +86,31 @@ pub enum ChatCommand {
     Say(String),
 }
 
+/// Called after every event is queued, so a UI without its own callback (egui) can repaint
+/// on demand instead of polling.
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// The session's side of the event channel: queue an event, then wake the UI.
+#[derive(Clone)]
+struct Outlet {
+    events: mpsc::Sender<ChatEvent>,
+    wake: Wake,
+}
+
+impl Outlet {
+    async fn send(&self, event: ChatEvent) {
+        let _ = self.events.send(event).await;
+        (self.wake)();
+    }
+
+    /// Non-blocking, for callers holding a lock. The UI drains every frame; if it is not
+    /// drawing, dropping an event is fine.
+    fn publish(&self, event: ChatEvent) {
+        let _ = self.events.try_send(event);
+        (self.wake)();
+    }
+}
+
 /// The app's handle on one room session, host or guest. Dropping it leaves the room.
 pub struct ChatHandle {
     pub events: mpsc::Receiver<ChatEvent>,
@@ -102,11 +127,9 @@ impl Drop for ChatHandle {
 
 impl ChatHandle {
     /// Open a room on this device. `base_url` is the origin the links are built on.
-    pub fn host(relay: RelayChoice, name: String, base_url: String) -> ChatHandle {
-        Self::spawn(move |events, commands, cancel| async move {
-            if let Err(error) = run_host(relay, name, base_url, &events, commands, cancel).await {
-                let _ = events.send(ChatEvent::Failed(error.to_string())).await;
-            }
+    pub fn host(relay: RelayChoice, name: String, base_url: String, wake: Wake) -> ChatHandle {
+        Self::spawn(wake, |out, commands, cancel| {
+            run_host(relay, name, base_url, out, commands, cancel)
         })
     }
 
@@ -116,24 +139,32 @@ impl ChatHandle {
         ticket: EndpointTicket,
         cap: [u8; CAP_LEN],
         name: String,
+        wake: Wake,
     ) -> ChatHandle {
-        Self::spawn(move |events, commands, cancel| async move {
-            if let Err(error) = run_guest(relay, ticket, cap, name, &events, commands, cancel).await
-            {
-                let _ = events.send(ChatEvent::Failed(error.to_string())).await;
-            }
+        Self::spawn(wake, |out, commands, cancel| {
+            run_guest(relay, ticket, cap, name, out, commands, cancel)
         })
     }
 
-    fn spawn<F, Fut>(run: F) -> ChatHandle
+    /// Run a session in its own task; an error ends it with one `Failed` event.
+    fn spawn<F, Fut>(wake: Wake, run: F) -> ChatHandle
     where
-        F: FnOnce(mpsc::Sender<ChatEvent>, mpsc::Receiver<ChatCommand>, CancellationToken) -> Fut,
-        Fut: std::future::Future<Output = ()> + Send + 'static,
+        F: FnOnce(Outlet, mpsc::Receiver<ChatCommand>, CancellationToken) -> Fut,
+        Fut: std::future::Future<Output = Result<(), NodeError>> + Send + 'static,
     {
         let (events_tx, events) = mpsc::channel(EVENT_QUEUE);
         let (commands, commands_rx) = mpsc::channel(16);
         let cancel = CancellationToken::new();
-        let task = task::spawn(run(events_tx, commands_rx, cancel.clone()));
+        let out = Outlet {
+            events: events_tx,
+            wake,
+        };
+        let session = run(out.clone(), commands_rx, cancel.clone());
+        let task = task::spawn(async move {
+            if let Err(error) = session.await {
+                out.send(ChatEvent::Failed(error.to_string())).await;
+            }
+        });
         ChatHandle {
             events,
             commands,
@@ -157,7 +188,8 @@ impl ChatHandle {
 struct Member {
     id: EndpointId,
     name: String,
-    outbound: mpsc::Sender<Bytes>,
+    /// The guest's control stream, with an [`OUTBOUND_QUEUE`]-deep queue in front of it.
+    tx: ControlTx,
     cancel: CancellationToken,
 }
 
@@ -166,28 +198,21 @@ struct Room {
     host: String,
     cap: [u8; CAP_LEN],
     members: Mutex<Vec<Member>>,
-    /// The last [`HISTORY`] `Said` frames, replayed after `Welcome`.
-    history: Mutex<VecDeque<ChatMsg>>,
+    /// The last [`HISTORY`] `Said` frames, already encoded, replayed after `Welcome`.
+    history: Mutex<VecDeque<Bytes>>,
     seq: AtomicU64,
-    events: mpsc::Sender<ChatEvent>,
+    out: Outlet,
+    /// Ends with the room; every member's token is a child of it.
     cancel: CancellationToken,
 }
 
 impl Room {
-    fn publish(&self, event: ChatEvent) {
-        // The UI drains every frame; if it is not drawing, dropping an event is fine.
-        let _ = self.events.try_send(event);
-    }
-
     /// Queue a frame for every member. A member whose queue is full is behind by
-    /// `OUTBOUND_QUEUE` frames and is disconnected rather than slowing the room.
-    fn broadcast(&self, msg: &ChatMsg) {
-        let Ok(frame) = encode_chat(msg) else {
-            return;
-        };
+    /// [`OUTBOUND_QUEUE`] frames and is disconnected rather than slowing the room.
+    fn broadcast(&self, frame: &Bytes) {
         let members = self.members.lock().unwrap();
         for member in members.iter() {
-            if member.outbound.try_send(frame.clone()).is_err() {
+            if !matches!(member.tx.try_send(frame.clone()), Ok(true)) {
                 member.cancel.cancel();
             }
         }
@@ -199,20 +224,22 @@ impl Room {
             return;
         }
         let seq = self.seq.fetch_add(1, Ordering::AcqRel) + 1;
-        let said = ChatMsg::Said {
+        let Ok(frame) = encode_chat(&ChatMsg::Said {
             from: from.to_string(),
             text: text.clone(),
             seq,
+        }) else {
+            return;
         };
         {
             let mut history = self.history.lock().unwrap();
             if history.len() >= HISTORY {
                 history.pop_front();
             }
-            history.push_back(said.clone());
+            history.push_back(frame.clone());
         }
-        self.broadcast(&said);
-        self.publish(ChatEvent::Message {
+        self.broadcast(&frame);
+        self.out.publish(ChatEvent::Message {
             from: from.to_string(),
             text,
             seq,
@@ -246,38 +273,36 @@ impl Room {
             .expect("an unused name exists")
     }
 
-    /// Add a guest and queue its `Welcome` under one lock, so no broadcast can slip in
-    /// before the welcome. Returns the assigned name and the guest's outbound queue.
+    /// Add a guest and queue its `Welcome` and the history under one lock, so no broadcast
+    /// can slip in before the welcome. Returns the assigned name.
     fn register(
         &self,
         id: EndpointId,
         requested: &str,
+        tx: ControlTx,
         cancel: CancellationToken,
-    ) -> Result<(String, mpsc::Receiver<Bytes>), &'static str> {
+    ) -> Result<String, &'static str> {
         let mut members = self.members.lock().unwrap();
         if members.len() >= MAX_CHAT_MEMBERS {
             return Err("room is full");
         }
         let name = self.assign_name(requested, &members);
-        let (outbound, outbound_rx) = mpsc::channel::<Bytes>(OUTBOUND_QUEUE);
         let welcome = ChatMsg::Welcome {
             you: name.clone(),
             members: self.roster(&members),
         };
         let frame = encode_chat(&welcome).map_err(|_| "could not encode the welcome")?;
-        let _ = outbound.try_send(frame);
-        for said in self.history.lock().unwrap().iter() {
-            if let Ok(frame) = encode_chat(said) {
-                let _ = outbound.try_send(frame);
-            }
+        let _ = tx.try_send(frame);
+        for frame in self.history.lock().unwrap().iter() {
+            let _ = tx.try_send(frame.clone());
         }
         members.push(Member {
             id,
             name: name.clone(),
-            outbound,
+            tx,
             cancel,
         });
-        Ok((name, outbound_rx))
+        Ok(name)
     }
 
     fn remove(&self, id: EndpointId) -> Option<String> {
@@ -299,17 +324,7 @@ impl std::fmt::Debug for RoomHandler {
 impl ProtocolHandler for RoomHandler {
     async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
         let room = self.0.clone();
-        let (done_tx, done_rx) = oneshot::channel();
-        // Same shape as the file protocol handler: `accept` must return a `Send` future on
-        // every target, so the session runs in its own task.
-        let _task = task::spawn(async move {
-            let result = serve_guest(room, connection).await;
-            done_tx.send(result).ok();
-        });
-        done_rx
-            .await
-            .map_err(AcceptError::from_err)?
-            .map_err(AcceptError::from)
+        node::accept_in_task(move || serve_guest(room, connection)).await
     }
 }
 
@@ -319,66 +334,52 @@ fn io_error(message: impl Into<String>) -> std::io::Error {
 
 async fn serve_guest(room: Arc<Room>, connection: Connection) -> std::io::Result<()> {
     let id = connection.remote_id();
-    log::debug!("chat: guest connection accepted");
     let (send, recv) = timeout(HELLO_DEADLINE, connection.accept_bi())
         .await
         .map_err(|_| io_error("guest opened no stream"))?
         .map_err(std::io::Error::other)?;
     let member_cancel = room.cancel.child_token();
-    let (tx, mut rx, _writer) = split_control(send, recv, Path::Relayed, member_cancel.clone());
+    let (tx, mut rx, _writer) = split_control_with_queue(
+        send,
+        recv,
+        Path::Relayed,
+        member_cancel.clone(),
+        OUTBOUND_QUEUE,
+    );
 
     let first = timeout(HELLO_DEADLINE, rx.recv())
         .await
         .map_err(|_| io_error("guest sent no Hello"))?
         .map_err(|e| io_error(e.to_string()))?
         .ok_or_else(|| io_error("guest closed before Hello"))?;
-    let reject = |message: &str| ChatMsg::Error {
-        message: message.to_string(),
-    };
-    let requested = match decode_chat(&first) {
-        Ok(ChatMsg::Hello { version, cap, name }) => {
-            if version != CHAT_VERSION {
-                let _ = tx
-                    .send(encode_chat(&reject("unsupported chat version")).unwrap())
-                    .await;
-                return Err(io_error("unsupported chat version"));
-            }
-            if !cap_eq(&cap, &room.cap) {
-                let _ = tx.send(encode_chat(&reject("unauthorized")).unwrap()).await;
-                connection.close(1u8.into(), b"unauthorized");
-                return Err(io_error("unauthorized"));
-            }
-            name
+    let accepted = match decode_chat(&first) {
+        Ok(ChatMsg::Hello { version, .. }) if version != CHAT_VERSION => {
+            Err("unsupported chat version")
         }
-        _ => {
-            let _ = tx
-                .send(encode_chat(&reject("expected a Hello frame")).unwrap())
-                .await;
-            return Err(io_error("expected a Hello frame"));
+        Ok(ChatMsg::Hello { cap, .. }) if !cap_eq(&cap, &room.cap) => Err("unauthorized"),
+        Ok(ChatMsg::Hello { name, .. }) => {
+            room.register(id, &name, tx.clone(), member_cancel.clone())
         }
+        _ => Err("expected a Hello frame"),
     };
-
-    let (name, outbound_rx) = match room.register(id, &requested, member_cancel.clone()) {
-        Ok(registered) => registered,
+    let reject = |message: &str| {
+        encode_chat(&ChatMsg::Error {
+            message: message.to_string(),
+        })
+        .expect("a short error message always encodes")
+    };
+    let name = match accepted {
+        Ok(name) => name,
         Err(message) => {
-            let _ = tx.send(encode_chat(&reject(message)).unwrap()).await;
+            let _ = tx.send(reject(message)).await;
+            connection.close(1u8.into(), message.as_bytes());
             return Err(io_error(message));
         }
     };
-    let _forwarder = AbortOnDropHandle::new(task::spawn({
-        let cancel = member_cancel.clone();
-        let mut outbound_rx = outbound_rx;
-        async move {
-            while let Some(frame) = outbound_rx.recv().await {
-                if tx.send(frame).await.is_err() {
-                    cancel.cancel();
-                    return;
-                }
-            }
-        }
-    }));
-    room.broadcast(&ChatMsg::Joined { name: name.clone() });
-    room.publish(ChatEvent::Joined { name: name.clone() });
+    if let Ok(frame) = encode_chat(&ChatMsg::Joined { name: name.clone() }) {
+        room.broadcast(&frame);
+    }
+    room.out.publish(ChatEvent::Joined { name: name.clone() });
     log::info!("chat: {name} joined");
 
     let mut recent: VecDeque<Instant> = VecDeque::with_capacity(RATE_LIMIT);
@@ -399,7 +400,7 @@ async fn serve_guest(room: Arc<Room>, connection: Connection) -> std::io::Result
                         recent.pop_front();
                     }
                     if recent.len() >= RATE_LIMIT {
-                        room.broadcast_to(id, &reject("too many messages; slow down"));
+                        let _ = tx.try_send(reject("too many messages; slow down"));
                         break Err(io_error("rate limit"));
                     }
                     recent.push_back(now);
@@ -415,46 +416,27 @@ async fn serve_guest(room: Arc<Room>, connection: Connection) -> std::io::Result
     };
 
     if let Some(name) = room.remove(id) {
-        room.broadcast(&ChatMsg::Left { name: name.clone() });
-        room.publish(ChatEvent::Left { name: name.clone() });
+        if let Ok(frame) = encode_chat(&ChatMsg::Left { name: name.clone() }) {
+            room.broadcast(&frame);
+        }
+        room.out.publish(ChatEvent::Left { name: name.clone() });
         log::info!("chat: {name} left");
     }
     connection.close(0u8.into(), b"bye");
     outcome
 }
 
-impl Room {
-    fn broadcast_to(&self, id: EndpointId, msg: &ChatMsg) {
-        let Ok(frame) = encode_chat(msg) else {
-            return;
-        };
-        let members = self.members.lock().unwrap();
-        if let Some(member) = members.iter().find(|m| m.id == id) {
-            let _ = member.outbound.try_send(frame);
-        }
-    }
-}
-
 async fn run_host(
     relay: RelayChoice,
     name: String,
     base_url: String,
-    events: &mpsc::Sender<ChatEvent>,
+    out: Outlet,
     mut commands: mpsc::Receiver<ChatCommand>,
     cancel: CancellationToken,
 ) -> Result<(), NodeError> {
     let secret = SecretKey::generate();
     let cap = node::derive_cap(&secret);
-    let endpoint = timeout(
-        node::BIND_TIMEOUT,
-        node::endpoint_builder(&relay)?
-            .secret_key(secret)
-            .alpns(vec![CHAT_ALPN.to_vec()])
-            .bind(),
-    )
-    .await
-    .map_err(|_| NodeError::Bind("chat endpoint startup timed out".into()))?
-    .map_err(|error| NodeError::Bind(error.to_string()))?;
+    let endpoint = node::bind_endpoint(&relay, secret, vec![CHAT_ALPN.to_vec()]).await?;
     let host = {
         let cleaned = clean_chat_name(&name);
         if cleaned.is_empty() {
@@ -469,7 +451,7 @@ async fn run_host(
         members: Mutex::new(Vec::new()),
         history: Mutex::new(VecDeque::new()),
         seq: AtomicU64::new(0),
-        events: events.clone(),
+        out: out.clone(),
         cancel: cancel.clone(),
     });
     let router = Router::builder(endpoint.clone())
@@ -483,13 +465,12 @@ async fn run_host(
             return Err(error);
         }
     };
-    let _ = events
-        .send(ChatEvent::Ready {
-            link: Node::chat_link(&base_url, &ticket, &cap, false),
-            agent_link: Node::chat_link(&base_url, &ticket, &cap, true),
-            you: host.clone(),
-        })
-        .await;
+    out.send(ChatEvent::Ready {
+        link: Node::chat_link(&base_url, &ticket, &cap, false),
+        agent_link: Node::chat_link(&base_url, &ticket, &cap, true),
+        you: host.clone(),
+    })
+    .await;
     log::info!("chat: room open");
 
     loop {
@@ -505,7 +486,7 @@ async fn run_host(
     cancel.cancel();
     let _ = router.shutdown().await;
     endpoint.close().await;
-    let _ = events.send(ChatEvent::Closed).await;
+    out.send(ChatEvent::Closed).await;
     log::info!("chat: room closed");
     Ok(())
 }
@@ -517,28 +498,16 @@ async fn run_guest(
     ticket: EndpointTicket,
     cap: [u8; CAP_LEN],
     name: String,
-    events: &mpsc::Sender<ChatEvent>,
+    out: Outlet,
     mut commands: mpsc::Receiver<ChatCommand>,
     cancel: CancellationToken,
 ) -> Result<(), NodeError> {
-    let endpoint = timeout(
-        node::BIND_TIMEOUT,
-        node::endpoint_builder(&relay)?
-            .secret_key(SecretKey::generate())
-            .bind(),
-    )
-    .await
-    .map_err(|_| NodeError::Bind("chat endpoint startup timed out".into()))?
-    .map_err(|error| NodeError::Bind(error.to_string()))?;
-    let result = guest_session(&endpoint, ticket, cap, name, events, &mut commands, &cancel).await;
+    let endpoint = node::bind_endpoint(&relay, SecretKey::generate(), Vec::new()).await?;
+    let result = guest_session(&endpoint, ticket, cap, name, &out, &mut commands, &cancel).await;
     endpoint.close().await;
-    match result {
-        Ok(()) => {
-            let _ = events.send(ChatEvent::Closed).await;
-            Ok(())
-        }
-        Err(error) => Err(error),
-    }
+    result?;
+    out.send(ChatEvent::Closed).await;
+    Ok(())
 }
 
 async fn guest_session(
@@ -546,18 +515,19 @@ async fn guest_session(
     ticket: EndpointTicket,
     cap: [u8; CAP_LEN],
     name: String,
-    events: &mpsc::Sender<ChatEvent>,
+    out: &Outlet,
     commands: &mut mpsc::Receiver<ChatCommand>,
     cancel: &CancellationToken,
 ) -> Result<(), NodeError> {
-    let addr = node::browser_relay_addr(ticket.endpoint_addr().clone())?;
-    let connection = timeout(node::DIAL_TIMEOUT, endpoint.connect(addr, CHAT_ALPN))
-        .await
-        .map_err(|_| {
-            NodeError::Connect("the room did not answer; is the host's page still open?".into())
-        })?
-        .map_err(|error| NodeError::Connect(error.to_string()))?;
-    log::debug!("chat: dialled the room");
+    let connection =
+        node::dial(endpoint, &ticket, CHAT_ALPN)
+            .await
+            .map_err(|error| match error {
+                NodeError::Connect(_) => NodeError::Connect(
+                    "the room did not answer; is the host's page still open?".into(),
+                ),
+                other => other,
+            })?;
     let (send, recv) = timeout(HELLO_DEADLINE, connection.open_bi())
         .await
         .map_err(|_| NodeError::Connect("could not open a stream to the room".into()))?
@@ -595,17 +565,13 @@ async fn guest_session(
             frame = rx.recv() => match frame {
                 Ok(Some(frame)) => match decode_chat(&frame) {
                     Ok(ChatMsg::Welcome { you, members }) => {
-                        let _ = events.send(ChatEvent::Connected { you, members }).await;
+                        out.send(ChatEvent::Connected { you, members }).await;
                     }
                     Ok(ChatMsg::Said { from, text, seq }) => {
-                        let _ = events.send(ChatEvent::Message { from, text, seq }).await;
+                        out.send(ChatEvent::Message { from, text, seq }).await;
                     }
-                    Ok(ChatMsg::Joined { name }) => {
-                        let _ = events.send(ChatEvent::Joined { name }).await;
-                    }
-                    Ok(ChatMsg::Left { name }) => {
-                        let _ = events.send(ChatEvent::Left { name }).await;
-                    }
+                    Ok(ChatMsg::Joined { name }) => out.send(ChatEvent::Joined { name }).await,
+                    Ok(ChatMsg::Left { name }) => out.send(ChatEvent::Left { name }).await,
                     Ok(ChatMsg::Error { message }) => {
                         break Err(NodeError::Connect(if message == "unauthorized" {
                             "the room rejected this link (wrong or expired access code)".into()

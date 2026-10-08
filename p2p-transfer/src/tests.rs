@@ -3351,10 +3351,12 @@ async fn local_test_chat_room_relays_messages_between_guests_over_loopback() {
 
     let _ = env_logger::builder().is_test(true).try_init();
     timeout(Duration::from_secs(40), async {
+        let wake: crate::chat::Wake = Arc::new(|| {});
         let mut host = ChatHandle::host(
             RelayChoice::None,
             "Radu".into(),
             "https://oxfer.app/".into(),
+            wake.clone(),
         );
         let (link, agent_link) = match next_event(&mut host, "host ready").await {
             ChatEvent::Ready {
@@ -3375,7 +3377,13 @@ async fn local_test_chat_room_relays_messages_between_guests_over_loopback() {
         let ticket = params.ticket.clone().unwrap();
         let cap = params.cap.unwrap();
 
-        let mut ana = ChatHandle::join(RelayChoice::None, ticket.clone(), cap, "Ana".into());
+        let mut ana = ChatHandle::join(
+            RelayChoice::None,
+            ticket.clone(),
+            cap,
+            "Ana".into(),
+            wake.clone(),
+        );
         match next_event(&mut ana, "ana connected").await {
             ChatEvent::Connected { you, members } => {
                 assert_eq!(you, "Ana");
@@ -3389,7 +3397,13 @@ async fn local_test_chat_room_relays_messages_between_guests_over_loopback() {
         );
 
         // A second guest with the same requested name gets a distinct one.
-        let mut ana2 = ChatHandle::join(RelayChoice::None, ticket.clone(), cap, "Ana".into());
+        let mut ana2 = ChatHandle::join(
+            RelayChoice::None,
+            ticket.clone(),
+            cap,
+            "Ana".into(),
+            wake.clone(),
+        );
         match next_event(&mut ana2, "ana2 connected").await {
             ChatEvent::Connected { you, members } => {
                 assert_eq!(you, "Ana 2");
@@ -3458,7 +3472,13 @@ async fn local_test_chat_room_relays_messages_between_guests_over_loopback() {
         );
 
         // A late guest gets the conversation so far, in order, before anything new.
-        let mut late = ChatHandle::join(RelayChoice::None, ticket.clone(), cap, "Late".into());
+        let mut late = ChatHandle::join(
+            RelayChoice::None,
+            ticket.clone(),
+            cap,
+            "Late".into(),
+            wake.clone(),
+        );
         assert!(matches!(
             next_event(&mut late, "late connected").await,
             ChatEvent::Connected { .. }
@@ -3505,6 +3525,7 @@ async fn local_test_chat_room_relays_messages_between_guests_over_loopback() {
             ticket.clone(),
             test_cap(99),
             "Eve".into(),
+            wake.clone(),
         );
         match next_event(&mut intruder, "intruder rejected").await {
             ChatEvent::Failed(message) => assert!(message.contains("rejected"), "{message}"),

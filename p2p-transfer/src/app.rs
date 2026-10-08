@@ -335,11 +335,16 @@ enum ChatStatus {
     Closed,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Copied {
+    Link,
+    AgentLink,
+}
+
 struct ChatLine {
     /// `None` for a room notice (someone joined, the room closed).
     from: Option<String>,
     text: String,
-    mine: bool,
 }
 
 /// One open room, hosted here or joined from a link. Dropping it leaves the room.
@@ -349,7 +354,7 @@ struct ChatState {
     link: Option<String>,
     agent_link: Option<String>,
     /// Which link was copied last, for the button label.
-    copied: Option<&'static str>,
+    copied: Option<Copied>,
     members: Vec<String>,
     lines: Vec<ChatLine>,
     input: String,
@@ -402,7 +407,6 @@ impl ChatState {
         self.lines.push(ChatLine {
             from: None,
             text: text.into(),
-            mine: false,
         });
     }
 
@@ -427,11 +431,9 @@ impl ChatState {
                 self.note("You're in.");
             }
             ChatEvent::Message { from, text, .. } => {
-                let mine = self.you.as_deref() == Some(from.as_str());
                 self.lines.push(ChatLine {
                     from: Some(from),
                     text,
-                    mine,
                 });
             }
             ChatEvent::Joined { name } => {
@@ -1380,23 +1382,6 @@ impl P2PTransfer {
         if params.ticket.is_none() && params.cap.is_none() && params.error.is_none() {
             return;
         }
-        if params.chat && params.error.is_none() {
-            // A room link: scrub it like a share link, then join instead of receiving.
-            let href = window.location().href().unwrap_or_default();
-            let base = href.split('#').next().unwrap_or(&href).to_string();
-            if let Ok(history) = window.history() {
-                let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&base));
-            }
-            self.last_fragment = Some(format!(
-                "{}{}",
-                window.location().pathname().unwrap_or_default(),
-                window.location().hash().unwrap_or_default()
-            ));
-            self.reset_peer_diagnostics();
-            self.start_chat_join(&params);
-            return;
-        }
-
         let mut keep: Vec<String> = Vec::new();
         if params.dev {
             keep.push("dev".to_string());
@@ -1580,7 +1565,8 @@ impl P2PTransfer {
             || match &self.mode {
                 Mode::Send { preparing } => !preparing.is_empty(),
                 Mode::Receive(r) => r.opening || r.handle.is_some(),
-                Mode::Chat(c) => c.polling(),
+                // A room wakes the UI itself (`chat_wake`); nothing to poll.
+                Mode::Chat(_) => false,
                 Mode::Home => false,
                 #[cfg(target_arch = "wasm32")]
                 Mode::Diagnostics => false,
@@ -3510,16 +3496,8 @@ impl P2PTransfer {
                         self.show_terminal_view = true;
                         ui.close();
                     }
-                    if compact
-                        && ui
-                            .add_enabled(
-                                !self.is_preparing_share(),
-                                Button::new("Start a room for agents"),
-                            )
-                            .clicked()
-                    {
-                        self.start_chat_host(true);
-                        ui.close();
+                    if compact {
+                        self.agents_room_button(ui);
                     }
                 });
                 if !compact {
@@ -3721,7 +3699,12 @@ impl P2PTransfer {
         if self.is_preparing_share() {
             return;
         }
-        let handle = ChatHandle::host(RelayChoice::from_env(), String::new(), Self::base_url());
+        let handle = ChatHandle::host(
+            RelayChoice::from_env(),
+            String::new(),
+            Self::base_url(),
+            self.chat_wake(),
+        );
         self.enter_chat(ChatRole::Host, Some(handle), for_agents, None);
     }
 
@@ -3737,8 +3720,14 @@ impl P2PTransfer {
             return;
         };
         let name = params.name.clone().unwrap_or_default();
-        let handle = ChatHandle::join(RelayChoice::from_env(), ticket, cap, name);
+        let handle = ChatHandle::join(RelayChoice::from_env(), ticket, cap, name, self.chat_wake());
         self.enter_chat(ChatRole::Guest, Some(handle), params.agent, None);
+    }
+
+    /// Sessions wake the UI per event, so an idle room costs no frames.
+    fn chat_wake(&self) -> crate::chat::Wake {
+        let repaint = self.repaint.clone();
+        Arc::new(move || repaint.request_repaint())
     }
 
     fn enter_chat(
@@ -3808,25 +3797,28 @@ impl P2PTransfer {
                     if ui.button("Copy link for agent").clicked() {
                         ui.ctx().copy_text(link);
                         if let Mode::Chat(state) = &mut self.mode {
-                            state.copied = Some("agent");
+                            state.copied = Some(Copied::AgentLink);
                         }
                         ui.close();
                     }
                 }
-                None => {
-                    if ui
-                        .add_enabled(
-                            !self.is_preparing_share(),
-                            Button::new("Start a room for agents"),
-                        )
-                        .clicked()
-                    {
-                        self.start_chat_host(true);
-                        ui.close();
-                    }
-                }
+                None => self.agents_room_button(ui),
             }
         });
+    }
+
+    /// Menu entry that opens a room for agents and closes the menu.
+    fn agents_room_button(&mut self, ui: &mut Ui) {
+        if ui
+            .add_enabled(
+                !self.is_preparing_share(),
+                Button::new("Start a room for agents"),
+            )
+            .clicked()
+        {
+            self.start_chat_host(true);
+            ui.close();
+        }
     }
 
     fn show_chat(&mut self, ui: &mut Ui) {
@@ -3887,15 +3879,15 @@ impl P2PTransfer {
                     if ui
                         .add_sized(
                             [200.0, 44.0],
-                            copy_button(&tc, state.copied == Some("link")),
+                            copy_button(&tc, state.copied == Some(Copied::Link)),
                         )
                         .clicked()
                     {
                         ui.ctx().copy_text(link.clone());
-                        state.copied = Some("link");
+                        state.copied = Some(Copied::Link);
                     }
                     if let Some(agent_link) = state.agent_link.clone() {
-                        let label = if state.copied == Some("agent") {
+                        let label = if state.copied == Some(Copied::AgentLink) {
                             "✓ Copied agent link"
                         } else {
                             "Copy link for agent"
@@ -3905,7 +3897,7 @@ impl P2PTransfer {
                             .clicked()
                         {
                             ui.ctx().copy_text(agent_link);
-                            state.copied = Some("agent");
+                            state.copied = Some(Copied::AgentLink);
                             state.for_agents = true;
                         }
                     }
@@ -3950,65 +3942,51 @@ impl P2PTransfer {
                 );
             }
             ui.add_space(6.0);
-            egui::Frame::new()
-                .fill(tc.surface_lowest)
-                .corner_radius(CornerRadius::same(10))
-                .stroke(Stroke::new(1.0, tc.outline_var))
-                .inner_margin(egui::Margin::same(10))
-                .show(ui, |ui| {
-                    ui.set_min_height(180.0);
-                    egui::ScrollArea::vertical()
-                        .max_height(if compact { 280.0 } else { 360.0 })
-                        .stick_to_bottom(true)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = 4.0;
-                            if state.lines.is_empty() {
-                                ui.label(
-                                    RichText::new("No messages yet.").color(tc.on_surface_var),
-                                );
-                            }
-                            for line in &state.lines {
-                                match &line.from {
-                                    None => {
-                                        ui.label(
-                                            RichText::new(&line.text)
-                                                .italics()
-                                                .color(tc.on_surface_var)
-                                                .size(13.0),
-                                        );
-                                    }
-                                    Some(from) => {
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.label(
-                                                RichText::new(format!("{from}:")).strong().color(
-                                                    if line.mine {
-                                                        tc.primary
-                                                    } else {
-                                                        tc.on_surface
-                                                    },
-                                                ),
-                                            );
-                                            ui.label(
-                                                RichText::new(&line.text).color(tc.on_surface),
-                                            );
-                                        });
-                                    }
+            inset(&tc, egui::Margin::same(10)).show(ui, |ui| {
+                ui.set_min_height(180.0);
+                egui::ScrollArea::vertical()
+                    .max_height(if compact { 280.0 } else { 360.0 })
+                    .stick_to_bottom(true)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        if state.lines.is_empty() {
+                            ui.label(RichText::new("No messages yet.").color(tc.on_surface_var));
+                        }
+                        let you = state.you.as_deref();
+                        for line in &state.lines {
+                            match &line.from {
+                                None => {
+                                    ui.label(
+                                        RichText::new(&line.text)
+                                            .italics()
+                                            .color(tc.on_surface_var)
+                                            .size(13.0),
+                                    );
+                                }
+                                Some(from) => {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(RichText::new(format!("{from}:")).strong().color(
+                                            if Some(from.as_str()) == you {
+                                                tc.primary
+                                            } else {
+                                                tc.on_surface
+                                            },
+                                        ));
+                                        ui.label(RichText::new(&line.text).color(tc.on_surface));
+                                    });
                                 }
                             }
-                        });
-                });
+                        }
+                    });
+            });
             ui.add_space(8.0);
             let open = matches!(state.status, ChatStatus::Open);
             ui.horizontal(|ui| {
                 let send_width = 84.0;
                 let input_width =
                     (ui.available_width() - send_width - ui.spacing().item_spacing.x).max(80.0);
-                let response = egui::Frame::new()
-                    .fill(tc.surface_lowest)
-                    .corner_radius(CornerRadius::same(10))
-                    .stroke(Stroke::new(1.0, tc.outline_var))
-                    .inner_margin(egui::Margin::symmetric(12, 10))
+                let response = inset(&tc, egui::Margin::symmetric(12, 10))
                     .show(ui, |ui| {
                         ui.add_enabled(
                             open,
@@ -4058,25 +4036,29 @@ impl P2PTransfer {
     }
 }
 
-/// A wrapped, selectable monospace link inside a quiet frame.
-fn link_box(ui: &mut Ui, tc: &Tc, link: &str) {
+/// The quiet, recessed frame used for links, message lists and inputs.
+fn inset(tc: &Tc, margin: egui::Margin) -> egui::Frame {
     egui::Frame::new()
         .fill(tc.surface_lowest)
         .corner_radius(CornerRadius::same(10))
         .stroke(Stroke::new(1.0, tc.outline_var))
-        .inner_margin(egui::Margin::same(10))
-        .show(ui, |ui| {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(link)
-                        .monospace()
-                        .size(12.0)
-                        .color(tc.on_surface),
-                )
-                .wrap()
-                .selectable(true),
-            );
-        });
+        .inner_margin(margin)
+}
+
+/// A wrapped, selectable monospace link inside an inset frame.
+fn link_box(ui: &mut Ui, tc: &Tc, link: &str) {
+    inset(tc, egui::Margin::same(10)).show(ui, |ui| {
+        ui.add(
+            egui::Label::new(
+                RichText::new(link)
+                    .monospace()
+                    .size(12.0)
+                    .color(tc.on_surface),
+            )
+            .wrap()
+            .selectable(true),
+        );
+    });
 }
 
 impl eframe::App for P2PTransfer {

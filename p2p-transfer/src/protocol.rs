@@ -492,7 +492,8 @@ pub enum ChatMsg {
     Welcome { you: String, members: Vec<String> },
     /// Guest → host.
     Say { text: String },
-    /// Host → everyone (the author included, so every member sees one order).
+    /// Host → everyone (the author included, so every member sees one order). `seq` is the
+    /// room-wide position, so a reader can order a replay and notice a gap.
     Said {
         from: String,
         text: String,
@@ -542,7 +543,7 @@ pub fn clean_chat_text(text: &str) -> String {
         .chars()
         .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
         .collect();
-    truncate_utf8(cleaned.trim(), MAX_CHAT_TEXT).to_string()
+    crate::file_io::truncate_utf8(cleaned.trim(), MAX_CHAT_TEXT).to_string()
 }
 
 /// A display name is one printable line of at most [`MAX_CHAT_NAME`] bytes; whitespace runs
@@ -561,18 +562,7 @@ pub fn clean_chat_name(name: &str) -> String {
             space = false;
         }
     }
-    truncate_utf8(out.trim_end(), MAX_CHAT_NAME).to_string()
-}
-
-fn truncate_utf8(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        return s;
-    }
-    let mut end = max;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
+    crate::file_io::truncate_utf8(out.trim_end(), MAX_CHAT_NAME).to_string()
 }
 
 fn chat_bounds(msg: &ChatMsg) -> Result<(), ProtocolError> {

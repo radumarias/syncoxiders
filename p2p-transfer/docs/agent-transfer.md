@@ -93,10 +93,10 @@ so a share link posted a moment early is not lost.
   when the receiver's verified receipt arrives. `serve complete` fires earlier,
   when the sender has merely finished writing, and is reported as `SERVED`.
 - **Receiving** waits for the "Choose where to save" button, which only appears
-  once the manifest arrived. The init script removes `showSaveFilePicker`
-  because headless Chromium exposes the API but cannot show the dialog, which
-  would hang the click. Oxfer then uses its service-worker streaming sink, which
-  Playwright surfaces as a `download` event. The script saves every download,
+  once the manifest arrived. The script opens the link with the existing
+  `sink=sw` fragment flag, so Oxfer streams through its service worker instead
+  of the native save dialog, which headless Chromium cannot show; Playwright
+  surfaces that stream as a `download` event. The script saves every download,
   then waits for one `verified and saved` log line per file.
 - **Share links** are validated with `classifyLink`: a fragment of
   `endpoint<base32>&cap=<32 hex>` is a share link, an empty fragment (or only
