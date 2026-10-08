@@ -84,6 +84,37 @@ impl Theme {
         }
     }
 
+    /// Primary buttons and egui's own widgets.
+    const fn control_radius(self) -> u8 {
+        match self {
+            Self::Rusty => 10,
+            Self::Clean => 18,
+            Self::Phosphor => 2,
+        }
+    }
+
+    /// Cards.
+    const fn card_radius(self) -> u8 {
+        match self {
+            Self::Rusty => 16,
+            Self::Clean => 20,
+            Self::Phosphor => 4,
+        }
+    }
+
+    /// Ceiling for every other rounded frame, pill, and icon tile; see [`Tc::corner`].
+    const fn corner_cap(self) -> Option<u8> {
+        match self {
+            Self::Phosphor => Some(4),
+            Self::Rusty | Self::Clean => None,
+        }
+    }
+
+    /// Set all UI text in the monospace family, not only meta, links, and logs.
+    const fn monospace(self) -> bool {
+        matches!(self, Self::Phosphor)
+    }
+
     #[cfg(target_arch = "wasm32")]
     const fn storage_value(self) -> &'static str {
         match self {
@@ -131,16 +162,9 @@ struct Tc {
     outline: Color32,
     outline_var: Color32,
     error: Color32,
-    /// Primary buttons and egui's own widgets.
-    control_radius: u8,
-    /// Cards.
-    card_radius: u8,
-    /// Ceiling for every other rounded frame, pill, and icon tile; see [`Tc::corner`].
-    max_radius: u8,
-    /// Halo behind cards and popups. `Shadow::NONE` for themes that do not glow.
+    /// Halo behind cards, and behind Phosphor's popups. `Shadow::NONE` for themes that do
+    /// not glow.
     glow: egui::Shadow,
-    /// Set all UI text in the monospace family, not only meta, links, and logs.
-    monospace: bool,
     /// Multiplied into the black or white wordmark raster.
     logo_tint: Color32,
     backdrop: Backdrop,
@@ -163,11 +187,7 @@ impl Tc {
             outline: Color32::from_rgb(154, 160, 176), // #9aa0b0
             outline_var: Color32::from_rgb(58, 62, 82), // #3a3e52
             error: Color32::from_rgb(255, 139, 154), // #ff8b9a
-            control_radius: 18,
-            card_radius: 20,
-            max_radius: u8::MAX,
             glow: egui::Shadow::NONE,
-            monospace: false,
             logo_tint: Color32::WHITE,
             backdrop: Backdrop::Plain,
         }
@@ -189,11 +209,7 @@ impl Tc {
             outline: Color32::from_rgb(78, 82, 96), // #4e5260
             outline_var: Color32::from_rgb(197, 198, 203), // #c5c6cb
             error: Color32::from_rgb(196, 55, 74), // #c4374a
-            control_radius: 18,
-            card_radius: 20,
-            max_radius: u8::MAX,
             glow: egui::Shadow::NONE,
-            monospace: false,
             logo_tint: Color32::WHITE,
             backdrop: Backdrop::Plain,
         }
@@ -215,11 +231,7 @@ impl Tc {
             outline: Color32::from_rgb(168, 137, 120),
             outline_var: Color32::from_rgb(81, 57, 46),
             error: Color32::from_rgb(255, 181, 164),
-            control_radius: 10,
-            card_radius: 16,
-            max_radius: u8::MAX,
             glow: egui::Shadow::NONE,
-            monospace: false,
             logo_tint: Color32::WHITE,
             backdrop: Backdrop::Plain,
         }
@@ -241,43 +253,41 @@ impl Tc {
             outline: Color32::from_rgb(132, 99, 82),
             outline_var: Color32::from_rgb(211, 187, 173),
             error: Color32::from_rgb(177, 46, 30),
-            control_radius: 10,
-            card_radius: 16,
-            max_radius: u8::MAX,
             glow: egui::Shadow::NONE,
-            monospace: false,
             logo_tint: Color32::WHITE,
             backdrop: Backdrop::Plain,
         }
     }
 
     const fn phosphor_dark() -> Self {
+        let primary = Color32::from_rgb(57, 255, 20); // #39ff14
         Self {
             theme: Theme::Phosphor,
-            bg: Color32::from_rgb(3, 10, 4),              // #030a04
-            surface_lowest: Color32::from_rgb(0, 0, 0),   // #000000
-            surface_low: Color32::from_rgb(6, 18, 8),     // #061208
-            surface: Color32::from_rgb(10, 26, 12),       // #0a1a0c
-            surface_high: Color32::from_rgb(19, 58, 20),  // #133a14
-            primary: Color32::from_rgb(57, 255, 20),      // #39ff14
-            on_primary: Color32::from_rgb(2, 26, 2),      // #021a02
-            secondary: Color32::from_rgb(198, 255, 61),   // #c6ff3d
+            bg: Color32::from_rgb(3, 10, 4),             // #030a04
+            surface_lowest: Color32::from_rgb(0, 0, 0),  // #000000
+            surface_low: Color32::from_rgb(6, 18, 8),    // #061208
+            surface: Color32::from_rgb(10, 26, 12),      // #0a1a0c
+            surface_high: Color32::from_rgb(19, 58, 20), // #133a14
+            primary,
+            on_primary: Color32::from_rgb(2, 26, 2), // #021a02
+            secondary: Color32::from_rgb(198, 255, 61), // #c6ff3d
             on_surface: Color32::from_rgb(184, 255, 160), // #b8ffa0
             on_surface_var: Color32::from_rgb(116, 214, 92), // #74d65c
-            outline: Color32::from_rgb(79, 209, 58),      // #4fd13a
-            outline_var: Color32::from_rgb(30, 92, 27),   // #1e5c1b
-            error: Color32::from_rgb(255, 106, 61),       // #ff6a3d
-            control_radius: 2,
-            card_radius: 4,
-            max_radius: 4,
+            outline: Color32::from_rgb(79, 209, 58), // #4fd13a
+            outline_var: Color32::from_rgb(30, 92, 27), // #1e5c1b
+            error: Color32::from_rgb(255, 106, 61),  // #ff6a3d
             glow: egui::Shadow {
                 offset: [0, 0],
                 blur: 18,
                 spread: 0,
-                color: Color32::from_rgba_unmultiplied_const(57, 255, 20, 34),
+                color: Color32::from_rgba_unmultiplied_const(
+                    primary.r(),
+                    primary.g(),
+                    primary.b(),
+                    34,
+                ),
             },
-            monospace: true,
-            logo_tint: Color32::from_rgb(57, 255, 20),
+            logo_tint: primary,
             backdrop: Backdrop::VectorFloor,
         }
     }
@@ -298,11 +308,7 @@ impl Tc {
             outline: Color32::from_rgb(68, 112, 60), // #44703c
             outline_var: Color32::from_rgb(181, 209, 166), // #b5d1a6
             error: Color32::from_rgb(178, 58, 20), // #b23a14
-            control_radius: 2,
-            card_radius: 4,
-            max_radius: 4,
             glow: egui::Shadow::NONE,
-            monospace: true,
             logo_tint: Color32::WHITE,
             backdrop: Backdrop::GreenBar,
         }
@@ -321,7 +327,11 @@ impl Tc {
 
     /// A frame's own rounding, capped so Phosphor draws every outline nearly square.
     fn corner(&self, radius: u8) -> CornerRadius {
-        CornerRadius::same(radius.min(self.max_radius))
+        CornerRadius::same(
+            self.theme
+                .corner_cap()
+                .map_or(radius, |cap| radius.min(cap)),
+        )
     }
 }
 
@@ -1816,10 +1826,12 @@ impl P2PTransfer {
         v.selection.bg_fill =
             Color32::from_rgba_unmultiplied(tc.primary.r(), tc.primary.g(), tc.primary.b(), 60);
         v.override_text_color = Some(tc.on_surface);
-        let radius = CornerRadius::same(tc.control_radius);
+        let radius = CornerRadius::same(theme.control_radius());
         v.widgets.inactive.corner_radius = radius;
         v.widgets.hovered.corner_radius = radius;
         v.widgets.active.corner_radius = radius;
+        v.window_corner_radius = tc.corner(6);
+        v.menu_corner_radius = tc.corner(6);
         if theme == Theme::Phosphor {
             // One phosphor has no room for egui's stock grays and blues, so the widget
             // states the other themes leave at their defaults come from the palette too.
@@ -1832,11 +1844,9 @@ impl P2PTransfer {
                 &mut v.widgets.open,
             ] {
                 state.fg_stroke = Stroke::new(1.0_f32, tc.on_surface);
+                state.bg_fill = tc.surface_high;
+                state.weak_bg_fill = tc.surface_high;
             }
-            v.widgets.hovered.weak_bg_fill = tc.surface_high;
-            v.widgets.active.weak_bg_fill = tc.surface_high;
-            v.widgets.open.bg_fill = tc.surface_high;
-            v.widgets.open.weak_bg_fill = tc.surface_high;
             v.widgets.open.bg_stroke = Stroke::new(1.0_f32, tc.primary);
             v.widgets.open.corner_radius = radius;
             v.selection.stroke = Stroke::new(1.0_f32, tc.primary);
@@ -1845,31 +1855,27 @@ impl P2PTransfer {
             v.error_fg_color = tc.error;
             v.text_cursor.stroke = Stroke::new(2.0_f32, tc.primary);
             v.window_stroke = Stroke::new(1.0_f32, tc.outline);
-            v.window_corner_radius = tc.corner(6);
-            v.menu_corner_radius = tc.corner(6);
             v.window_shadow = tc.glow;
             v.popup_shadow = tc.glow;
         }
-        let family = if tc.monospace {
+        let family = if theme.monospace() {
             egui::FontFamily::Monospace
         } else {
             egui::FontFamily::Proportional
+        };
+        let tweak = |style: &mut egui::Style| {
+            style.spacing.button_padding = egui::vec2(18.0, 11.0);
+            style.spacing.item_spacing = egui::vec2(10.0, 10.0);
+            style.spacing.interact_size.y = 44.0;
+            set_text_family(style, &family);
         };
         // Both, and in this order: the context so later frames start correct, and the live
         // `Ui` so *this* frame is already themed. Setting only the context would leave the
         // root `Ui` — built before `logic()` ran — one frame behind on every toggle.
         ctx.set_visuals(v.clone());
-        ctx.global_style_mut(|style| {
-            style.spacing.button_padding = egui::vec2(18.0, 11.0);
-            style.spacing.item_spacing = egui::vec2(10.0, 10.0);
-            style.spacing.interact_size.y = 44.0;
-            set_text_family(style, &family);
-        });
+        ctx.global_style_mut(tweak);
         *ui.visuals_mut() = v;
-        ui.spacing_mut().button_padding = egui::vec2(18.0, 11.0);
-        ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
-        ui.spacing_mut().interact_size.y = 44.0;
-        set_text_family(ui.style_mut(), &family);
+        tweak(ui.style_mut());
     }
 }
 
@@ -1949,7 +1955,7 @@ fn paint_backdrop(ui: &Ui, tc: &Tc) {
 fn card(tc: &Tc) -> egui::Frame {
     egui::Frame::new()
         .fill(tc.surface_low)
-        .corner_radius(CornerRadius::same(tc.card_radius))
+        .corner_radius(CornerRadius::same(tc.theme.card_radius()))
         .stroke(Stroke::new(1.0_f32, tc.outline_var))
         .shadow(tc.glow)
         .inner_margin(egui::Margin::same(22))
@@ -1964,7 +1970,7 @@ fn primary_button(tc: &Tc, label: &str) -> Button<'static> {
     )
     .fill(tc.primary)
     .stroke(Stroke::new(1.0, tc.primary))
-    .corner_radius(CornerRadius::same(tc.control_radius))
+    .corner_radius(CornerRadius::same(tc.theme.control_radius()))
     .min_size(egui::vec2(0.0, 46.0))
 }
 
@@ -1978,17 +1984,27 @@ fn copy_button(tc: &Tc, copied: bool) -> Button<'static> {
     }
 }
 
+fn outline_text(label: &str) -> RichText {
+    RichText::new(label.to_string()).strong().size(14.0)
+}
+
 fn outline_button(tc: &Tc, label: &str, color: Color32) -> Button<'static> {
-    Button::new(
-        RichText::new(label.to_string())
-            .color(color)
-            .strong()
-            .size(14.0),
-    )
-    .fill(Color32::TRANSPARENT)
-    .stroke(Stroke::new(1.0_f32, color))
-    .corner_radius(tc.corner(10))
-    .min_size(egui::vec2(0.0, 46.0))
+    Button::new(outline_text(label).color(color))
+        .fill(Color32::TRANSPARENT)
+        .stroke(Stroke::new(1.0_f32, color))
+        .corner_radius(tc.corner(10))
+        .min_size(egui::vec2(0.0, 46.0))
+}
+
+/// The width an outline button needs to show `label` on one line in the current font.
+fn outline_button_width(ui: &Ui, label: &str) -> f32 {
+    let text = egui::WidgetText::from(outline_text(label)).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Button,
+    );
+    text.size().x + 2.0 * ui.spacing().button_padding.x
 }
 
 fn compact(ui: &Ui) -> bool {
@@ -2116,11 +2132,8 @@ fn home_story_icon(ui: &mut Ui, tc: &Tc, icon: HomeIcon) {
 }
 
 fn home_story_step(ui: &mut Ui, tc: &Tc, icon: HomeIcon, title: &str, body: &str) {
-    egui::Frame::new()
-        .fill(tc.surface_low)
-        .stroke(Stroke::new(1.0, tc.outline_var))
+    card(tc)
         .corner_radius(tc.corner(16))
-        .shadow(tc.glow)
         .inner_margin(egui::Margin::same(14))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -2195,11 +2208,9 @@ fn show_how_it_works(ui: &mut Ui, tc: &Tc) {
 
     let compact = compact(ui);
     ui.add_space(if compact { 22.0 } else { 30.0 });
-    egui::Frame::new()
+    card(tc)
         .fill(tc.surface_lowest)
-        .stroke(Stroke::new(1.0, tc.outline_var))
         .corner_radius(tc.corner(16))
-        .shadow(tc.glow)
         .inner_margin(egui::Margin::same(if compact { 14 } else { 18 }))
         .show(ui, |ui| {
             egui::CollapsingHeader::new(
@@ -2360,11 +2371,8 @@ impl P2PTransfer {
         let compact = compact(ui);
         self.show_active_share_overview(ui, &tc);
         ui.add_space(if compact { 4.0 } else { 16.0 });
-        egui::Frame::new()
-            .fill(tc.surface_low)
-            .stroke(Stroke::new(1.0, tc.outline_var))
+        card(&tc)
             .corner_radius(tc.corner(20))
-            .shadow(tc.glow)
             .inner_margin(egui::Margin::same(if compact { 16 } else { 24 }))
             .show(ui, |ui| {
                 ui.horizontal(|ui| pill(ui, &tc, "NO ACCOUNT NEEDED", true));
@@ -3413,7 +3421,7 @@ impl P2PTransfer {
     fn show_header(&mut self, ui: &mut Ui, ctx: &egui::Context, tc: &Tc) {
         // Monospace labels run wider, so the full Send header needs more room before its
         // controls stop crowding the mode pill.
-        let compact = ui.available_width() < if tc.monospace { 760.0 } else { 680.0 };
+        let compact = ui.available_width() < if tc.theme.monospace() { 760.0 } else { 680.0 };
         ui.set_height(64.0);
         ui.horizontal_centered(|ui| {
             {
@@ -3467,9 +3475,11 @@ impl P2PTransfer {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(CONTROL_EDGE_INSET);
                 let dark = ui.visuals().dark_mode;
-                // A fixed width keeps the toggle from jumping between its two labels; it is
-                // wider for monospace, whose "Light mode" would otherwise wrap.
-                let toggle_width = if tc.monospace { 128.0 } else { 108.0 };
+                // Wide enough for either label, so the toggle does not jump when flipped.
+                let toggle_width = ["Light mode", "Dark mode"]
+                    .map(|label| outline_button_width(ui, label))
+                    .into_iter()
+                    .fold(108.0, f32::max);
                 if !compact
                     && ui
                         .add_sized(
@@ -3875,7 +3885,7 @@ mod tests {
                 assert_eq!(tc.corner(20), CornerRadius::same(20));
                 assert_eq!(tc.glow, egui::Shadow::NONE);
                 assert_eq!(tc.backdrop, Backdrop::Plain);
-                assert!(!tc.monospace);
+                assert!(!theme.monospace());
             }
         }
 
