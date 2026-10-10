@@ -513,9 +513,9 @@ struct ChatState {
     /// Created from the "For agents" menu or opened from an `&agent` link.
     for_agents: bool,
     focus_input: bool,
-    /// Screen height when the input was last scrolled into view. A phone keyboard
-    /// opening shrinks the screen, which must bring the input back into view.
-    input_seen_height: f32,
+    /// Keyboard inset when the input was last scrolled into view; the keyboard sliding
+    /// up must bring the input back into view.
+    input_seen_inset: f32,
     #[cfg(target_arch = "wasm32")]
     bridge: Option<ChatBridge>,
 }
@@ -534,7 +534,7 @@ impl ChatState {
             handle,
             for_agents,
             focus_input: true,
-            input_seen_height: 0.0,
+            input_seen_inset: 0.0,
             #[cfg(target_arch = "wasm32")]
             bridge: None,
         }
@@ -4321,7 +4321,10 @@ impl P2PTransfer {
                                 .hint_text("Type a message and press Enter")
                                 .frame(egui::Frame::new())
                                 .text_color(tc.on_surface)
-                                .desired_width(input_width - 24.0),
+                                .desired_width(input_width - 24.0)
+                                // Keep focus on Enter: losing it closes a phone keyboard,
+                                // and refocusing for the next message reopens it.
+                                .return_key(None),
                         )
                     })
                     .inner;
@@ -4329,14 +4332,14 @@ impl P2PTransfer {
                     response.request_focus();
                     state.focus_input = false;
                 }
-                let height = ui.ctx().content_rect().height();
+                let inset = keyboard_inset(ui.ctx());
                 if response.has_focus()
-                    && (response.gained_focus() || height != state.input_seen_height)
+                    && (response.gained_focus() || inset != state.input_seen_inset)
                 {
                     response.scroll_to_me(Some(egui::Align::Center));
-                    state.input_seen_height = height;
+                    state.input_seen_inset = inset;
                 }
-                let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let enter = response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let clicked = ui
                     .add_enabled_ui(open, |ui| {
                         ui.add_sized([send_width, 40.0], primary_button(&tc, "Send"))
@@ -4345,7 +4348,8 @@ impl P2PTransfer {
                     .clicked();
                 if open && (enter || clicked) && !state.input.trim().is_empty() {
                     submit = Some(std::mem::take(&mut state.input));
-                    state.focus_input = true;
+                    // The Send button took focus; Enter left it on the input.
+                    state.focus_input = clicked;
                 }
             });
             ui.add_space(10.0);
@@ -4376,6 +4380,43 @@ impl P2PTransfer {
 
 const AGENT_LINK_LABEL: &str = "Copy link for agent";
 const AGENT_LINK_COPIED_LABEL: &str = "✓ Copied agent link";
+
+/// How much of the canvas, in points, an on-screen keyboard covers right now.
+#[cfg(target_arch = "wasm32")]
+fn keyboard_inset(ctx: &egui::Context) -> f32 {
+    // The browser reports no event egui sees while the keyboard slides, so look again soon
+    // whenever text input is active.
+    if ctx.egui_wants_keyboard_input() {
+        ctx.request_repaint_after(std::time::Duration::from_millis(150));
+    }
+    let Some(window) = web_sys::window() else {
+        return 0.0;
+    };
+    let Some(viewport) = window.visual_viewport() else {
+        return 0.0;
+    };
+    // Pinch zoom shrinks the visual viewport too; that is not a keyboard.
+    if viewport.scale() > 1.01 {
+        return 0.0;
+    }
+    let layout = window
+        .inner_height()
+        .ok()
+        .and_then(|h| h.as_f64())
+        .unwrap_or_default();
+    let covered = (layout - viewport.height() - viewport.offset_top()).max(0.0) as f32;
+    // A collapsing URL bar moves the viewport by a few dozen pixels; a keyboard by hundreds.
+    if covered < 100.0 {
+        0.0
+    } else {
+        covered / ctx.zoom_factor()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn keyboard_inset(_ctx: &egui::Context) -> f32 {
+    0.0
+}
 
 /// The quiet, recessed frame used for links, message lists and inputs.
 fn inset(tc: &Tc, margin: egui::Margin) -> egui::Frame {
@@ -4496,6 +4537,16 @@ impl eframe::App for P2PTransfer {
         } else {
             50.0
         };
+        // A phone keyboard covers the bottom of the canvas without resizing it. Resizing the
+        // page with it re-lays out the whole app on every keyboard step and makes it flicker,
+        // so reserve the covered strip instead and keep everything above it.
+        let keyboard = keyboard_inset(ctx);
+        if keyboard > 0.0 {
+            egui::Panel::bottom("keyboard_inset")
+                .exact_size(keyboard)
+                .frame(egui::Frame::new().fill(tc.bg))
+                .show(ui, |_| {});
+        }
         egui::Panel::bottom("terminal_bar")
             .exact_size(terminal_height)
             .frame(terminal_frame)
