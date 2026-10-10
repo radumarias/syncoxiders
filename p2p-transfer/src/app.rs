@@ -115,7 +115,7 @@ impl Theme {
         matches!(self, Self::Phosphor)
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(test, target_arch = "wasm32"))]
     const fn storage_value(self) -> &'static str {
         match self {
             Self::Rusty => "rusty",
@@ -126,12 +126,9 @@ impl Theme {
 
     #[cfg(any(test, target_arch = "wasm32"))]
     fn from_storage_value(value: &str) -> Option<Self> {
-        match value {
-            "rusty" => Some(Self::Rusty),
-            "clean" => Some(Self::Clean),
-            "phosphor" => Some(Self::Phosphor),
-            _ => None,
-        }
+        Self::ALL
+            .into_iter()
+            .find(|theme| theme.storage_value() == value)
     }
 }
 
@@ -1873,8 +1870,10 @@ impl P2PTransfer {
         // Both, and in this order: the context so later frames start correct, and the live
         // `Ui` so *this* frame is already themed. Setting only the context would leave the
         // root `Ui` — built before `logic()` ran — one frame behind on every toggle.
+        // Spacing and type do not depend on light or dark, so they go into both of egui's
+        // styles and survive it swapping to the other one when the system theme changes.
         ctx.set_visuals(v.clone());
-        ctx.global_style_mut(tweak);
+        ctx.all_styles_mut(tweak);
         *ui.visuals_mut() = v;
         tweak(ui.style_mut());
     }
@@ -2005,16 +2004,25 @@ fn outline_button(tc: &Tc, label: &str, color: Color32) -> Button<'static> {
         .min_size(egui::vec2(0.0, 46.0))
 }
 
-/// The width a button needs to show `text` on one line in the current font. Fixed-width
-/// buttons take the larger of this and their design width, so monospace labels still fit.
-fn button_width(ui: &Ui, text: RichText) -> f32 {
-    let text = egui::WidgetText::from(text).into_galley(
-        ui,
-        Some(egui::TextWrapMode::Extend),
-        f32::INFINITY,
-        egui::TextStyle::Button,
-    );
-    text.size().x + 2.0 * ui.spacing().button_padding.x
+/// The width of a fixed-width button: its design width `min`, or wider when any of `texts`
+/// needs more room on one line in the current font, so monospace labels still fit.
+fn fit_width<const N: usize>(ui: &Ui, texts: [RichText; N], min: f32) -> f32 {
+    texts.into_iter().fold(min, |width, text| {
+        let text = egui::WidgetText::from(text).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Button,
+        );
+        width.max(text.size().x + 2.0 * ui.spacing().button_padding.x)
+    })
+}
+
+/// egui rounds a progress bar to half its height; keep that, under the theme's corner cap.
+fn progress_bar(tc: &Tc, progress: f32, height: f32) -> egui::ProgressBar {
+    egui::ProgressBar::new(progress)
+        .desired_height(height)
+        .corner_radius(tc.corner((height / 2.0) as u8))
 }
 
 fn compact(ui: &Ui) -> bool {
@@ -2662,7 +2670,7 @@ impl P2PTransfer {
                         .color(tc.on_surface_var)
                         .size(14.0),
                 );
-                ui.add(egui::ProgressBar::new(*pct).desired_height(10.0));
+                ui.add(progress_bar(&tc, *pct, 10.0));
             }
 
             ui.add_space(14.0);
@@ -2712,12 +2720,12 @@ impl P2PTransfer {
                         ui.horizontal(|ui| {
                             // Wide enough for either copy label, so the row stays centered
                             // and does not shift when the link is copied.
-                            let copy_width = [false, true]
-                                .map(|copied| button_width(ui, primary_text(copy_label(copied))))
-                                .into_iter()
-                                .fold(212.0, f32::max);
-                            let stop_width =
-                                button_width(ui, outline_text("Stop sharing")).max(140.0);
+                            let copy_width = fit_width(
+                                ui,
+                                [false, true].map(|copied| primary_text(copy_label(copied))),
+                                212.0,
+                            );
+                            let stop_width = fit_width(ui, [outline_text("Stop sharing")], 140.0);
                             let row_width = copy_width + stop_width + ui.spacing().item_spacing.x;
                             ui.add_space(((ui.available_width() - row_width) / 2.0).max(0.0));
                             if ui
@@ -2874,7 +2882,7 @@ impl P2PTransfer {
                 }
                 if p.bytes_total > 0 {
                     let frac = p.bytes_done as f32 / p.bytes_total as f32;
-                    ui.add(egui::ProgressBar::new(frac).desired_height(10.0));
+                    ui.add(progress_bar(&tc, frac, 10.0));
                     ui.horizontal_wrapped(|ui| {
                         if let Some(name) = &p.file_name {
                             ui.add(
@@ -3165,7 +3173,7 @@ impl P2PTransfer {
                 } else if p.bytes_total > 0 {
                     ui.add_space(10.0);
                     let frac = p.bytes_done as f32 / p.bytes_total as f32;
-                    ui.add(egui::ProgressBar::new(frac).desired_height(12.0));
+                    ui.add(progress_bar(&tc, frac, 12.0));
                     ui.label(
                         RichText::new(format!(
                             "{} of {}",
@@ -3493,10 +3501,8 @@ impl P2PTransfer {
                 let dark = ui.visuals().dark_mode;
                 if !compact {
                     // Wide enough for either label, so the toggle does not jump when flipped.
-                    let toggle_width = ["Light mode", "Dark mode"]
-                        .map(|label| button_width(ui, outline_text(label)))
-                        .into_iter()
-                        .fold(108.0, f32::max);
+                    let toggle_width =
+                        fit_width(ui, ["Light mode", "Dark mode"].map(outline_text), 108.0);
                     if ui
                         .add_sized(
                             [toggle_width, 44.0],
@@ -3649,7 +3655,8 @@ impl P2PTransfer {
                 ui.add_space(CONTROL_EDGE_INSET);
                 let diagnostics = ui
                     .add_enabled_ui(!self.is_preparing_share(), |ui| {
-                        ui.add_sized([72.0, 44.0], outline_button(tc, "Diags", tc.outline))
+                        let width = fit_width(ui, [outline_text("Diags")], 72.0);
+                        ui.add_sized([width, 44.0], outline_button(tc, "Diags", tc.outline))
                     })
                     .inner
                     .on_disabled_hover_text("Wait for files to finish preparing");
@@ -3768,8 +3775,14 @@ impl eframe::App for P2PTransfer {
 
         // Apply the theme here, not in `logic()`: the root `Ui` is built before `logic()`
         // runs, so a context-only update would leave this frame with the previous palette.
-        let dark = ctx.global_style().visuals.dark_mode;
-        if self.last_dark_mode != Some(dark) || self.last_theme != Some(self.theme) {
+        let style = ctx.global_style();
+        let dark = style.visuals.dark_mode;
+        // egui swaps to its other dark/light style when the system theme changes. If that
+        // style was never themed, its panel fill is not ours even when `dark` is unchanged.
+        if self.last_dark_mode != Some(dark)
+            || self.last_theme != Some(self.theme)
+            || style.visuals.panel_fill != Tc::of(self.theme, dark).bg
+        {
             Self::apply_theme(ctx, ui, self.theme, dark);
             self.last_dark_mode = Some(dark);
             self.last_theme = Some(self.theme);
