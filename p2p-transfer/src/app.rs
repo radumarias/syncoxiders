@@ -4,6 +4,7 @@
 //! `TransferHandle`), turns user gestures into engine commands, and renders whatever the
 //! engine publishes on its progress watch.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -13,6 +14,7 @@ use n0_future::task::{self, AbortOnDropHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
+use crate::chat::{ChatCommand, ChatEvent, ChatHandle};
 use crate::file_io::{self, FileOrigin, FileSnapshot, SharedFile, SharedFiles};
 use crate::logging;
 #[cfg(target_arch = "wasm32")]
@@ -41,6 +43,17 @@ extern "C" {
 extern "C" {
     #[wasm_bindgen(js_name = setBrowserTheme)]
     fn set_browser_theme(theme: &str, dark: bool);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(module = "/assets/chat-bridge.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = installChatSender)]
+    fn install_chat_sender(callback: &wasm_bindgen::JsValue);
+    #[wasm_bindgen(js_name = removeChatSender)]
+    fn remove_chat_sender();
+    #[wasm_bindgen(js_name = emitChatEvent)]
+    fn emit_chat_event(json: &str);
 }
 
 /// Shown next to a link, because the link *is* the credential (design §2.6).
@@ -431,6 +444,7 @@ enum Mode {
         preparing: Vec<PrepareHandle>,
     },
     Receive(Box<ReceiveState>),
+    Chat(Box<ChatState>),
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -443,6 +457,220 @@ struct DiagnosticPeer {
     outcome: Option<String>,
     busy: bool,
     generation: u64,
+}
+
+// ── Chat rooms ───────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChatRole {
+    Host,
+    Guest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ChatStatus {
+    Starting,
+    Open,
+    Failed(String),
+    Closed,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Copied {
+    Link,
+    AgentLink,
+}
+
+/// A hosted room's links: the one for people, and the same link marked for agents.
+#[derive(Clone)]
+struct RoomLinks {
+    link: String,
+    agent: String,
+}
+
+/// Transcript lines kept on screen; older ones scroll off for good.
+const CHAT_TRANSCRIPT: usize = 500;
+
+struct ChatLine {
+    /// `None` for a room notice (someone joined, the room closed).
+    from: Option<String>,
+    text: String,
+}
+
+/// One open room, hosted here or joined from a link. Dropping it leaves the room.
+struct ChatState {
+    role: ChatRole,
+    you: Option<String>,
+    /// Host only, once the room is dialable.
+    links: Option<RoomLinks>,
+    /// Which link was copied last, for the button label.
+    copied: Option<Copied>,
+    members: Vec<String>,
+    lines: VecDeque<ChatLine>,
+    input: String,
+    status: ChatStatus,
+    handle: Option<ChatHandle>,
+    /// Created from the "For agents" menu or opened from an `&agent` link.
+    for_agents: bool,
+    focus_input: bool,
+    /// Keyboard inset when the input was last scrolled into view; the keyboard sliding
+    /// up must bring the input back into view.
+    input_seen_inset: f32,
+    #[cfg(target_arch = "wasm32")]
+    bridge: Option<ChatBridge>,
+}
+
+impl ChatState {
+    fn new(role: ChatRole, handle: Option<ChatHandle>, for_agents: bool) -> Self {
+        Self {
+            role,
+            you: None,
+            links: None,
+            copied: None,
+            members: Vec::new(),
+            lines: VecDeque::new(),
+            input: String::new(),
+            status: ChatStatus::Starting,
+            handle,
+            for_agents,
+            focus_input: true,
+            input_seen_inset: 0.0,
+            #[cfg(target_arch = "wasm32")]
+            bridge: None,
+        }
+    }
+
+    /// A session is running; `apply` drops the handle when it fails or closes.
+    fn polling(&self) -> bool {
+        self.handle.is_some()
+    }
+
+    fn say(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        if let Some(handle) = &self.handle {
+            // A full queue means the session is already behind by 16 messages; dropping
+            // one typed line is better than blocking the frame.
+            let _ = handle.commands.try_send(ChatCommand::Say(text.to_string()));
+        }
+    }
+
+    /// The session is over: drop it, and take `window.oxfer.chat` away with it so a page
+    /// script's `send` throws instead of queueing text nothing will deliver.
+    fn end_session(&mut self) {
+        self.handle = None;
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.bridge = None;
+        }
+    }
+
+    fn note(&mut self, text: impl Into<String>) {
+        self.push_line(None, text.into());
+    }
+
+    fn push_line(&mut self, from: Option<String>, text: String) {
+        if self.lines.len() >= CHAT_TRANSCRIPT {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(ChatLine { from, text });
+    }
+
+    /// Tell page scripts about `event`, then show it.
+    fn dispatch(&mut self, event: ChatEvent) {
+        #[cfg(target_arch = "wasm32")]
+        emit_chat_event(&crate::chat::event_json(&event));
+        self.apply(event);
+    }
+
+    fn apply(&mut self, event: ChatEvent) {
+        match event {
+            ChatEvent::Ready {
+                link,
+                agent_link,
+                you,
+            } => {
+                self.members = vec![you.clone()];
+                self.you = Some(you);
+                self.links = Some(RoomLinks {
+                    link,
+                    agent: agent_link,
+                });
+                self.status = ChatStatus::Open;
+                self.note("Room open. Send the link to the person you want to talk to.");
+            }
+            ChatEvent::Connected { you, mut members } => {
+                // The host's roster omits the newcomer; list it, as the host lists itself.
+                if !members.contains(&you) {
+                    members.push(you.clone());
+                }
+                self.you = Some(you);
+                self.members = members;
+                self.status = ChatStatus::Open;
+                self.note("You're in.");
+            }
+            ChatEvent::Message { from, text, .. } => self.push_line(Some(from), text),
+            ChatEvent::Joined { name } => {
+                if !self.members.contains(&name) {
+                    self.members.push(name.clone());
+                }
+                self.note(format!("{name} joined"));
+            }
+            ChatEvent::Left { name } => {
+                self.members.retain(|m| *m != name);
+                self.note(format!("{name} left"));
+            }
+            ChatEvent::Failed(message) => {
+                self.status = ChatStatus::Failed(message);
+                self.end_session();
+            }
+            ChatEvent::Closed => {
+                self.status = ChatStatus::Closed;
+                self.end_session();
+                self.note("The room is closed.");
+            }
+        }
+    }
+}
+
+/// Page-script access to the open room (`assets/chat-bridge.js`): events go out as DOM
+/// events, and `window.oxfer.chat.send` queues text that `poll_chat` turns into messages.
+#[cfg(target_arch = "wasm32")]
+struct ChatBridge {
+    outbox: Arc<Mutex<Vec<String>>>,
+    _closure: wasm_bindgen::closure::Closure<dyn FnMut(String)>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl ChatBridge {
+    fn install(repaint: egui::Context) -> Self {
+        let outbox: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let closure = wasm_bindgen::closure::Closure::new({
+            let outbox = outbox.clone();
+            move |text: String| {
+                outbox.lock().unwrap().push(text);
+                repaint.request_repaint();
+            }
+        });
+        install_chat_sender(closure.as_ref());
+        Self {
+            outbox,
+            _closure: closure,
+        }
+    }
+
+    fn drain(&self) -> Vec<String> {
+        std::mem::take(&mut *self.outbox.lock().unwrap())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for ChatBridge {
+    fn drop(&mut self) {
+        remove_chat_sender();
+    }
 }
 
 /// Browser-only library of opt-in local copies. Neither this state nor any share link is
@@ -971,6 +1199,10 @@ impl P2PTransfer {
     fn start_receive(&mut self, input: &str) {
         let fragment = input.split_once('#').map(|(_, f)| f).unwrap_or(input);
         let params = Node::parse_fragment(fragment);
+        if params.chat && params.error.is_none() {
+            self.start_chat_join(&params);
+            return;
+        }
 
         if let Some(error) = params.error.clone() {
             self.set_receive(params, Some(input.to_string()), None, Some(error), false);
@@ -1312,10 +1544,16 @@ impl P2PTransfer {
             return;
         }
         let params = Node::parse_fragment(hash);
+        if params.chat && params.ticket.is_none() && params.cap.is_none() && params.error.is_none()
+        {
+            // `#chat` (optionally `#chat&agent`) with no ticket: open a new room here. The
+            // URL is kept as is, and `check_fragment_change` already recorded it.
+            self.start_chat_host(params.agent);
+            return;
+        }
         if params.ticket.is_none() && params.cap.is_none() && params.error.is_none() {
             return;
         }
-
         let mut keep: Vec<String> = Vec::new();
         if params.dev {
             keep.push("dev".to_string());
@@ -1499,6 +1737,8 @@ impl P2PTransfer {
             || match &self.mode {
                 Mode::Send { preparing } => !preparing.is_empty(),
                 Mode::Receive(r) => r.opening || r.handle.is_some(),
+                // A room wakes the UI itself (`chat_wake`); nothing to poll.
+                Mode::Chat(_) => false,
                 Mode::Home => false,
                 #[cfg(target_arch = "wasm32")]
                 Mode::Diagnostics => false,
@@ -1518,6 +1758,8 @@ impl P2PTransfer {
                         progress.as_ref().map(|p| &p.phase),
                     )
                 }
+                // A room lives only while its page is awake.
+                Mode::Chat(c) => c.polling(),
                 Mode::Home | Mode::Diagnostics => false,
             }
     }
@@ -2443,6 +2685,16 @@ impl P2PTransfer {
                     .clicked()
                 {
                     self.pick_file();
+                }
+                ui.add_space(8.0);
+                if ui
+                    .add_sized(
+                        [width, 44.0],
+                        outline_button(&tc, "Start a chat room", tc.outline),
+                    )
+                    .clicked()
+                {
+                    self.start_chat_host(false);
                 }
                 ui.add_space(12.0);
                 ui.add(
@@ -3495,6 +3747,7 @@ impl P2PTransfer {
                 Mode::Diagnostics => "DIAG",
                 Mode::Send { .. } => "TX",
                 Mode::Receive(_) => "RX",
+                Mode::Chat(_) => "CHAT",
             };
             if !compact {
                 ui.add_space(8.0);
@@ -3524,7 +3777,8 @@ impl P2PTransfer {
                     Self::apply_theme(ctx, ui, self.theme, next_dark);
                     self.last_dark_mode = Some(next_dark);
                 }
-                ui.menu_button("Theme", |ui| {
+                // On narrow screens the menu also holds the controls that did not fit.
+                ui.menu_button(if compact { "More" } else { "Theme" }, |ui| {
                     ui.label(RichText::new("Appearance").strong());
                     let mut picked = false;
                     for theme in Theme::ALL {
@@ -3552,10 +3806,16 @@ impl P2PTransfer {
                         self.show_terminal_view = true;
                         ui.close();
                     }
+                    if compact {
+                        self.agents_room_button(ui);
+                    }
                 });
+                if !compact {
+                    self.show_agents_menu(ui);
+                }
                 if !compact
                     && !at_home
-                    && !matches!(self.mode, Mode::Receive(_))
+                    && !matches!(self.mode, Mode::Receive(_) | Mode::Chat(_))
                     && ui.add(primary_button(tc, "Choose File")).clicked()
                 {
                     self.pick_file();
@@ -3736,6 +3996,480 @@ impl P2PTransfer {
 
 // ── eframe glue ──────────────────────────────────────────────────────────────
 
+// ── Chat rooms: flows and rendering ─────────────────────────────────────────
+
+impl P2PTransfer {
+    /// Open a room here. Idempotent while this page already hosts one.
+    fn start_chat_host(&mut self, for_agents: bool) {
+        if let Mode::Chat(state) = &mut self.mode {
+            if state.role == ChatRole::Host && state.polling() {
+                state.for_agents |= for_agents;
+                return;
+            }
+        }
+        if self.is_preparing_share() {
+            return;
+        }
+        let handle = ChatHandle::host(
+            RelayChoice::from_env(),
+            String::new(),
+            Self::base_url(),
+            self.chat_wake(),
+        );
+        self.enter_chat(ChatRole::Host, Some(handle), for_agents, None);
+    }
+
+    /// Join the room a parsed link points at.
+    fn start_chat_join(&mut self, params: &FragmentParams) {
+        let (Some(ticket), Some(cap)) = (params.ticket.clone(), params.cap) else {
+            self.enter_chat(
+                ChatRole::Guest,
+                None,
+                params.agent,
+                Some(MISSING_CAP.to_string()),
+            );
+            return;
+        };
+        let name = params.name.clone().unwrap_or_default();
+        let handle = ChatHandle::join(RelayChoice::from_env(), ticket, cap, name, self.chat_wake());
+        self.enter_chat(ChatRole::Guest, Some(handle), params.agent, None);
+    }
+
+    /// Sessions wake the UI per event, so an idle room costs no frames.
+    fn chat_wake(&self) -> crate::chat::Wake {
+        let repaint = self.repaint.clone();
+        Arc::new(move || repaint.request_repaint())
+    }
+
+    fn enter_chat(
+        &mut self,
+        role: ChatRole,
+        handle: Option<ChatHandle>,
+        for_agents: bool,
+        error: Option<String>,
+    ) {
+        #[cfg(target_arch = "wasm32")]
+        self.reset_peer_diagnostics();
+        // Leave the current room first: dropping an old `ChatBridge` removes the page-script
+        // sender, which would undo a bridge installed before the old state is gone.
+        self.mode = Mode::Home;
+        let mut state = ChatState::new(role, handle, for_agents);
+        if let Some(error) = error {
+            // No session will report this, so report it here.
+            state.dispatch(ChatEvent::Failed(error));
+        }
+        // Only a running session can send; without one `window.oxfer.chat` stays absent, so
+        // a script's `send` throws instead of vanishing.
+        #[cfg(target_arch = "wasm32")]
+        if state.handle.is_some() {
+            state.bridge = Some(ChatBridge::install(self.repaint.clone()));
+        }
+        self.mode = Mode::Chat(Box::new(state));
+    }
+
+    /// Per frame: hand page-script text to the session and apply what the session reported.
+    fn poll_chat(&mut self) {
+        let Mode::Chat(state) = &mut self.mode else {
+            return;
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            let queued = state
+                .bridge
+                .as_ref()
+                .map(ChatBridge::drain)
+                .unwrap_or_default();
+            for text in queued {
+                state.say(&text);
+            }
+        }
+        let events = state
+            .handle
+            .as_mut()
+            .map(ChatHandle::drain)
+            .unwrap_or_default();
+        for event in events {
+            state.dispatch(event);
+        }
+    }
+
+    fn show_agents_menu(&mut self, ui: &mut Ui) {
+        ui.menu_button("For agents", |ui| {
+            ui.set_max_width(340.0);
+            ui.label(RichText::new("Let AI agents talk and send files").strong());
+            ui.label(
+                "Start a room and copy the agent link. Give it to your agent, and send the \
+                 same link to the other person for their agent. The link tells an agent how \
+                 to join this room, talk, and send files through it.",
+            );
+            ui.add_space(6.0);
+            let agent_link = match &self.mode {
+                Mode::Chat(state) => state.links.as_ref().map(|links| links.agent.clone()),
+                _ => None,
+            };
+            match agent_link {
+                Some(link) => {
+                    if ui.button("Copy link for agent").clicked() {
+                        ui.ctx().copy_text(link);
+                        if let Mode::Chat(state) = &mut self.mode {
+                            state.copied = Some(Copied::AgentLink);
+                        }
+                        ui.close();
+                    }
+                }
+                None => self.agents_room_button(ui),
+            }
+        });
+    }
+
+    /// Menu entry that opens a room for agents and closes the menu.
+    fn agents_room_button(&mut self, ui: &mut Ui) {
+        if ui
+            .add_enabled(
+                // Like "Choose File", never offered over a running receive: opening a room
+                // replaces the mode and would drop the download.
+                !self.is_preparing_share()
+                    && !matches!(&self.mode, Mode::Receive(r) if r.handle.is_some()),
+                Button::new("Start a room for agents"),
+            )
+            .clicked()
+        {
+            self.start_chat_host(true);
+            ui.close();
+        }
+    }
+
+    fn show_chat(&mut self, ui: &mut Ui) {
+        let tc = Tc::of(self.theme, ui.visuals().dark_mode);
+        let compact = compact(ui);
+        let Mode::Chat(state) = &mut self.mode else {
+            return;
+        };
+        let mut leave = false;
+        let mut submit: Option<String> = None;
+        let host = state.role == ChatRole::Host;
+        card(&tc).show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.heading(RichText::new("Chat room").color(tc.on_surface));
+                pill(ui, &tc, "ENCRYPTED", true);
+            });
+            ui.add_space(6.0);
+            match &state.status {
+                ChatStatus::Starting => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(if host {
+                            "Opening the room…"
+                        } else {
+                            "Connecting to the room…"
+                        });
+                    });
+                }
+                ChatStatus::Open => {
+                    ui.label(
+                        RichText::new(if host {
+                            "Keep this page open: the room closes when you leave it."
+                        } else {
+                            "Keep this page open while you talk."
+                        })
+                        .color(tc.on_surface_var)
+                        .size(13.0),
+                    );
+                }
+                ChatStatus::Failed(message) => {
+                    ui.label(RichText::new(message.as_str()).color(tc.error));
+                }
+                ChatStatus::Closed => {
+                    ui.label(RichText::new("The room is closed.").color(tc.on_surface_var));
+                }
+            }
+
+            if let Some(RoomLinks { link, agent }) = state.links.clone() {
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("Send this link to the person you want to talk to.")
+                        .color(tc.on_surface)
+                        .strong(),
+                );
+                link_box(ui, &tc, &link);
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    // Wide enough for either label, so the buttons do not shift on copy.
+                    let copy_width = fit_width(
+                        ui,
+                        [false, true].map(|copied| primary_text(copy_label(copied))),
+                        200.0,
+                    );
+                    let agent_width = fit_width(
+                        ui,
+                        [AGENT_LINK_LABEL, AGENT_LINK_COPIED_LABEL].map(outline_text),
+                        200.0,
+                    );
+                    if ui
+                        .add_sized(
+                            [copy_width, 44.0],
+                            copy_button(&tc, state.copied == Some(Copied::Link)),
+                        )
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(link.clone());
+                        state.copied = Some(Copied::Link);
+                    }
+                    let label = if state.copied == Some(Copied::AgentLink) {
+                        AGENT_LINK_COPIED_LABEL
+                    } else {
+                        AGENT_LINK_LABEL
+                    };
+                    if ui
+                        .add_sized([agent_width, 44.0], outline_button(&tc, label, tc.outline))
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(agent);
+                        state.copied = Some(Copied::AgentLink);
+                        state.for_agents = true;
+                    }
+                });
+                ui.label(
+                    RichText::new(
+                        "Anyone with this link can join while this page is open. Send it only \
+                         to people you trust.",
+                    )
+                    .color(tc.error)
+                    .size(12.0),
+                );
+            }
+
+            if state.for_agents {
+                ui.add_space(8.0);
+                egui::CollapsingHeader::new(RichText::new("For agents").strong())
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(
+                                "An agent that opens the agent link finds instructions in the \
+                                 page itself (/llms.txt): how to join this room, read and post \
+                                 messages, and send a file by sharing it here and posting the \
+                                 share link in the room. Both agents need the same link.",
+                            )
+                            .color(tc.on_surface_var)
+                            .size(13.0),
+                        );
+                        if let Some(links) = &state.links {
+                            link_box(ui, &tc, &links.agent);
+                        }
+                    });
+            }
+
+            ui.add_space(10.0);
+            if !state.members.is_empty() {
+                ui.label(
+                    RichText::new(format!("In the room: {}", state.members.join(", ")))
+                        .color(tc.on_surface_var)
+                        .size(13.0),
+                );
+            }
+            ui.add_space(6.0);
+            inset(&tc, egui::Margin::same(10)).show(ui, |ui| {
+                ui.set_min_height(180.0);
+                egui::ScrollArea::vertical()
+                    .max_height(if compact { 280.0 } else { 360.0 })
+                    .stick_to_bottom(true)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        if state.lines.is_empty() {
+                            ui.label(RichText::new("No messages yet.").color(tc.on_surface_var));
+                        }
+                        let you = state.you.as_deref();
+                        for line in &state.lines {
+                            match &line.from {
+                                None => {
+                                    ui.label(
+                                        RichText::new(&line.text)
+                                            .italics()
+                                            .color(tc.on_surface_var)
+                                            .size(13.0),
+                                    );
+                                }
+                                Some(from) => {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(RichText::new(format!("{from}:")).strong().color(
+                                            if Some(from.as_str()) == you {
+                                                tc.primary
+                                            } else {
+                                                tc.on_surface
+                                            },
+                                        ));
+                                        ui.label(RichText::new(&line.text).color(tc.on_surface));
+                                    });
+                                }
+                            }
+                        }
+                    });
+            });
+            ui.add_space(8.0);
+            let open = matches!(state.status, ChatStatus::Open);
+            ui.horizontal(|ui| {
+                let send_width = 84.0;
+                let input_width =
+                    (ui.available_width() - send_width - ui.spacing().item_spacing.x).max(80.0);
+                let response = inset(&tc, egui::Margin::symmetric(12, 10))
+                    .show(ui, |ui| {
+                        ui.add_enabled(
+                            open,
+                            egui::TextEdit::singleline(&mut state.input)
+                                .id(egui::Id::new("chat_input"))
+                                .hint_text("Type a message and press Enter")
+                                .frame(egui::Frame::new())
+                                .text_color(tc.on_surface)
+                                .desired_width(input_width - 24.0)
+                                // Keep focus on Enter: losing it closes a phone keyboard,
+                                // and refocusing for the next message reopens it.
+                                .return_key(None),
+                        )
+                    })
+                    .inner;
+                if open && state.focus_input {
+                    response.request_focus();
+                    state.focus_input = false;
+                }
+                let inset = keyboard_inset(ui.ctx());
+                if response.has_focus()
+                    && (response.gained_focus() || inset != state.input_seen_inset)
+                {
+                    response.scroll_to_me(Some(egui::Align::Center));
+                    state.input_seen_inset = inset;
+                }
+                let enter = response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let clicked = ui
+                    .add_enabled_ui(open, |ui| {
+                        ui.add_sized([send_width, 40.0], primary_button(&tc, "Send"))
+                    })
+                    .inner
+                    .clicked();
+                if open && (enter || clicked) && !state.input.trim().is_empty() {
+                    submit = Some(std::mem::take(&mut state.input));
+                    // The Send button took focus; Enter left it on the input.
+                    state.focus_input = clicked;
+                }
+            });
+            ui.add_space(10.0);
+            let leave_label = match (host, &state.status) {
+                (true, ChatStatus::Open | ChatStatus::Starting) => "Close room",
+                (false, ChatStatus::Open | ChatStatus::Starting) => "Leave room",
+                _ => "Back to home",
+            };
+            let leave_width = fit_width(ui, [outline_text(leave_label)], 140.0);
+            if ui
+                .add_sized(
+                    [leave_width, 44.0],
+                    outline_button(&tc, leave_label, tc.outline),
+                )
+                .clicked()
+            {
+                leave = true;
+            }
+        });
+        if let Some(text) = submit {
+            state.say(&text);
+        }
+        if leave {
+            self.mode = Mode::Home;
+        }
+    }
+}
+
+const AGENT_LINK_LABEL: &str = "Copy link for agent";
+const AGENT_LINK_COPIED_LABEL: &str = "✓ Copied agent link";
+
+/// How much of the canvas, in points, an on-screen keyboard covers right now.
+#[cfg(target_arch = "wasm32")]
+fn keyboard_inset(ctx: &egui::Context) -> f32 {
+    // The browser reports no event egui sees while the keyboard slides, so look again soon
+    // whenever text input is active.
+    if ctx.egui_wants_keyboard_input() {
+        ctx.request_repaint_after(std::time::Duration::from_millis(150));
+    }
+    let Some(window) = web_sys::window() else {
+        return 0.0;
+    };
+    let Some(viewport) = window.visual_viewport() else {
+        return 0.0;
+    };
+    // Pinch zoom shrinks the visual viewport too; that is not a keyboard.
+    if viewport.scale() > 1.01 {
+        return 0.0;
+    }
+    let layout = window
+        .inner_height()
+        .ok()
+        .and_then(|h| h.as_f64())
+        .unwrap_or_default();
+    let covered = (layout - viewport.height() - viewport.offset_top()).max(0.0) as f32;
+    // A collapsing URL bar moves the viewport by a few dozen pixels; a keyboard by hundreds.
+    if covered < 100.0 {
+        0.0
+    } else {
+        covered / ctx.zoom_factor()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn keyboard_inset(_ctx: &egui::Context) -> f32 {
+    0.0
+}
+
+/// Parks the browser's hidden text input at the top of the canvas on touch screens.
+///
+/// eframe puts that input at the text cursor. A focused input low on the page sits under a
+/// phone keyboard, so the browser pans the page to reveal it; the keyboard inset then
+/// changes, the layout moves the cursor, and the page pans back, which flickers. At the top
+/// the input is always visible and the page never pans. Desktop keeps the real position so
+/// an IME candidate window still opens next to the cursor.
+#[cfg(target_arch = "wasm32")]
+fn keep_text_agent_on_screen(ctx: &egui::Context) {
+    let coarse = web_sys::window()
+        .and_then(|window| window.match_media("(pointer: coarse)").ok().flatten())
+        .is_some_and(|query| query.matches());
+    if !coarse {
+        return;
+    }
+    ctx.output_mut(|output| {
+        if let Some(ime) = &mut output.ime {
+            let x = ime.cursor_rect.center().x;
+            ime.cursor_rect = egui::Rect::from_min_size(egui::pos2(x, 0.0), egui::vec2(1.0, 1.0));
+        }
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn keep_text_agent_on_screen(_ctx: &egui::Context) {}
+
+/// The quiet, recessed frame used for links, message lists and inputs.
+fn inset(tc: &Tc, margin: egui::Margin) -> egui::Frame {
+    egui::Frame::new()
+        .fill(tc.surface_lowest)
+        .corner_radius(tc.corner(10))
+        .stroke(Stroke::new(1.0, tc.outline_var))
+        .inner_margin(margin)
+}
+
+/// A wrapped, selectable monospace link inside an inset frame.
+fn link_box(ui: &mut Ui, tc: &Tc, link: &str) {
+    inset(tc, egui::Margin::same(10)).show(ui, |ui| {
+        ui.add(
+            egui::Label::new(
+                RichText::new(link)
+                    .monospace()
+                    .size(12.0)
+                    .color(tc.on_surface),
+            )
+            .wrap()
+            .selectable(true),
+        );
+    });
+}
+
 impl eframe::App for P2PTransfer {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
@@ -3750,6 +4484,7 @@ impl eframe::App for P2PTransfer {
         self.prune_preparing();
         self.adopt_pending_handle();
         self.poll_receive();
+        self.poll_chat();
         self.drain_error();
 
         #[cfg(target_arch = "wasm32")]
@@ -3829,6 +4564,18 @@ impl eframe::App for P2PTransfer {
         } else {
             50.0
         };
+        // A phone keyboard covers the bottom of the canvas without resizing it. Resizing the
+        // page with it re-lays out the whole app on every keyboard step and makes it flicker,
+        // so reserve the covered strip instead and keep everything above it.
+        // The panel is always added, even at zero height: adding it only while the keyboard
+        // is up would shift the ids of every widget after it, and the focused input would lose
+        // focus and close the keyboard again.
+        egui::Panel::bottom("keyboard_inset")
+            .exact_size(keyboard_inset(ctx))
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(tc.bg))
+            .show(ui, |_| {});
         egui::Panel::bottom("terminal_bar")
             .exact_size(terminal_height)
             .frame(terminal_frame)
@@ -3864,17 +4611,21 @@ impl eframe::App for P2PTransfer {
                             Mode::Diagnostics => self.show_diagnostics(ui),
                             Mode::Send { .. } => self.show_send(ui),
                             Mode::Receive(_) => self.show_receive(ui),
+                            Mode::Chat(_) => self.show_chat(ui),
                         }
                         #[cfg(target_arch = "wasm32")]
-                        if !matches!(self.mode, Mode::Diagnostics) {
+                        if !matches!(self.mode, Mode::Diagnostics | Mode::Chat(_)) {
                             self.show_received_files(ui);
                             self.show_local_copies(ui);
                         }
                         #[cfg(not(target_arch = "wasm32"))]
-                        self.show_received_files(ui);
+                        if !matches!(self.mode, Mode::Chat(_)) {
+                            self.show_received_files(ui);
+                        }
                     });
                 });
             });
+        keep_text_agent_on_screen(ctx);
     }
 }
 

@@ -1,0 +1,68 @@
+name: oxfer-preview
+
+# Uploads the browser app as a Worker version with a preview alias, so a feature branch
+# can be tried at https://<alias>-oxfer.42dev.workers.dev/ without touching production:
+# `cf workers versions create` uploads a version but does not deploy it.
+on:
+  push:
+    branches: [oxfer-chat]
+    paths:
+      - "p2p-transfer/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - ".github/workflows/oxfer-preview.yml"
+  workflow_dispatch:
+    inputs:
+      alias:
+        description: Preview alias (the URL is https://<alias>-oxfer.42dev.workers.dev/)
+        required: true
+
+concurrency:
+  group: oxfer-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: p2p-transfer
+    env:
+      ALIAS: ${{ inputs.alias || 'chat' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: p2p-transfer/package-lock.json
+
+      - name: Install cf CLI
+        run: npm ci
+
+      - name: Build browser app
+        run: |
+          npm run build
+          # A preview must not claim the production custom domains.
+          node package-cf-output.mjs --no-domains
+
+      - name: Upload preview version
+        env:
+          CI: true
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "Set GitHub Actions secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID." >&2
+            exit 1
+          fi
+          case "$ALIAS" in
+            "" | *[!a-z0-9-]*) echo "alias must be lowercase letters, digits and dashes" >&2; exit 1 ;;
+          esac
+          npx cf workers versions create --prebuilt --preview-alias "$ALIAS" \
+            --message "preview ${GITHUB_REF_NAME}@${GITHUB_SHA::7}"
+
+      - name: Verify preview
+        run: node verify-deployment.mjs "https://${ALIAS}-oxfer.42dev.workers.dev/"

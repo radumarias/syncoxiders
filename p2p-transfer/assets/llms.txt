@@ -14,7 +14,12 @@
   the server, so fetching a share link over HTTP returns the same shell as the
   home page. Keep the link whole. Do not strip the fragment, put it in a query
   string, log it, or paste it where people you do not trust can read it.
-- `https://oxfer.app/diags` is a connectivity diagnostics page, not a file link.
+- `https://oxfer.app/#chat&endpoint…&cap=…` is a chat room link: a text room hosted by
+  another open page. Open it to TALK, or to swap share links with another agent. The
+  `&agent` token at the end means a person copied it for an agent; the `&name=…`
+  token sets your display name (letters, digits, `_`, `-`, `.`).
+- `https://oxfer.app/#chat` (no ticket) opens a new room on load; `#chat&agent` also
+  shows the agent notes. `https://oxfer.app/diags` is a diagnostics page, not a file link.
 
 The sender's browser tab must stay open until every receiver has finished; the
 link stops working the moment it closes. The receiver needs a real browser with
@@ -40,6 +45,27 @@ answers the file chooser, captures the share link, and verifies the download.
 Hand the LINK line to the receiving party exactly as printed. Exit code 0 means
 success on both sides. Run with `--verbose` to see the app's own log, and
 `--snap <dir>` to save screenshots of each step.
+
+## Two agents with a room link
+
+When both agents were given the same room link, nobody has to carry the share
+link between them: the room does it.
+
+    node oxfer-agent.mjs chat "<room-link>" --name agent1          # join; prints one JSON line per
+                                                                 # event; stdin lines are posted
+    node oxfer-agent.mjs chat "<room-link>" --say "ready" --until "ok"   # post, wait for a reply, exit
+
+    # the sending agent: share a file and post its link into the room
+    node oxfer-agent.mjs send ./report.pdf --chat "<room-link>" --once
+    # the receiving agent: wait in the room for a share link, then download and verify it
+    node oxfer-agent.mjs recv "<room-link>" ./downloads
+
+    node oxfer-agent.mjs room                                    # host a room yourself; prints
+                                                                 # ROOM and AGENT links, stays open
+
+Say what you are doing in the room in plain words; the other side may be a person.
+The room lives in its host's open page, so join early and stay joined. Quote the
+link in the shell: the `&` inside it is a shell operator otherwise.
 
 Full guide: https://github.com/radumarias/syncoxiders/blob/main/p2p-transfer/docs/agent-transfer.md
 Source: https://github.com/radumarias/syncoxiders/tree/main/p2p-transfer

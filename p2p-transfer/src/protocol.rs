@@ -51,6 +51,9 @@ pub const CREDIT_GRAIN: u64 = 256 * 1024;
 
 const TAG_CONTROL: u8 = 0;
 const TAG_CHUNK: u8 = 1;
+/// Chat room frames ([`ChatMsg`]) travel on their own ALPN and never mix with the file
+/// protocol, but share the tag space so a misrouted frame is rejected rather than parsed.
+const TAG_CHAT: u8 = 2;
 
 /// One entry of the manifest.
 ///
@@ -267,13 +270,18 @@ pub fn encode_control(c: &Control) -> Result<Bytes, ProtocolError> {
             return Err(ProtocolError::TooLarge(files.len()));
         }
     }
-    let body = postcard::to_allocvec(c).map_err(ProtocolError::Codec)?;
+    encode_tagged(TAG_CONTROL, c)
+}
+
+/// `tag + postcard(msg)`, refused when the frame would exceed [`MAX_FRAME`].
+fn encode_tagged<T: Serialize>(tag: u8, msg: &T) -> Result<Bytes, ProtocolError> {
+    let body = postcard::to_allocvec(msg).map_err(ProtocolError::Codec)?;
     let total = TAG_LEN + body.len();
     if total > MAX_FRAME {
         return Err(ProtocolError::TooLarge(total));
     }
     let mut buf = BytesMut::with_capacity(total);
-    buf.put_u8(TAG_CONTROL);
+    buf.put_u8(tag);
     buf.put_slice(&body);
     Ok(buf.freeze())
 }
@@ -454,4 +462,153 @@ fn truncated(what: &str) -> std::io::Error {
         std::io::ErrorKind::UnexpectedEof,
         format!("truncated {what}"),
     )
+}
+
+// ---------------------------------------------------------------------------------------
+// Chat rooms (design: a room is a host endpoint; every guest dials it and the host fans out)
+// ---------------------------------------------------------------------------------------
+
+/// ALPN of the chat room protocol. Separate from [`ALPN`] so a room link can never serve a
+/// file and a file link can never join a room.
+pub const CHAT_ALPN: &[u8] = b"oxfer/chat/1";
+/// Version carried in [`ChatMsg::Hello`].
+pub const CHAT_VERSION: u16 = 1;
+/// Longest message text, in bytes of UTF-8. Share links are ~200 bytes; this leaves room
+/// for a paragraph while keeping every chat frame far below [`MAX_FRAME`].
+pub const MAX_CHAT_TEXT: usize = 4096;
+/// Longest display name, in bytes of UTF-8.
+pub const MAX_CHAT_NAME: usize = 32;
+/// Guests a room accepts at once; a `Welcome` roster always fits in one frame.
+pub const MAX_CHAT_MEMBERS: usize = 64;
+
+/// One chat room frame, `tag(2) + postcard(msg)`.
+///
+/// `Hello` is the only frame a guest sends before the host has accepted it; everything the
+/// host sends carries the display name it assigned, never an endpoint id.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub enum ChatMsg {
+    /// Guest → host, first frame. `name` is a request; the host may rename on collision.
+    Hello {
+        version: u16,
+        cap: [u8; CAP_LEN],
+        name: String,
+    },
+    /// Host → guest, reply to an accepted `Hello`.
+    Welcome { you: String, members: Vec<String> },
+    /// Guest → host.
+    Say { text: String },
+    /// Host → everyone (the author included, so every member sees one order). `seq` is the
+    /// room-wide position, so a reader can order a replay and notice a gap.
+    Said {
+        from: String,
+        text: String,
+        seq: u64,
+    },
+    /// Host → everyone.
+    Joined { name: String },
+    /// Host → everyone.
+    Left { name: String },
+    /// Either direction, then the sender closes.
+    Error { message: String },
+}
+
+// Hand-written so an offered capability can never reach a log line.
+impl std::fmt::Debug for ChatMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hello { version, name, .. } => f
+                .debug_struct("Hello")
+                .field("version", version)
+                .field("cap", &"<redacted>")
+                .field("name", name)
+                .finish(),
+            Self::Welcome { you, members } => f
+                .debug_struct("Welcome")
+                .field("you", you)
+                .field("members", &members.len())
+                .finish(),
+            Self::Say { text } => f.debug_struct("Say").field("len", &text.len()).finish(),
+            Self::Said { from, text, seq } => f
+                .debug_struct("Said")
+                .field("from", from)
+                .field("len", &text.len())
+                .field("seq", seq)
+                .finish(),
+            Self::Joined { name } => f.debug_struct("Joined").field("name", name).finish(),
+            Self::Left { name } => f.debug_struct("Left").field("name", name).finish(),
+            Self::Error { message } => f.debug_struct("Error").field("message", message).finish(),
+        }
+    }
+}
+
+/// Keep message text printable: drop control characters other than newline and tab, trim
+/// the ends, and cut to [`MAX_CHAT_TEXT`] bytes on a character boundary.
+pub fn clean_chat_text(text: &str) -> String {
+    let cleaned: String = text
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .collect();
+    crate::file_io::truncate_utf8(cleaned.trim(), MAX_CHAT_TEXT).to_string()
+}
+
+/// A display name is one printable line of at most [`MAX_CHAT_NAME`] bytes; whitespace runs
+/// collapse to one space. Empty after cleaning means "no preference".
+pub fn clean_chat_name(name: &str) -> String {
+    let mut out = String::new();
+    let mut space = true;
+    for c in name.chars() {
+        if c.is_control() || c.is_whitespace() {
+            if !space {
+                out.push(' ');
+                space = true;
+            }
+        } else {
+            out.push(c);
+            space = false;
+        }
+    }
+    crate::file_io::truncate_utf8(&out, MAX_CHAT_NAME)
+        .trim_end()
+        .to_string()
+}
+
+fn chat_bounds(msg: &ChatMsg) -> Result<(), ProtocolError> {
+    let over = |s: &str, max: usize| s.len() > max;
+    let too_large = match msg {
+        ChatMsg::Hello { name, .. } | ChatMsg::Joined { name } | ChatMsg::Left { name } => {
+            over(name, MAX_CHAT_NAME)
+        }
+        ChatMsg::Welcome { you, members } => {
+            over(you, MAX_CHAT_NAME)
+                || members.len() > MAX_CHAT_MEMBERS
+                || members.iter().any(|m| over(m, MAX_CHAT_NAME))
+        }
+        ChatMsg::Say { text } => over(text, MAX_CHAT_TEXT),
+        ChatMsg::Said { from, text, .. } => over(from, MAX_CHAT_NAME) || over(text, MAX_CHAT_TEXT),
+        ChatMsg::Error { message } => over(message, MAX_CHAT_TEXT),
+    };
+    if too_large {
+        return Err(ProtocolError::TooLarge(MAX_CHAT_TEXT));
+    }
+    Ok(())
+}
+
+/// `tag(2) + postcard(msg)`, bounds checked before encoding.
+pub fn encode_chat(msg: &ChatMsg) -> Result<Bytes, ProtocolError> {
+    chat_bounds(msg)?;
+    encode_tagged(TAG_CHAT, msg)
+}
+
+/// Inverse of [`encode_chat`]: rejects other tags and anything over the chat bounds.
+pub fn decode_chat(frame: &[u8]) -> Result<ChatMsg, ProtocolError> {
+    if frame.len() > MAX_FRAME {
+        return Err(ProtocolError::TooLarge(frame.len()));
+    }
+    let (tag, rest) = frame.split_first().ok_or(ProtocolError::Empty)?;
+    if *tag != TAG_CHAT {
+        return Err(ProtocolError::UnknownTag(*tag));
+    }
+    let msg: ChatMsg = postcard::from_bytes(rest).map_err(ProtocolError::Codec)?;
+    chat_bounds(&msg)?;
+    Ok(msg)
 }

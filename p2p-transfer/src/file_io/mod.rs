@@ -392,7 +392,7 @@ fn is_windows_device_name(stem: &str) -> bool {
             })
 }
 
-fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
+pub(crate) fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
     if value.len() <= max_bytes {
         return value;
     }

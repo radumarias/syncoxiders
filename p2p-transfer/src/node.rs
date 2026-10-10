@@ -675,6 +675,12 @@ pub struct FragmentParams {
     pub cap: Option<[u8; CAP_LEN]>,
     pub ticket: Option<EndpointTicket>,
     pub error: Option<String>,
+    /// `chat`: the ticket and cap open a chat room, not a file share.
+    pub chat: bool,
+    /// `agent`: the link was copied for an automated agent (informational; see `llms.txt`).
+    pub agent: bool,
+    /// `name=`: the display name to join a chat room with (letters, digits, `_`, `-`, `.`).
+    pub name: Option<String>,
 }
 
 /// One connected peer, as the sender's UI sees it.
@@ -750,25 +756,7 @@ impl Node {
     pub async fn bind(files: SharedFiles, relay: RelayChoice) -> Result<Self, NodeError> {
         let secret = SecretKey::generate();
         let cap = derive_cap(&secret);
-        let builder = match &relay {
-            RelayChoice::N0 => Endpoint::builder(presets::N0),
-            RelayChoice::N0WithoutTrailingDots => Endpoint::builder(presets::N0)
-                .relay_mode(RelayMode::Custom(n0_relays_without_trailing_dots()?)),
-            RelayChoice::Custom(url) => Endpoint::builder(presets::Minimal)
-                .relay_mode(RelayMode::Custom(RelayMap::from(url.clone()))),
-            RelayChoice::None => {
-                Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
-            }
-        };
-        let bind = builder.secret_key(secret).alpns(vec![ALPN.to_vec()]).bind();
-        let endpoint = timeout(BIND_TIMEOUT, bind)
-            .await
-            .map_err(|_| {
-                NodeError::Bind(
-                    "endpoint startup timed out; check this device's network and retry".to_string(),
-                )
-            })?
-            .map_err(|e| NodeError::Bind(e.to_string()))?;
+        let endpoint = bind_endpoint(&relay, secret, vec![ALPN.to_vec()]).await?;
 
         let peers = Peers::default();
         let serve = Serve {
@@ -813,44 +801,12 @@ impl Node {
     /// With a relay we wait for the endpoint to come online, so the ticket carries a reachable
     /// relay address. Without one there is nothing to wait for but a local address.
     pub async fn ticket(&self) -> Result<EndpointTicket, NodeError> {
-        match self.relay {
-            RelayChoice::None => self.local_ticket().await,
-            _ => {
-                timeout(ONLINE_TIMEOUT, self.endpoint.online())
-                    .await
-                    .map_err(|_| NodeError::Offline)?;
-                Ok(EndpointTicket::new(browser_relay_addr(
-                    self.endpoint.addr(),
-                )?))
-            }
-        }
-    }
-
-    /// A relay-less share can only be dialled over an IP address, so wait for one to appear.
-    /// In a browser none ever does — there is no dialable local address there — and this
-    /// reports `Offline` on the same deadline as anywhere else, which is why it needs no
-    /// separate wasm body.
-    async fn local_ticket(&self) -> Result<EndpointTicket, NodeError> {
-        let deadline = Instant::now() + LOCAL_ADDR_TIMEOUT;
-        loop {
-            let addr = self.endpoint.addr();
-            if addr.ip_addrs().next().is_some() {
-                return Ok(EndpointTicket::new(addr));
-            }
-            if Instant::now() >= deadline {
-                return Err(NodeError::Offline);
-            }
-            n0_future::time::sleep(LOCAL_ADDR_POLL).await;
-        }
+        dialable_ticket(&self.endpoint, &self.relay).await
     }
 
     /// Dial the endpoint a ticket points at.
     pub async fn connect(&self, ticket: &EndpointTicket) -> Result<Connection, NodeError> {
-        let addr = browser_relay_addr(ticket.endpoint_addr().clone())?;
-        timeout(DIAL_TIMEOUT, self.endpoint.connect(addr, ALPN))
-            .await
-            .map_err(|_| NodeError::Connect("timed out".to_string()))?
-            .map_err(|e| NodeError::Connect(e.to_string()))
+        dial(&self.endpoint, ticket, ALPN).await
     }
 
     /// Build a share link: `{base}#{[dev&]}{ticket}&cap={32 hex}`.
@@ -858,17 +814,27 @@ impl Node {
     /// The ticket's string form never contains `#` or `&`, so the grammar stays unambiguous,
     /// and the capability token is always last.
     pub fn link(base_url: &str, ticket: &EndpointTicket, cap: &[u8; CAP_LEN], dev: bool) -> String {
-        let base = base_url.split('#').next().unwrap_or(base_url);
-        let mut link = String::with_capacity(base.len() + 128);
-        link.push_str(base);
-        link.push('#');
-        if dev {
-            link.push_str("dev&");
-        }
-        link.push_str(&ticket.to_string());
-        link.push_str("&cap=");
-        link.push_str(&cap_to_hex(cap));
-        link
+        fragment_link(base_url, if dev { "dev&" } else { "" }, ticket, cap, "")
+    }
+
+    /// Build a chat room link: `{base}#chat&{ticket}&cap={32 hex}[&agent]`.
+    ///
+    /// Same grammar as a share link plus the `chat` token, so [`Node::parse_fragment`] reads
+    /// both; the `agent` token only tells a reader that an automated agent was meant to open
+    /// it (`/llms.txt` explains what to do with it).
+    pub fn chat_link(
+        base_url: &str,
+        ticket: &EndpointTicket,
+        cap: &[u8; CAP_LEN],
+        agent: bool,
+    ) -> String {
+        fragment_link(
+            base_url,
+            "chat&",
+            ticket,
+            cap,
+            if agent { "&agent" } else { "" },
+        )
     }
 
     /// Parse a URL fragment (with or without its leading `#`).
@@ -892,6 +858,19 @@ impl Node {
         for token in fragment.split('&').filter(|t| !t.is_empty()) {
             if token == "dev" {
                 params.dev = true;
+            } else if token == "chat" {
+                params.chat = true;
+            } else if token == "agent" {
+                params.agent = true;
+            } else if let Some(value) = token.strip_prefix("name=") {
+                if !value.is_empty()
+                    && value.len() <= crate::protocol::MAX_CHAT_NAME
+                    && value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+                {
+                    params.name = Some(value.to_string());
+                }
             } else if token == "relay" {
                 params.force_relay = true;
             } else if let Some(value) = token.strip_prefix("sink=") {
@@ -943,6 +922,140 @@ impl Node {
     }
 }
 
+/// An endpoint builder with the relay configuration `relay` asks for. Shared by every
+/// ephemeral endpoint (diagnostics, chat) so the relay rules live in one place.
+pub(crate) fn endpoint_builder(relay: &RelayChoice) -> Result<iroh::endpoint::Builder, NodeError> {
+    Ok(match relay {
+        RelayChoice::N0 => Endpoint::builder(presets::N0),
+        RelayChoice::N0WithoutTrailingDots => Endpoint::builder(presets::N0)
+            .relay_mode(RelayMode::Custom(n0_relays_without_trailing_dots()?)),
+        RelayChoice::Custom(url) => Endpoint::builder(presets::Minimal)
+            .relay_mode(RelayMode::Custom(RelayMap::from(url.clone()))),
+        RelayChoice::None => Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled),
+    })
+}
+
+/// Bind an endpoint for `relay` with `secret` and `alpns`, within [`BIND_TIMEOUT`].
+pub(crate) async fn bind_endpoint(
+    relay: &RelayChoice,
+    secret: SecretKey,
+    alpns: Vec<Vec<u8>>,
+) -> Result<Endpoint, NodeError> {
+    let bind = endpoint_builder(relay)?
+        .secret_key(secret)
+        .alpns(alpns)
+        .bind();
+    timeout(BIND_TIMEOUT, bind)
+        .await
+        .map_err(|_| {
+            NodeError::Bind(
+                "endpoint startup timed out; check this device's network and retry".to_string(),
+            )
+        })?
+        .map_err(|e| NodeError::Bind(e.to_string()))
+}
+
+/// Dial the endpoint a ticket points at, on `alpn`, within [`DIAL_TIMEOUT`].
+pub(crate) async fn dial(
+    endpoint: &Endpoint,
+    ticket: &EndpointTicket,
+    alpn: &'static [u8],
+) -> Result<Connection, NodeError> {
+    let addr = browser_relay_addr(ticket.endpoint_addr().clone())?;
+    timeout(DIAL_TIMEOUT, endpoint.connect(addr, alpn))
+        .await
+        .map_err(|_| NodeError::Connect("timed out".to_string()))?
+        .map_err(|e| NodeError::Connect(e.to_string()))
+}
+
+/// A session future `task::spawn` accepts: `Send` on native, where the runtime is
+/// multi-threaded; not on wasm, where a session may hold JS handles.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) trait SessionFuture<E>:
+    std::future::Future<Output = std::result::Result<(), E>> + Send + 'static
+{
+}
+#[cfg(not(target_arch = "wasm32"))]
+impl<E, T> SessionFuture<E> for T where
+    T: std::future::Future<Output = std::result::Result<(), E>> + Send + 'static
+{
+}
+#[cfg(target_arch = "wasm32")]
+pub(crate) trait SessionFuture<E>:
+    std::future::Future<Output = std::result::Result<(), E>> + 'static
+{
+}
+#[cfg(target_arch = "wasm32")]
+impl<E, T> SessionFuture<E> for T where
+    T: std::future::Future<Output = std::result::Result<(), E>> + 'static
+{
+}
+
+/// Run one connection's session in its own task and await its result.
+///
+/// `ProtocolHandler::accept` must return a `Send` future even on wasm, where a session may
+/// hold JS handles: the session is built inside the spawned task (hence a closure, not a
+/// future) and awaited over a channel, which keeps the signature satisfiable on both targets.
+pub(crate) async fn accept_in_task<M, F, E>(session: M) -> std::result::Result<(), AcceptError>
+where
+    M: FnOnce() -> F + Send + 'static,
+    F: SessionFuture<E>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let (done_tx, done_rx) = oneshot::channel();
+    let _task = task::spawn(async move {
+        done_tx.send(session().await).ok();
+    });
+    done_rx
+        .await
+        .map_err(AcceptError::from_err)?
+        .map_err(AcceptError::from_err)
+}
+
+/// `{base}#{leading}{ticket}&cap={32 hex}{trailing}`: the one place the link grammar is
+/// written. The ticket's string form never contains `#` or `&`, so it stays unambiguous.
+fn fragment_link(
+    base_url: &str,
+    leading: &str,
+    ticket: &EndpointTicket,
+    cap: &[u8; CAP_LEN],
+    trailing: &str,
+) -> String {
+    let base = base_url.split('#').next().unwrap_or(base_url);
+    let mut link = String::with_capacity(base.len() + 160);
+    link.push_str(base);
+    link.push('#');
+    link.push_str(leading);
+    link.push_str(&ticket.to_string());
+    link.push_str("&cap=");
+    link.push_str(&cap_to_hex(cap));
+    link.push_str(trailing);
+    link
+}
+
+/// A ticket other devices can dial: waits for relay registration, or for a local address
+/// when relays are disabled. In a browser no local address ever appears, so a relay-less
+/// browser share reports `Offline` on the same deadline as anywhere else.
+pub(crate) async fn dialable_ticket(
+    endpoint: &Endpoint,
+    relay: &RelayChoice,
+) -> Result<EndpointTicket, NodeError> {
+    if *relay == RelayChoice::None {
+        let deadline = Instant::now() + LOCAL_ADDR_TIMEOUT;
+        while endpoint.addr().ip_addrs().next().is_none() {
+            if Instant::now() >= deadline {
+                return Err(NodeError::Offline);
+            }
+            n0_future::time::sleep(LOCAL_ADDR_POLL).await;
+        }
+        return Ok(EndpointTicket::new(endpoint.addr()));
+    }
+    timeout(ONLINE_TIMEOUT, endpoint.online())
+        .await
+        .map_err(|_| NodeError::Offline)?;
+    Ok(EndpointTicket::new(browser_relay_addr(endpoint.addr())?))
+}
+
 /// Separate ALPN and no file handler: opening a diagnostics link never serves a
 /// shared file or turns it into a valid transfer link.
 const DIAGNOSTIC_ALPN: &[u8] = b"oxfer/diagnostics/1";
@@ -964,26 +1077,12 @@ impl DiagnosticNode {
     }
 
     pub async fn bind(relay: RelayChoice) -> Result<Self, NodeError> {
-        let builder = match &relay {
-            RelayChoice::N0 => Endpoint::builder(presets::N0),
-            RelayChoice::N0WithoutTrailingDots => Endpoint::builder(presets::N0)
-                .relay_mode(RelayMode::Custom(n0_relays_without_trailing_dots()?)),
-            RelayChoice::Custom(url) => Endpoint::builder(presets::Minimal)
-                .relay_mode(RelayMode::Custom(RelayMap::from(url.clone()))),
-            RelayChoice::None => {
-                Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
-            }
-        };
-        let endpoint = timeout(
-            BIND_TIMEOUT,
-            builder
-                .secret_key(SecretKey::generate())
-                .alpns(vec![DIAGNOSTIC_ALPN.to_vec()])
-                .bind(),
+        let endpoint = bind_endpoint(
+            &relay,
+            SecretKey::generate(),
+            vec![DIAGNOSTIC_ALPN.to_vec()],
         )
-        .await
-        .map_err(|_| NodeError::Bind("diagnostic endpoint startup timed out".into()))?
-        .map_err(|error| NodeError::Bind(error.to_string()))?;
+        .await?;
         let completed = Arc::new(AtomicUsize::new(0));
         let router = Router::builder(endpoint.clone())
             .accept(DIAGNOSTIC_ALPN, DiagnosticHandler(completed.clone()))
@@ -997,30 +1096,11 @@ impl DiagnosticNode {
     }
 
     pub async fn ticket(&self) -> Result<EndpointTicket, NodeError> {
-        if self.relay == RelayChoice::None {
-            let deadline = Instant::now() + LOCAL_ADDR_TIMEOUT;
-            while self.endpoint.addr().ip_addrs().next().is_none() {
-                if Instant::now() >= deadline {
-                    return Err(NodeError::Offline);
-                }
-                n0_future::time::sleep(LOCAL_ADDR_POLL).await;
-            }
-            return Ok(EndpointTicket::new(self.endpoint.addr()));
-        }
-        timeout(ONLINE_TIMEOUT, self.endpoint.online())
-            .await
-            .map_err(|_| NodeError::Offline)?;
-        Ok(EndpointTicket::new(browser_relay_addr(
-            self.endpoint.addr(),
-        )?))
+        dialable_ticket(&self.endpoint, &self.relay).await
     }
 
     pub async fn probe(&self, ticket: &EndpointTicket) -> Result<(), NodeError> {
-        let addr = browser_relay_addr(ticket.endpoint_addr().clone())?;
-        let connection = timeout(DIAL_TIMEOUT, self.endpoint.connect(addr, DIAGNOSTIC_ALPN))
-            .await
-            .map_err(|_| NodeError::Connect("peer dial timed out".into()))?
-            .map_err(|error| NodeError::Connect(error.to_string()))?;
+        let connection = dial(&self.endpoint, ticket, DIAGNOSTIC_ALPN).await?;
         let result = timeout(DIAL_TIMEOUT, async {
             let (mut send, mut recv) = connection.open_bi().await?;
             send.write_all(b"PING").await?;
@@ -1077,7 +1157,7 @@ impl ProtocolHandler for DiagnosticHandler {
 }
 
 /// Derive a share's capability from its secret key (design §4.7).
-fn derive_cap(secret: &SecretKey) -> [u8; CAP_LEN] {
+pub(crate) fn derive_cap(secret: &SecretKey) -> [u8; CAP_LEN] {
     let derived = blake3::derive_key(CAP_CONTEXT, &secret.to_bytes());
     let mut cap = [0u8; CAP_LEN];
     cap.copy_from_slice(&derived[..CAP_LEN]);
@@ -1120,19 +1200,9 @@ impl ProtocolHandler for Serve {
         let (progress_tx, progress_rx) = watch::channel(TransferProgress::connecting());
         self.peers.register(id, progress_rx);
 
-        let (done_tx, done_rx) = oneshot::channel();
         let cancel = CancellationToken::new();
         let (opts, dc) = (self.opts.clone(), self.dc.clone());
-        // `accept` must return a `Send` future even on wasm, where the session holds JS
-        // handles: spawning the session and awaiting its result over a channel is what keeps
-        // this signature satisfiable on both targets.
-        let _task = task::spawn(async move {
-            let result = run_sender(connection, snapshot, progress_tx, cancel, opts, dc).await;
-            done_tx.send(result).ok();
-        });
-        done_rx
+        accept_in_task(move || run_sender(connection, snapshot, progress_tx, cancel, opts, dc))
             .await
-            .map_err(AcceptError::from_err)?
-            .map_err(AcceptError::from_err)
     }
 }
