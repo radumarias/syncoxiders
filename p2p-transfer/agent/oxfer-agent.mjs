@@ -17,7 +17,8 @@
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, mkdir, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -133,6 +134,33 @@ function sha256File(file) {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+/**
+ * Wait for every download to settle. Fails when `isGone()` reports the page closed or
+ * crashed, or when `bytesSoFar()` (if given) stays the same for `stallMs`, so a sender
+ * that vanished mid-stream cannot keep the receiver waiting forever.
+ */
+export async function awaitDownloads(downloads, { isGone, bytesSoFar, stallMs, pollMs = 500 }) {
+    const all = Promise.all(downloads);
+    let settled = false;
+    all.then(() => { settled = true; }, () => { settled = true; });
+    let last = -1;
+    let lastChange = Date.now();
+    while (!settled) {
+        if (isGone()) throw new Error("the app page closed or crashed during the download");
+        if (bytesSoFar) {
+            const bytes = await bytesSoFar();
+            if (bytes !== last) {
+                last = bytes;
+                lastChange = Date.now();
+            } else if (Date.now() - lastChange > stallMs) {
+                throw new Error(`the download made no progress for ${stallMs / 1000}s; is the sender's browser still open?`);
+            }
+        }
+        await Promise.race([all.catch(() => {}), sleep(pollMs)]);
+    }
+    return all;
+}
+
 class Session {
     constructor(options) {
         this.options = options;
@@ -162,17 +190,21 @@ class Session {
         const { chromium, firefox, webkit } = await import("playwright");
         const headless = !this.options.headed;
         const chromiumArgs = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"];
+        // In-progress downloads land here, so the receiver can tell a stalled stream
+        // from a slow one.
+        this.downloadsDir = await mkdtemp(path.join(os.tmpdir(), "oxfer-agent-"));
+        const downloadsPath = this.downloadsDir;
         const wanted = this.options.browser ?? "auto";
         const candidates = wanted === "auto" ? ["chrome", "chromium"] : [wanted];
         let lastError;
         for (const candidate of candidates) {
             try {
                 if (candidate === "firefox") {
-                    this.browser = await firefox.launch({ headless });
+                    this.browser = await firefox.launch({ headless, downloadsPath });
                 } else if (candidate === "webkit") {
-                    this.browser = await webkit.launch({ headless });
+                    this.browser = await webkit.launch({ headless, downloadsPath });
                 } else {
-                    const launch = { headless, args: chromiumArgs };
+                    const launch = { headless, args: chromiumArgs, downloadsPath };
                     if (candidate !== "chromium") launch.channel = candidate;
                     this.browser = await chromium.launch(launch);
                 }
@@ -221,6 +253,9 @@ class Session {
         }
         this.context = context;
         this.page = await context.newPage();
+        this.pageGone = false;
+        this.page.on("close", () => { this.pageGone = true; });
+        this.page.on("crash", () => { this.pageGone = true; });
         this.page.on("console", message => {
             const text = message.text();
             this.log.push(text);
@@ -294,6 +329,16 @@ class Session {
     async close() {
         // A page mid-transfer can keep browser.close() waiting; never hang exit on it.
         await Promise.race([this.browser?.close().catch(() => {}), sleep(5000)]);
+        if (this.downloadsDir) await rm(this.downloadsDir, { recursive: true, force: true }).catch(() => {});
+    }
+
+    /** Bytes written so far to in-progress and finished downloads. */
+    async downloadedBytes() {
+        let total = 0;
+        for (const name of await readdir(this.downloadsDir).catch(() => [])) {
+            total += (await stat(path.join(this.downloadsDir, name)).catch(() => null))?.size ?? 0;
+        }
+        return total;
     }
 }
 
@@ -341,10 +386,17 @@ async function send(files, options) {
         const verifiedCount = session.counter(/receiver verified/);
         let served = 0;
         let completed = 0;
+        let lastServed = Date.now();
         while (completed < wanted) {
             await sleep(500);
-            while (served < servedCount.n) session.say(`SERVED ${++served}`);
+            while (served < servedCount.n) { session.say(`SERVED ${++served}`); lastServed = Date.now(); }
             while (completed < verifiedCount.n) session.say(`COMPLETE ${++completed}`);
+            if (session.pageGone) throw new Error("the app page closed or crashed while sharing");
+            // A bounded run must not wait forever for a receipt that is not coming: the
+            // receiver failed, or the build predates the "receiver verified" line.
+            if (Number.isFinite(wanted) && served > completed && Date.now() - lastServed > session.timeoutMs) {
+                throw new Error(`served ${served} but no verification receipt arrived within ${session.timeoutMs / 1000}s`);
+            }
         }
         await stop(0);
     } catch (error) {
@@ -396,7 +448,13 @@ async function recv(link, outDir, options) {
         let settled = 0;
         while (settled < downloads.length) {
             settled = downloads.length;
-            await Promise.all(downloads);
+            await awaitDownloads(downloads, {
+                isGone: () => session.pageGone,
+                // Only Chromium is known to grow the file in `downloadsPath` as bytes
+                // arrive; elsewhere a long download would look stalled.
+                bytesSoFar: session.family === "chromium" ? () => session.downloadedBytes() : null,
+                stallMs: session.timeoutMs,
+            });
             await sleep(1500); // more files of the same manifest may start late
         }
         // Oxfer verifies BLAKE3 after the sink closes; wait for every file's receipt.

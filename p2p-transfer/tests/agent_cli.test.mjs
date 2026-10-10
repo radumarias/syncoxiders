@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { classifyLink, findPrimaryButton, parseArgs, PRIMARY_BLUE } from "../agent/oxfer-agent.mjs";
+import { awaitDownloads, classifyLink, findPrimaryButton, parseArgs, PRIMARY_BLUE } from "../agent/oxfer-agent.mjs";
 
 const read = path => readFile(new URL(path, import.meta.url), "utf8");
 const share = "https://oxfer.app/#endpointadgxn5zl2zfsyzz7clou244grpcaza4t4e62rxsl3agmhvdmo4c7gaiaejuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zp&cap=b12d9525bb44971d1375bf8f2bcf4e9e";
@@ -66,4 +66,17 @@ test("the site tells HTTP-only clients how to drive it", async () => {
     assert.match(llms, /oxfer-agent\.mjs recv/);
     assert.match(llms, /#endpoint…&cap=…/);
     assert.doesNotMatch(llms, /cap=[0-9a-f]{32}/, "never publish a real capability");
+});
+
+test("awaitDownloads resolves when downloads finish and fails on a stall or a closed page", async () => {
+    const quick = { isGone: () => false, stallMs: 50, pollMs: 5 };
+    let bytes = 0;
+    const growing = () => bytes++;
+    const slow = new Promise(resolve => setTimeout(() => resolve("a.bin"), 120));
+    assert.deepEqual(await awaitDownloads([slow], { ...quick, bytesSoFar: growing }), ["a.bin"], "slow but progressing is fine");
+
+    const never = new Promise(() => {});
+    await assert.rejects(awaitDownloads([never], { ...quick, bytesSoFar: () => 7 }), /no progress for 0.05s/);
+    await assert.rejects(awaitDownloads([never], { ...quick, isGone: () => true, bytesSoFar: null }), /closed or crashed/);
+    await assert.rejects(awaitDownloads([Promise.reject(new Error("canceled"))], { ...quick, bytesSoFar: null }), /canceled/);
 });
