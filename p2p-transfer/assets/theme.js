@@ -5,7 +5,7 @@ const CHROME = {
         dark: { header: "#23263a", background: "#151724" },
     },
     rusty: {
-        light: { header: "#fffdfb", background: "#faf6f2" },
+        light: { header: "#edded4", background: "#faf6f2" },
         dark: { header: "#231b17", background: "#100d0c" },
     },
     phosphor: {

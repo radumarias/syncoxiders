@@ -22,7 +22,7 @@ test("every theme choice updates browser chrome in light and dark mode", () => {
         body: { style: { backgroundColor: null } },
     };
     for (const [theme, dark, header, background] of [
-        ["rusty", false, "#fffdfb", "#faf6f2"],
+        ["rusty", false, "#edded4", "#faf6f2"],
         ["rusty", true, "#231b17", "#100d0c"],
         ["clean", false, "#f4f5f7", "#e4e4e4"],
         ["clean", true, "#23263a", "#151724"],
