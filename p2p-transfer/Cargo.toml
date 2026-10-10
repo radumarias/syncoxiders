@@ -84,6 +84,7 @@ web-sys = { version = "0.3.104", features = [
     # DOM / shell
     "Window",
     "VisualViewport",
+    "MediaQueryList",
     "Document",
     "Element",
     "HtmlElement",

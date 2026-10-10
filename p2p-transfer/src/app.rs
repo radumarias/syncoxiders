@@ -4419,6 +4419,32 @@ fn keyboard_inset(_ctx: &egui::Context) -> f32 {
     0.0
 }
 
+/// Parks the browser's hidden text input at the top of the canvas on touch screens.
+///
+/// eframe puts that input at the text cursor. A focused input low on the page sits under a
+/// phone keyboard, so the browser pans the page to reveal it; the keyboard inset then
+/// changes, the layout moves the cursor, and the page pans back, which flickers. At the top
+/// the input is always visible and the page never pans. Desktop keeps the real position so
+/// an IME candidate window still opens next to the cursor.
+#[cfg(target_arch = "wasm32")]
+fn keep_text_agent_on_screen(ctx: &egui::Context) {
+    let coarse = web_sys::window()
+        .and_then(|window| window.match_media("(pointer: coarse)").ok().flatten())
+        .is_some_and(|query| query.matches());
+    if !coarse {
+        return;
+    }
+    ctx.output_mut(|output| {
+        if let Some(ime) = &mut output.ime {
+            let x = ime.cursor_rect.center().x;
+            ime.cursor_rect = egui::Rect::from_min_size(egui::pos2(x, 0.0), egui::vec2(1.0, 1.0));
+        }
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn keep_text_agent_on_screen(_ctx: &egui::Context) {}
+
 /// The quiet, recessed frame used for links, message lists and inputs.
 fn inset(tc: &Tc, margin: egui::Margin) -> egui::Frame {
     egui::Frame::new()
@@ -4599,6 +4625,7 @@ impl eframe::App for P2PTransfer {
                     });
                 });
             });
+        keep_text_agent_on_screen(ctx);
     }
 }
 
