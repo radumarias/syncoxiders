@@ -31,7 +31,8 @@ packaged first. Details: [`docs/cloudflare-workers.md`](docs/cloudflare-workers.
 - `./check.sh` — required gate: native and wasm checks, fmt, clippy with
   `-D warnings` on both targets, tests, doctests, OPFS worker fault tests,
   real Firefox WebRTC and persistence tests, and `trunk build`. It requires
-  Node.js, Firefox, `wasm-pack`, and Trunk.
+  Node.js, Firefox, `wasm-pack`, Trunk, and clang with `llvm-ar`: every wasm32
+  build compiles ring's C code, which gcc cannot target.
 - `cargo test <substring>` — run a focused unit test.
 
 There must be one workspace `../Cargo.lock`. A gitignored
@@ -109,6 +110,10 @@ normal suite. The real browser data-channel integration test runs with:
 ```sh
 wasm-pack test --headless --firefox -- --test webrtc_wasm
 ```
+
+Without camera or microphone permission, Firefox gathers ICE candidates only on
+the default-route interface, so this test needs a default route (but no
+Internet); with none, as under `docker run --network none`, it times out.
 
 Durable OPFS checkpoint/reopen behavior runs in a real browser worker with:
 
