@@ -1962,7 +1962,7 @@ fn card(tc: &Tc) -> egui::Frame {
 }
 
 fn primary_text(label: &str) -> RichText {
-    RichText::new(label.to_string()).strong().size(15.0)
+    RichText::new(label).strong().size(15.0)
 }
 
 fn primary_button(tc: &Tc, label: &str) -> Button<'static> {
@@ -1982,18 +1982,23 @@ const fn copy_label(copied: bool) -> &'static str {
 }
 
 fn copy_button(tc: &Tc, copied: bool) -> Button<'static> {
-    let button = primary_button(tc, copy_label(copied));
-    if copied {
-        button
-            .fill(tc.secondary)
-            .stroke(Stroke::new(1.0, tc.secondary))
+    let color = if copied { tc.secondary } else { tc.primary };
+    primary_button(tc, copy_label(copied))
+        .fill(color)
+        .stroke(Stroke::new(1.0, color))
+}
+
+/// The light/dark toggle names the mode it switches to.
+const fn mode_toggle_label(dark: bool) -> &'static str {
+    if dark {
+        "Light mode"
     } else {
-        button
+        "Dark mode"
     }
 }
 
 fn outline_text(label: &str) -> RichText {
-    RichText::new(label.to_string()).strong().size(14.0)
+    RichText::new(label).strong().size(14.0)
 }
 
 fn outline_button(tc: &Tc, label: &str, color: Color32) -> Button<'static> {
@@ -3499,25 +3504,25 @@ impl P2PTransfer {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(CONTROL_EDGE_INSET);
                 let dark = ui.visuals().dark_mode;
-                if !compact {
-                    // Wide enough for either label, so the toggle does not jump when flipped.
-                    let toggle_width =
-                        fit_width(ui, ["Light mode", "Dark mode"].map(outline_text), 108.0);
-                    if ui
+                // Wide enough for either label, so the toggle does not jump when flipped.
+                if !compact
+                    && ui
                         .add_sized(
-                            [toggle_width, 44.0],
-                            outline_button(
-                                tc,
-                                if dark { "Light mode" } else { "Dark mode" },
-                                tc.outline,
-                            ),
+                            [
+                                fit_width(
+                                    ui,
+                                    [false, true].map(|dark| outline_text(mode_toggle_label(dark))),
+                                    108.0,
+                                ),
+                                44.0,
+                            ],
+                            outline_button(tc, mode_toggle_label(dark), tc.outline),
                         )
                         .clicked()
-                    {
-                        let next_dark = !dark;
-                        Self::apply_theme(ctx, ui, self.theme, next_dark);
-                        self.last_dark_mode = Some(next_dark);
-                    }
+                {
+                    let next_dark = !dark;
+                    Self::apply_theme(ctx, ui, self.theme, next_dark);
+                    self.last_dark_mode = Some(next_dark);
                 }
                 ui.menu_button("Theme", |ui| {
                     ui.label(RichText::new("Appearance").strong());
@@ -3537,11 +3542,7 @@ impl P2PTransfer {
                         ctx.request_repaint();
                         ui.close();
                     }
-                    if compact
-                        && ui
-                            .button(if dark { "Light mode" } else { "Dark mode" })
-                            .clicked()
-                    {
+                    if compact && ui.button(mode_toggle_label(dark)).clicked() {
                         let next_dark = !dark;
                         Self::apply_theme(ctx, ui, self.theme, next_dark);
                         self.last_dark_mode = Some(next_dark);
