@@ -4318,6 +4318,7 @@ impl P2PTransfer {
                         ui.add_enabled(
                             open,
                             egui::TextEdit::singleline(&mut state.input)
+                                .id(egui::Id::new("chat_input"))
                                 .hint_text("Type a message and press Enter")
                                 .frame(egui::Frame::new())
                                 .text_color(tc.on_surface)
@@ -4540,13 +4541,15 @@ impl eframe::App for P2PTransfer {
         // A phone keyboard covers the bottom of the canvas without resizing it. Resizing the
         // page with it re-lays out the whole app on every keyboard step and makes it flicker,
         // so reserve the covered strip instead and keep everything above it.
-        let keyboard = keyboard_inset(ctx);
-        if keyboard > 0.0 {
-            egui::Panel::bottom("keyboard_inset")
-                .exact_size(keyboard)
-                .frame(egui::Frame::new().fill(tc.bg))
-                .show(ui, |_| {});
-        }
+        // The panel is always added, even at zero height: adding it only while the keyboard
+        // is up would shift the ids of every widget after it, and the focused input would lose
+        // focus and close the keyboard again.
+        egui::Panel::bottom("keyboard_inset")
+            .exact_size(keyboard_inset(ctx))
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(tc.bg))
+            .show(ui, |_| {});
         egui::Panel::bottom("terminal_bar")
             .exact_size(terminal_height)
             .frame(terminal_frame)
