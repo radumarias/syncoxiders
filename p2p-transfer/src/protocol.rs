@@ -270,13 +270,18 @@ pub fn encode_control(c: &Control) -> Result<Bytes, ProtocolError> {
             return Err(ProtocolError::TooLarge(files.len()));
         }
     }
-    let body = postcard::to_allocvec(c).map_err(ProtocolError::Codec)?;
+    encode_tagged(TAG_CONTROL, c)
+}
+
+/// `tag + postcard(msg)`, refused when the frame would exceed [`MAX_FRAME`].
+fn encode_tagged<T: Serialize>(tag: u8, msg: &T) -> Result<Bytes, ProtocolError> {
+    let body = postcard::to_allocvec(msg).map_err(ProtocolError::Codec)?;
     let total = TAG_LEN + body.len();
     if total > MAX_FRAME {
         return Err(ProtocolError::TooLarge(total));
     }
     let mut buf = BytesMut::with_capacity(total);
-    buf.put_u8(TAG_CONTROL);
+    buf.put_u8(tag);
     buf.put_slice(&body);
     Ok(buf.freeze())
 }
@@ -589,15 +594,7 @@ fn chat_bounds(msg: &ChatMsg) -> Result<(), ProtocolError> {
 /// `tag(2) + postcard(msg)`, bounds checked before encoding.
 pub fn encode_chat(msg: &ChatMsg) -> Result<Bytes, ProtocolError> {
     chat_bounds(msg)?;
-    let body = postcard::to_allocvec(msg).map_err(ProtocolError::Codec)?;
-    let total = TAG_LEN + body.len();
-    if total > MAX_FRAME {
-        return Err(ProtocolError::TooLarge(total));
-    }
-    let mut buf = BytesMut::with_capacity(total);
-    buf.put_u8(TAG_CHAT);
-    buf.put_slice(&body);
-    Ok(buf.freeze())
+    encode_tagged(TAG_CHAT, msg)
 }
 
 /// Inverse of [`encode_chat`]: rejects other tags and anything over the chat bounds.

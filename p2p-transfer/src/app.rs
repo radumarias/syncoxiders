@@ -4,6 +4,7 @@
 //! `TransferHandle`), turns user gestures into engine commands, and renders whatever the
 //! engine publishes on its progress watch.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -480,6 +481,16 @@ enum Copied {
     AgentLink,
 }
 
+/// A hosted room's links: the one for people, and the same link marked for agents.
+#[derive(Clone)]
+struct RoomLinks {
+    link: String,
+    agent: String,
+}
+
+/// Transcript lines kept on screen; older ones scroll off for good.
+const CHAT_TRANSCRIPT: usize = 500;
+
 struct ChatLine {
     /// `None` for a room notice (someone joined, the room closed).
     from: Option<String>,
@@ -490,18 +501,21 @@ struct ChatLine {
 struct ChatState {
     role: ChatRole,
     you: Option<String>,
-    link: Option<String>,
-    agent_link: Option<String>,
+    /// Host only, once the room is dialable.
+    links: Option<RoomLinks>,
     /// Which link was copied last, for the button label.
     copied: Option<Copied>,
     members: Vec<String>,
-    lines: Vec<ChatLine>,
+    lines: VecDeque<ChatLine>,
     input: String,
     status: ChatStatus,
     handle: Option<ChatHandle>,
     /// Created from the "For agents" menu or opened from an `&agent` link.
     for_agents: bool,
     focus_input: bool,
+    /// Screen height when the input was last scrolled into view. A phone keyboard
+    /// opening shrinks the screen, which must bring the input back into view.
+    input_seen_height: f32,
     #[cfg(target_arch = "wasm32")]
     bridge: Option<ChatBridge>,
 }
@@ -511,23 +525,24 @@ impl ChatState {
         Self {
             role,
             you: None,
-            link: None,
-            agent_link: None,
+            links: None,
             copied: None,
             members: Vec::new(),
-            lines: Vec::new(),
+            lines: VecDeque::new(),
             input: String::new(),
             status: ChatStatus::Starting,
             handle,
             for_agents,
             focus_input: true,
+            input_seen_height: 0.0,
             #[cfg(target_arch = "wasm32")]
             bridge: None,
         }
     }
 
+    /// A session is running; `apply` drops the handle when it fails or closes.
     fn polling(&self) -> bool {
-        self.handle.is_some() && matches!(self.status, ChatStatus::Starting | ChatStatus::Open)
+        self.handle.is_some()
     }
 
     fn say(&mut self, text: &str) {
@@ -543,10 +558,21 @@ impl ChatState {
     }
 
     fn note(&mut self, text: impl Into<String>) {
-        self.lines.push(ChatLine {
-            from: None,
-            text: text.into(),
-        });
+        self.push_line(None, text.into());
+    }
+
+    fn push_line(&mut self, from: Option<String>, text: String) {
+        if self.lines.len() >= CHAT_TRANSCRIPT {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(ChatLine { from, text });
+    }
+
+    /// Tell page scripts about `event`, then show it.
+    fn dispatch(&mut self, event: ChatEvent) {
+        #[cfg(target_arch = "wasm32")]
+        emit_chat_event(&crate::chat::event_json(&event));
+        self.apply(event);
     }
 
     fn apply(&mut self, event: ChatEvent) {
@@ -558,8 +584,10 @@ impl ChatState {
             } => {
                 self.members = vec![you.clone()];
                 self.you = Some(you);
-                self.link = Some(link);
-                self.agent_link = Some(agent_link);
+                self.links = Some(RoomLinks {
+                    link,
+                    agent: agent_link,
+                });
                 self.status = ChatStatus::Open;
                 self.note("Room open. Send the link to the person you want to talk to.");
             }
@@ -569,12 +597,7 @@ impl ChatState {
                 self.status = ChatStatus::Open;
                 self.note("You're in.");
             }
-            ChatEvent::Message { from, text, .. } => {
-                self.lines.push(ChatLine {
-                    from: Some(from),
-                    text,
-                });
-            }
+            ChatEvent::Message { from, text, .. } => self.push_line(Some(from), text),
             ChatEvent::Joined { name } => {
                 if !self.members.contains(&name) {
                     self.members.push(name.clone());
@@ -3740,7 +3763,8 @@ impl P2PTransfer {
                     Self::apply_theme(ctx, ui, self.theme, next_dark);
                     self.last_dark_mode = Some(next_dark);
                 }
-                ui.menu_button("Theme", |ui| {
+                // On narrow screens the menu also holds the controls that did not fit.
+                ui.menu_button(if compact { "More" } else { "Theme" }, |ui| {
                     ui.label(RichText::new("Appearance").strong());
                     let mut picked = false;
                     for theme in Theme::ALL {
@@ -4017,10 +4041,8 @@ impl P2PTransfer {
         self.mode = Mode::Home;
         let mut state = ChatState::new(role, handle, for_agents);
         if let Some(error) = error {
-            // Nothing will run to report this, so tell page scripts here.
-            #[cfg(target_arch = "wasm32")]
-            emit_chat_event(&crate::chat::event_json(&ChatEvent::Failed(error.clone())));
-            state.status = ChatStatus::Failed(error);
+            // No session will report this, so report it here.
+            state.dispatch(ChatEvent::Failed(error));
         }
         // Only a running session can send; without one `window.oxfer.chat` stays absent, so
         // a script's `send` throws instead of vanishing.
@@ -4053,9 +4075,7 @@ impl P2PTransfer {
             .map(ChatHandle::drain)
             .unwrap_or_default();
         for event in events {
-            #[cfg(target_arch = "wasm32")]
-            emit_chat_event(&crate::chat::event_json(&event));
-            state.apply(event);
+            state.dispatch(event);
         }
     }
 
@@ -4070,7 +4090,7 @@ impl P2PTransfer {
             );
             ui.add_space(6.0);
             let agent_link = match &self.mode {
-                Mode::Chat(state) if state.role == ChatRole::Host => state.agent_link.clone(),
+                Mode::Chat(state) => state.links.as_ref().map(|links| links.agent.clone()),
                 _ => None,
             };
             match agent_link {
@@ -4147,7 +4167,7 @@ impl P2PTransfer {
                 }
             }
 
-            if let (true, Some(link)) = (host, state.link.clone()) {
+            if let Some(RoomLinks { link, agent }) = state.links.clone() {
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new("Send this link to the person you want to talk to.")
@@ -4178,20 +4198,18 @@ impl P2PTransfer {
                         ui.ctx().copy_text(link.clone());
                         state.copied = Some(Copied::Link);
                     }
-                    if let Some(agent_link) = state.agent_link.clone() {
-                        let label = if state.copied == Some(Copied::AgentLink) {
-                            AGENT_LINK_COPIED_LABEL
-                        } else {
-                            AGENT_LINK_LABEL
-                        };
-                        if ui
-                            .add_sized([agent_width, 44.0], outline_button(&tc, label, tc.outline))
-                            .clicked()
-                        {
-                            ui.ctx().copy_text(agent_link);
-                            state.copied = Some(Copied::AgentLink);
-                            state.for_agents = true;
-                        }
+                    let label = if state.copied == Some(Copied::AgentLink) {
+                        AGENT_LINK_COPIED_LABEL
+                    } else {
+                        AGENT_LINK_LABEL
+                    };
+                    if ui
+                        .add_sized([agent_width, 44.0], outline_button(&tc, label, tc.outline))
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(agent);
+                        state.copied = Some(Copied::AgentLink);
+                        state.for_agents = true;
                     }
                 });
                 ui.label(
@@ -4219,8 +4237,8 @@ impl P2PTransfer {
                             .color(tc.on_surface_var)
                             .size(13.0),
                         );
-                        if let Some(agent_link) = &state.agent_link {
-                            link_box(ui, &tc, agent_link);
+                        if let Some(links) = &state.links {
+                            link_box(ui, &tc, &links.agent);
                         }
                     });
             }
@@ -4293,6 +4311,13 @@ impl P2PTransfer {
                 if open && state.focus_input {
                     response.request_focus();
                     state.focus_input = false;
+                }
+                let height = ui.ctx().content_rect().height();
+                if response.has_focus()
+                    && (response.gained_focus() || height != state.input_seen_height)
+                {
+                    response.scroll_to_me(Some(egui::Align::Center));
+                    state.input_seen_height = height;
                 }
                 let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let clicked = ui

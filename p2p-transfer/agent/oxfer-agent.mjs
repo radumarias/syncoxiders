@@ -163,6 +163,13 @@ function sha256File(file) {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+/** `--origin`, or the public app, checked to be an app origin rather than a link. */
+function appOrigin(options) {
+    const origin = options.origin ?? DEFAULT_ORIGIN;
+    if (classifyLink(origin) !== "home") throw new Error(`--origin must be the app origin, got ${origin}`);
+    return origin;
+}
+
 /**
  * Wait for every download to settle. Fails when `isGone()` reports the page closed or
  * crashed, or when `bytesSoFar()` (if given) stays the same for `stallMs`, so a sender
@@ -498,8 +505,7 @@ async function send(files, options) {
         if (!info?.isFile()) throw new Error(`not a readable file: ${file}`);
         sizes.push(info.size);
     }
-    const origin = options.origin ?? DEFAULT_ORIGIN;
-    if (classifyLink(origin) !== "home") throw new Error(`--origin must be the app origin, got ${origin}`);
+    const origin = appOrigin(options);
     if (options.chat && classifyLink(options.chat) !== "chat") throw new Error("--chat needs a room link (#chat&…&cap=…)");
 
     await run(options, async session => {
@@ -643,8 +649,7 @@ async function recv(link, outDir, options) {
 
 /** Host a room from this process: prints the links, then relays events until stopped. */
 async function room(options) {
-    const origin = options.origin ?? DEFAULT_ORIGIN;
-    if (classifyLink(origin) !== "home") throw new Error(`--origin must be the app origin, got ${origin}`);
+    const origin = appOrigin(options);
     await run(options, async session => {
         session.onChat = event => { if (event.type !== "ready") session.say(JSON.stringify(event)); };
         await session.open(`${origin.replace(/\/?$/, "/")}#chat&agent`);

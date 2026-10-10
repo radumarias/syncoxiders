@@ -3327,10 +3327,7 @@ fn local_test_chat_frames_round_trip_within_bounds() {
         Err(ProtocolError::TooLarge(_))
     ));
 
-    assert_eq!(
-        clean_chat_text("  hi\u{0}there \n"),
-        "hi\u{0}there".replace('\u{0}', "")
-    );
+    assert_eq!(clean_chat_text("  hi\u{0}there \n"), "hithere");
     assert_eq!(clean_chat_text("a\tb\nc"), "a\tb\nc");
     assert_eq!(clean_chat_name("  Ana   Maria \n"), "Ana Maria");
     assert_eq!(clean_chat_name("\u{7}"), "");
