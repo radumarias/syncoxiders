@@ -18,8 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 
-# The toolchain p2p-transfer/rust-toolchain pins (nightly with rustfmt, clippy and wasm32-unknown-unknown). It is
-# also made the default, so cargo uses the same compiler when run from the workspace root.
+# Install the toolchain p2p-transfer/rust-toolchain pins and make it the default, so native cargo commands work
+# from the workspace root too. wasm32 builds belong in p2p-transfer/, whose .cargo/config.toml sets their flags.
 ENV PATH=/root/.cargo/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
@@ -32,28 +32,31 @@ RUN rustup toolchain install \
 # wasm-pack from downloading one, which it could not do offline.
 RUN cargo install --locked trunk@0.21.14 wasm-pack@0.13.1 geckodriver@0.37.1
 
-COPY . /src
 # trunk and wasm-pack need a wasm-bindgen CLI of exactly the version in Cargo.lock. With one on PATH they use it
-# instead of downloading it.
-RUN cargo install --locked wasm-bindgen-cli --version \
-      "$(sed -n '/^name = "wasm-bindgen"$/{n;s/^version = "\(.*\)"$/\1/p}' /src/Cargo.lock)"
+# instead of downloading it. Only the lockfile is copied first, so editing the sources does not rebuild it.
+COPY Cargo.lock /src/Cargo.lock
+RUN cargo install --locked \
+      "wasm-bindgen-cli@$(sed -n '/^name = "wasm-bindgen"$/{n;s/^version = "\(.*\)"$/\1/p}' /src/Cargo.lock)"
+
+COPY . /src
 # Every crate the lockfile names, for every target (native and wasm32).
 RUN cargo fetch --locked
 
-# The native crate and its tests, and the browser app, built as ./check.sh builds them (debug, with debug info).
-# trunk stays in debug: a release build would download wasm-opt.
-RUN cargo build --locked -p p2p-transfer --all-targets
+# The native crate with its tests, the wasm32 library check ./check.sh runs, and the browser app, in the dev
+# profile. trunk stays in debug: a release build would download wasm-opt.
+RUN cargo build --locked -p p2p-transfer --all-targets --all-features
+RUN cargo check --locked -p p2p-transfer --all-features --lib --target wasm32-unknown-unknown
 RUN trunk build --locked
 
 # Run the cheap tests so the image is known to work, without letting a failing test abort the build.
-# online_test_* need the public iroh relay, which the scan cannot reach.
-RUN (cargo test --locked -p p2p-transfer --all-targets -- --skip online_test_ \
-      && cargo test --locked -p p2p-transfer --doc) \
+RUN cargo test --locked -p p2p-transfer --all-features --no-fail-fast \
     || echo "WARNING: cargo test reported failures"
 RUN node --test tests/*.test.mjs || echo "WARNING: node --test reported failures"
-# Real headless Firefox runs of the WebRTC transport, relay selection and the persistent resume store.
-RUN for test in webrtc_wasm relay_wasm resume_wasm; do \
-      wasm-pack test --headless --firefox -- --test "$test" || echo "WARNING: wasm-pack test $test failed"; \
+# Real headless Firefox runs of every tests/*_wasm.rs: the WebRTC transport, relay selection and the persistent
+# resume store.
+RUN for file in tests/*_wasm.rs; do \
+      name="$(basename "$file" .rs)"; \
+      wasm-pack test --headless --firefox -- --test "$name" || echo "WARNING: wasm-pack test $name failed"; \
     done
 
-ENV CARGO_NET_OFFLINE=true
+ENV CARGO_NET_OFFLINE=true TRUNK_OFFLINE=true
