@@ -15,6 +15,7 @@ node --test tests/diagnostics.test.mjs
 node --test tests/webrtc_stats.test.mjs
 node --test tests/wake_lock.test.mjs
 node --test tests/theme.test.mjs
+node --test tests/theme_lab.test.mjs
 node --test tests/favicon.test.mjs
 node --test tests/package-cf-output.test.mjs
 wasm-pack test --headless --firefox -- --test webrtc_wasm
