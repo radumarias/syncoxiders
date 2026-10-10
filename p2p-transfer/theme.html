@@ -211,7 +211,7 @@ const CLEAN = {
     on_surface: "#f5f6f8", on_surface_var: "#b1b2b8", outline: "#9aa0b0", outline_var: "#3a3e52",
     error: "#ff8b9a",
   },
-  control_radius: 18, card_radius: 20, outline_radius: 10, pill_radius: 20, corner_cap: null,
+  control_radius: 18, card_radius: 20, outline_button_radius: 10, pill_radius: 20, corner_cap: null,
 };
 const RUSTY = {
   light: {
@@ -226,7 +226,7 @@ const RUSTY = {
     on_surface: "#f7ebe2", on_surface_var: "#d5beb0", outline: "#a88978", outline_var: "#51392e",
     error: "#ffb5a4",
   },
-  control_radius: 10, card_radius: 16, outline_radius: 10, pill_radius: 20, corner_cap: null,
+  control_radius: 10, card_radius: 16, outline_button_radius: 10, pill_radius: 20, corner_cap: null,
 };
 // The app also sets Phosphor in monospace, adds a glow and wireframe floor in dark mode, and
 // green-bar bands in light mode; the lab previews its colors and radii only.
@@ -245,18 +245,22 @@ const PHOSPHOR = {
   },
   // Every other rounded frame (file rows, icon tiles, the link box) is capped at 4, so
   // outline buttons and pills are too.
-  control_radius: 2, card_radius: 4, outline_radius: 4, pill_radius: 4, corner_cap: 4,
+  control_radius: 2, card_radius: 4, outline_button_radius: 4, pill_radius: 4, corner_cap: 4,
 };
+
+// Shape fields share one name in presets, lab state, and exported bundles.
+const SHAPE = ["control_radius", "card_radius", "outline_button_radius", "pill_radius", "corner_cap"];
+
+// A preset's or bundle's shape, with Clean's value for any field it leaves out.
+function shapeOf(source) {
+  return Object.fromEntries(SHAPE.map((key) => [key, source[key] ?? CLEAN[key]]));
+}
 
 const state = {
   name: "",
   intent: "",
   author: "",
-  control_radius: 18,
-  card_radius: 20,
-  outline_radius: 10,
-  pill_radius: 20,
-  corner_cap: null,
+  ...shapeOf(CLEAN),
   light: { ...CLEAN.light },
   dark: { ...CLEAN.dark },
   edit: "light",
@@ -301,11 +305,7 @@ function bundle() {
     slug: slug(),
     intent: state.intent.trim(),
     author: state.author.trim(),
-    control_radius: radius(state.control_radius, 18),
-    card_radius: radius(state.card_radius, 20),
-    outline_button_radius: radius(state.outline_radius, 10),
-    pill_radius: radius(state.pill_radius, 20),
-    corner_cap: radius(state.corner_cap, null),
+    ...Object.fromEntries(SHAPE.map((key) => [key, radius(state[key], CLEAN[key])])),
     loading: {
       spinner: state.dark.primary,
       label: state.light.primary,
@@ -504,11 +504,7 @@ let presetName = "";
 function applyPreset(preset, name) {
   state.light = { ...preset.light };
   state.dark = { ...preset.dark };
-  state.control_radius = preset.control_radius;
-  state.card_radius = preset.card_radius;
-  state.outline_radius = preset.outline_radius;
-  state.pill_radius = preset.pill_radius;
-  state.corner_cap = preset.corner_cap;
+  Object.assign(state, shapeOf(preset));
   if (!state.name || state.name === presetName) state.name = name;
   presetName = name;
   document.getElementById("name").value = state.name;
@@ -572,7 +568,7 @@ function renderPreview() {
     "--on-primary": pal.on_primary, "--secondary": pal.secondary, "--on-surface": pal.on_surface,
     "--on-surface-var": pal.on_surface_var, "--outline": pal.outline, "--outline-var": pal.outline_var,
     "--error": pal.error, "--r-control": state.control_radius + "px", "--r-card": state.card_radius + "px",
-    "--r-outline": state.outline_radius + "px", "--r-pill": state.pill_radius + "px",
+    "--r-outline": state.outline_button_radius + "px", "--r-pill": state.pill_radius + "px",
     "--r-cap": state.corner_cap == null ? "999px" : state.corner_cap + "px",
   };
   Object.entries(map).forEach(([k, v]) => stage.style.setProperty(k, v));
@@ -691,11 +687,7 @@ function applyBundle(data) {
   state.name = data.name || "";
   state.intent = data.intent || "";
   state.author = data.author || "";
-  state.control_radius = data.control_radius ?? 18;
-  state.card_radius = data.card_radius ?? 20;
-  state.outline_radius = data.outline_button_radius ?? 10;
-  state.pill_radius = data.pill_radius ?? 20;
-  state.corner_cap = data.corner_cap ?? null;
+  Object.assign(state, shapeOf(data));
   presetName = "";
   state.light = { ...CLEAN.light, ...(data.light || {}) };
   state.dark = { ...CLEAN.dark, ...(data.dark || {}) };
