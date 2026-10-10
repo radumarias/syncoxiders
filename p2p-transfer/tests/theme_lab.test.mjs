@@ -55,7 +55,7 @@ function loadLab() {
     return { document, markup, evaluate, importTheme, tokenRows };
 }
 
-test("imported theme files keep only well-formed tokens and radii", () => {
+test("imported theme files keep only well-formed tokens and shape fields", () => {
     const lab = loadLab();
     const clean = lab.evaluate("CLEAN");
     const ignored = lab.importTheme({
@@ -65,10 +65,16 @@ test("imported theme files keep only well-formed tokens and radii", () => {
         author: { toString: "nope" },
         control_radius: "1px; background: url(https://example.invalid/)",
         card_radius: 12,
+        pill_radius: 0,
+        outline_button_radius: [4],
+        corner_cap: "4px) ; background: url(https://example.invalid/",
         light: { bg: ATTACK, primary: "#123456", surface: ["#abcdef"], on_primary: "#ABCDEF" },
         dark: { error: "</script><script>alert(1)</script>", extra: ATTACK },
     });
-    assert.deepEqual(ignored, ["author", "control_radius", "light.bg", "light.surface", "dark.error"]);
+    assert.deepEqual(ignored, [
+        "author", "control_radius", "outline_button_radius", "corner_cap",
+        "light.bg", "light.surface", "dark.error",
+    ]);
 
     const state = lab.evaluate("state");
     const tokenKeys = lab.evaluate("TOKENS").map(([key]) => key);
@@ -83,7 +89,15 @@ test("imported theme files keep only well-formed tokens and radii", () => {
     assert.equal(state.dark.error, clean.dark.error);
     assert.equal(state.control_radius, 18);
     assert.equal(state.card_radius, 12);
+    assert.equal(state.pill_radius, 0);
+    assert.equal(state.outline_button_radius, clean.outline_button_radius);
+    assert.equal(state.corner_cap, null);
     assert.equal(state.author, "");
+    // Shape fields reach the preview only as CSS lengths.
+    const stage = lab.document.getElementById("stage").style;
+    for (const name of ["--r-control", "--r-card", "--r-outline", "--r-pill", "--r-cap"]) {
+        assert.match(stage[name], /^\d+(\.\d+)?px$/, name);
+    }
 
     // Free-text metadata survives, but only as form values.
     assert.equal(lab.document.getElementById("name").value, "<img src=x onerror=alert(1)>");
@@ -110,12 +124,14 @@ test("token rows carry values as properties, never as markup", () => {
 });
 
 test("an exported theme imports back unchanged", () => {
-    const lab = loadLab();
-    lab.evaluate("(applyPreset(RUSTY, 'Rusty'), state.intent = 'warm workshop', state.author = 'Ada')");
-    const exported = lab.evaluate("bundle()");
-    lab.evaluate("(applyPreset(CLEAN, ''), state.name = '', state.intent = '', state.author = '')");
-    assert.deepEqual(lab.importTheme(exported), []);
-    assert.deepEqual(lab.evaluate("bundle()"), exported);
+    for (const [preset, name] of [["RUSTY", "Rusty"], ["PHOSPHOR", "Phosphor"]]) {
+        const lab = loadLab();
+        lab.evaluate(`(applyPreset(${preset}, '${name}'), state.intent = 'warm workshop', state.author = 'Ada')`);
+        const exported = lab.evaluate("bundle()");
+        lab.evaluate("(applyPreset(CLEAN, ''), state.name = '', state.intent = '', state.author = '')");
+        assert.deepEqual(lab.importTheme(exported), [], name);
+        assert.deepEqual(lab.evaluate("bundle()"), exported, name);
+    }
 });
 
 test("files that are not oxfer themes are rejected", () => {
