@@ -72,7 +72,10 @@ Every dependency is already in the cargo cache, and `CARGO_NET_OFFLINE=true` is 
   lock, theme, favicon and Cloudflare packaging scripts, mostly run in `node:vm` with fakes. `assets/sw.js` and
   `assets/download-sinks.js` have no Node harness yet.
 - `wasm-pack test --headless --firefox -- --test webrtc_wasm` (also `resume_wasm`, `relay_wasm`): real
-  Firefox runs of the data channel and the OPFS resume store.
+  Firefox runs of the data channel and the OPFS resume store. Firefox gathers ICE candidates only on the
+  default-route interface, so `webrtc_wasm` needs a default route (no Internet is needed). Without one, as under
+  `docker run --network none`, it times out with "Couldn't gather ICE candidates": an environment limit, not a
+  finding.
 - `trunk build` writes the browser app to `dist/` (debug; `--release` needs a wasm-opt download).
 - The native GUI needs a display and will not start in this image; drive the library instead.
 
