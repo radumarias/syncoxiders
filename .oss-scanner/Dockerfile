@@ -10,10 +10,11 @@ FROM node:22-trixie-slim AS node
 FROM debian:trixie
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
-# Pinned Debian package versions break on every point release.
+# Pinned Debian package versions break on every point release. clang and llvm-ar compile ring's C code for
+# wasm32, which gcc cannot target.
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git build-essential pkg-config firefox-esr \
+      ca-certificates curl git build-essential clang llvm pkg-config firefox-esr \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 
