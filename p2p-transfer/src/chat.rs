@@ -292,8 +292,9 @@ impl Room {
             .expect("an unused name exists")
     }
 
-    /// Add a guest and queue its `Welcome` and the history under one lock, so no broadcast
-    /// can slip in before the welcome. Returns the assigned name.
+    /// Add a guest, queue its `Welcome` and the history, and announce it to the others,
+    /// all under one lock: no broadcast can slip in before the welcome, and the newcomer
+    /// is not told about its own arrival. Returns the assigned name.
     fn register(
         &self,
         id: EndpointId,
@@ -314,6 +315,9 @@ impl Room {
         let _ = tx.try_send(frame);
         for frame in self.history.lock().unwrap().iter() {
             let _ = tx.try_send(frame.clone());
+        }
+        if let Ok(joined) = encode_chat(&ChatMsg::Joined { name: name.clone() }) {
+            Self::broadcast_to(&members, &joined);
         }
         members.push(Member {
             id,
@@ -395,9 +399,6 @@ async fn serve_guest(room: Arc<Room>, connection: Connection) -> std::io::Result
             return Err(io_error(message));
         }
     };
-    if let Ok(frame) = encode_chat(&ChatMsg::Joined { name: name.clone() }) {
-        room.broadcast(&frame);
-    }
     room.out.publish(ChatEvent::Joined { name: name.clone() });
     log::info!("chat: {name} joined");
 
