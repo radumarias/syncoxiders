@@ -66,6 +66,7 @@
     --surface-high: #deebf6; --primary: #2077c1; --on-primary: #fff; --secondary: #1b6bb4;
     --on-surface: #182b3c; --on-surface-var: #455b6d; --outline: #45627a; --outline-var: #c9d8e3;
     --error: #a72c30; --r-control: 18px; --r-card: 20px; --r-outline: 10px; --r-pill: 20px;
+    --r-cap: 999px;
     background: var(--bg); color: var(--on-surface); border: 1px solid var(--outline-var);
     border-radius: 16px; overflow: hidden; max-width: 1040px;
   }
@@ -102,20 +103,20 @@
   .muted { color: var(--on-surface-var); }
   .steps { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 16px; }
   .stage.compact .steps { grid-template-columns: 1fr; }
-  .step { background: var(--surface-low); border: 1px solid var(--outline-var); border-radius: 16px; padding: 14px; }
+  .step { background: var(--surface-low); border: 1px solid var(--outline-var); border-radius: min(16px, var(--r-cap)); padding: 14px; }
   .step h3 { margin: 0 0 6px; font-size: 16px; }
   .file {
     display: flex; gap: 12px; align-items: center; background: var(--surface);
-    border: 1px solid var(--outline-var); border-radius: 16px; padding: 12px;
+    border: 1px solid var(--outline-var); border-radius: min(16px, var(--r-cap)); padding: 12px;
   }
   .file .glyph {
-    width: 36px; height: 36px; border-radius: 18px; background: var(--surface-high);
+    width: 36px; height: 36px; border-radius: min(18px, var(--r-cap)); background: var(--surface-high);
     color: var(--secondary); display: grid; place-items: center; font-weight: 800;
   }
   .warn { color: var(--error); font-size: 13px; margin-top: 12px; }
   .linkbox {
     font: 12px ui-monospace, Menlo, monospace; background: var(--surface-lowest);
-    border: 1px solid var(--outline-var); border-radius: 8px; padding: 10px; word-break: break-all;
+    border: 1px solid var(--outline-var); border-radius: min(8px, var(--r-cap)); padding: 10px; word-break: break-all;
   }
   .footer {
     height: 50px; display: flex; align-items: center; padding: 0 16px;
@@ -210,7 +211,7 @@ const CLEAN = {
     on_surface: "#f5f6f8", on_surface_var: "#b1b2b8", outline: "#9aa0b0", outline_var: "#3a3e52",
     error: "#ff8b9a",
   },
-  control_radius: 18, card_radius: 20, outline_radius: 10, pill_radius: 20,
+  control_radius: 18, card_radius: 20, outline_radius: 10, pill_radius: 20, corner_cap: null,
 };
 const RUSTY = {
   light: {
@@ -225,7 +226,7 @@ const RUSTY = {
     on_surface: "#f7ebe2", on_surface_var: "#d5beb0", outline: "#a88978", outline_var: "#51392e",
     error: "#ffb5a4",
   },
-  control_radius: 10, card_radius: 16, outline_radius: 10, pill_radius: 20,
+  control_radius: 10, card_radius: 16, outline_radius: 10, pill_radius: 20, corner_cap: null,
 };
 // The app also sets Phosphor in monospace, adds a glow and wireframe floor in dark mode, and
 // green-bar bands in light mode; the lab previews its colors and radii only.
@@ -242,8 +243,9 @@ const PHOSPHOR = {
     on_surface: "#b8ffa0", on_surface_var: "#74d65c", outline: "#4fd13a", outline_var: "#1e5c1b",
     error: "#ff6a3d",
   },
-  // Every other rounded frame is capped at 4, so outline buttons and pills are too.
-  control_radius: 2, card_radius: 4, outline_radius: 4, pill_radius: 4,
+  // Every other rounded frame (file rows, icon tiles, the link box) is capped at 4, so
+  // outline buttons and pills are too.
+  control_radius: 2, card_radius: 4, outline_radius: 4, pill_radius: 4, corner_cap: 4,
 };
 
 const state = {
@@ -254,6 +256,7 @@ const state = {
   card_radius: 20,
   outline_radius: 10,
   pill_radius: 20,
+  corner_cap: null,
   light: { ...CLEAN.light },
   dark: { ...CLEAN.dark },
   edit: "light",
@@ -284,6 +287,12 @@ function slug() {
   return (state.name || "untitled").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "untitled";
 }
 
+// 0 is a valid radius (square corners); only a blank or non-numeric value falls back.
+function radius(value, fallback) {
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function bundle() {
   return {
     format: "oxfer-theme",
@@ -292,10 +301,11 @@ function bundle() {
     slug: slug(),
     intent: state.intent.trim(),
     author: state.author.trim(),
-    control_radius: Number(state.control_radius) || 18,
-    card_radius: Number(state.card_radius) || 20,
-    outline_button_radius: state.outline_radius,
-    pill_radius: state.pill_radius,
+    control_radius: radius(state.control_radius, 18),
+    card_radius: radius(state.card_radius, 20),
+    outline_button_radius: radius(state.outline_radius, 10),
+    pill_radius: radius(state.pill_radius, 20),
+    corner_cap: radius(state.corner_cap, null),
     loading: {
       spinner: state.dark.primary,
       label: state.light.primary,
@@ -498,6 +508,7 @@ function applyPreset(preset, name) {
   state.card_radius = preset.card_radius;
   state.outline_radius = preset.outline_radius;
   state.pill_radius = preset.pill_radius;
+  state.corner_cap = preset.corner_cap;
   if (!state.name || state.name === presetName) state.name = name;
   presetName = name;
   document.getElementById("name").value = state.name;
@@ -562,6 +573,7 @@ function renderPreview() {
     "--on-surface-var": pal.on_surface_var, "--outline": pal.outline, "--outline-var": pal.outline_var,
     "--error": pal.error, "--r-control": state.control_radius + "px", "--r-card": state.card_radius + "px",
     "--r-outline": state.outline_radius + "px", "--r-pill": state.pill_radius + "px",
+    "--r-cap": state.corner_cap == null ? "999px" : state.corner_cap + "px",
   };
   Object.entries(map).forEach(([k, v]) => stage.style.setProperty(k, v));
   const mark = state.previewDark ? "assets/oxfer-wordmark-dark.svg" : "assets/oxfer-wordmark-light.svg";
@@ -683,6 +695,7 @@ function applyBundle(data) {
   state.card_radius = data.card_radius ?? 20;
   state.outline_radius = data.outline_button_radius ?? 10;
   state.pill_radius = data.pill_radius ?? 20;
+  state.corner_cap = data.corner_cap ?? null;
   presetName = "";
   state.light = { ...CLEAN.light, ...(data.light || {}) };
   state.dark = { ...CLEAN.dark, ...(data.dark || {}) };
