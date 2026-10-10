@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+    awaitDownloads,
     classifyLink,
     findPrimaryButton,
     findShareLink,
@@ -93,4 +94,17 @@ test("the site tells HTTP-only clients how to drive it", async () => {
     assert.match(bridge, /oxfer:chat/);
     assert.match(bridge, /export function installChatSender/);
     assert.doesNotMatch(llms, /cap=[0-9a-f]{32}/, "never publish a real capability");
+});
+
+test("awaitDownloads resolves when downloads finish and fails on a stall or a closed page", async () => {
+    const quick = { isGone: () => false, stallMs: 50, pollMs: 5 };
+    let bytes = 0;
+    const growing = () => bytes++;
+    const slow = new Promise(resolve => setTimeout(() => resolve("a.bin"), 120));
+    assert.deepEqual(await awaitDownloads([slow], { ...quick, bytesSoFar: growing }), ["a.bin"], "slow but progressing is fine");
+
+    const never = new Promise(() => {});
+    await assert.rejects(awaitDownloads([never], { ...quick, bytesSoFar: () => 7 }), /no progress for 0.05s/);
+    await assert.rejects(awaitDownloads([never], { ...quick, isGone: () => true, bytesSoFar: null }), /closed or crashed/);
+    await assert.rejects(awaitDownloads([Promise.reject(new Error("canceled"))], { ...quick, bytesSoFar: null }), /canceled/);
 });

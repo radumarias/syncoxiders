@@ -46,6 +46,11 @@ receipt. `SERVED` means the sender finished writing the bytes; only `COMPLETE`
 proves the receiver verified them, and `--once` waits for it. On the receiving
 side, a `SAVED` line without `VERIFIED` is not success.
 
+`--timeout` also bounds the waits that have no natural end: `send --once` or
+`--count N` exits with `2` when a `SERVED` gets no `COMPLETE` within it, and
+`recv` exits with `2` when a download makes no progress for that long
+(Chromium) or the page closes. A plain `send` keeps sharing until stopped.
+
 ## Chat rooms
 
 A room is an ephemeral iroh endpoint owned by the host's page (`src/chat.rs`,
