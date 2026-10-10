@@ -1,0 +1,7 @@
+# BuildKit applies this file, instead of a root .dockerignore, to builds of the Dockerfile next to it. It only
+# matters when building from a working checkout: the scanner builds from a fresh clone, which has none of these.
+# The gitignored p2p-transfer/Cargo.lock is stale local state (see p2p-transfer/CLAUDE.md).
+**/target
+**/node_modules
+p2p-transfer/dist
+p2p-transfer/Cargo.lock
