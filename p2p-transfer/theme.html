@@ -270,7 +270,10 @@ const state = {
 };
 
 function hexOk(v) {
-  return /^#[0-9a-fA-F]{6}$/.test(v);
+  return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
+}
+function radiusOk(v) {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 32;
 }
 function lum(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -464,7 +467,12 @@ function themeFromSwatches(swatches) {
 function showExtracted(hexes) {
   const el = document.getElementById("extracted");
   el.hidden = !hexes.length;
-  el.innerHTML = hexes.map((h) => `<i style="background:${h}" title="${h}"></i>`).join("");
+  el.replaceChildren(...hexes.map((h) => {
+    const swatch = document.createElement("i");
+    swatch.style.background = h;
+    swatch.title = h;
+    return swatch;
+  }));
 }
 
 async function fillFromPaletteImage(file) {
@@ -514,19 +522,26 @@ function applyPreset(preset, name) {
   renderAll();
 }
 
+// Token values may be typed or imported, so they only reach the DOM through properties, never markup.
 function renderTokens() {
   const root = document.getElementById("tokens");
   const pal = state[state.edit];
-  root.innerHTML = TOKENS.map(([key, role]) => `
-    <div class="token" data-key="${key}">
-      <span title="${role}">${key}</span>
-      <input type="color" value="${hexOk(pal[key]) ? pal[key] : "#000000"}" aria-label="${key} picker">
-      <input type="text" value="${pal[key]}" spellcheck="false" aria-label="${key} hex">
-    </div>`).join("");
-  root.querySelectorAll(".token").forEach((row) => {
-    const key = row.dataset.key;
-    const picker = row.querySelector('input[type=color]');
-    const text = row.querySelector('input[type=text]');
+  root.replaceChildren(...TOKENS.map(([key, role]) => {
+    const row = document.createElement("div");
+    row.className = "token";
+    const name = document.createElement("span");
+    name.title = role;
+    name.textContent = key;
+    const picker = document.createElement("input");
+    picker.type = "color";
+    picker.value = hexOk(pal[key]) ? pal[key] : "#000000";
+    picker.setAttribute("aria-label", key + " picker");
+    const text = document.createElement("input");
+    text.type = "text";
+    text.value = pal[key];
+    text.spellcheck = false;
+    text.setAttribute("aria-label", key + " hex");
+    row.append(name, picker, text);
     picker.addEventListener("input", () => {
       pal[key] = picker.value;
       text.value = picker.value;
@@ -539,7 +554,8 @@ function renderTokens() {
       if (hexOk(v)) picker.value = v;
       renderAll();
     });
-  });
+    return row;
+  }));
 }
 
 function renderContrast() {
@@ -551,11 +567,14 @@ function renderContrast() {
     ["on_primary on primary", pal.on_primary, pal.primary, 3],
     ["error on surface", pal.error, pal.surface, 4.5],
   ];
-  document.getElementById("contrast").innerHTML = pairs.map(([label, a, b, min]) => {
+  document.getElementById("contrast").replaceChildren(...pairs.map(([label, a, b, min]) => {
     const c = contrast(a, b);
     const ok = c >= min;
-    return `<div class="contrast ${ok ? "ok" : "bad"}">${label}: ${c ? c.toFixed(2) : "—"} : 1 ${ok ? "" : "(need " + min + ")"}</div>`;
-  }).join("");
+    const row = document.createElement("div");
+    row.className = "contrast " + (ok ? "ok" : "bad");
+    row.textContent = `${label}: ${c ? c.toFixed(2) : "—"} : 1 ${ok ? "" : "(need " + min + ")"}`;
+    return row;
+  }));
 }
 
 function renderPreview() {
@@ -682,15 +701,32 @@ function zipStore(files) {
   return out;
 }
 
+// Theme files are exchanged between people, so keep only well-formed fields: #rrggbb colors for
+// the 13 tokens, numeric shape fields (a null corner_cap means no cap), and string metadata.
+// Anything else falls back to Clean and is returned so the import status can name it.
 function applyBundle(data) {
-  if (data.format !== "oxfer-theme") throw new Error("Not an oxfer-theme file");
-  state.name = data.name || "";
-  state.intent = data.intent || "";
-  state.author = data.author || "";
-  Object.assign(state, shapeOf(data));
+  if (!data || data.format !== "oxfer-theme") throw new Error("Not an oxfer-theme file");
+  const ignored = [];
+  const pick = (value, ok, fallback, field) => {
+    if (value == null) return fallback;
+    if (ok(value)) return value;
+    ignored.push(field);
+    return fallback;
+  };
+  const isString = (v) => typeof v === "string";
+  const palette = (mode) => {
+    const isPalette = typeof data[mode] === "object" && data[mode] !== null && !Array.isArray(data[mode]);
+    if (data[mode] != null && !isPalette) ignored.push(mode);
+    const src = isPalette ? data[mode] : {};
+    return Object.fromEntries(TOKENS.map(([key]) => [key, pick(src[key], hexOk, CLEAN[mode][key], `${mode}.${key}`)]));
+  };
+  state.name = pick(data.name, isString, "", "name");
+  state.intent = pick(data.intent, isString, "", "intent");
+  state.author = pick(data.author, isString, "", "author");
+  for (const key of SHAPE) state[key] = pick(data[key], radiusOk, CLEAN[key], key);
   presetName = "";
-  state.light = { ...CLEAN.light, ...(data.light || {}) };
-  state.dark = { ...CLEAN.dark, ...(data.dark || {}) };
+  state.light = palette("light");
+  state.dark = palette("dark");
   document.getElementById("name").value = state.name;
   document.getElementById("intent").value = state.intent;
   document.getElementById("author").value = state.author;
@@ -698,6 +734,7 @@ function applyBundle(data) {
   document.getElementById("r-card").value = state.card_radius;
   renderTokens();
   renderAll();
+  return ignored;
 }
 
 document.getElementById("name").addEventListener("input", (e) => { state.name = e.target.value; });
@@ -752,8 +789,9 @@ document.getElementById("import").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   try {
-    applyBundle(JSON.parse(await file.text()));
-    document.getElementById("status").textContent = "Imported " + file.name;
+    const ignored = applyBundle(JSON.parse(await file.text()));
+    document.getElementById("status").textContent = "Imported " + file.name +
+      (ignored.length ? ". Ignored invalid " + ignored.join(", ") + "." : "");
   } catch (err) {
     document.getElementById("status").textContent = "Import failed: " + err.message;
   }
