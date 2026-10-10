@@ -567,7 +567,9 @@ pub fn clean_chat_name(name: &str) -> String {
             space = false;
         }
     }
-    crate::file_io::truncate_utf8(out.trim_end(), MAX_CHAT_NAME).to_string()
+    crate::file_io::truncate_utf8(&out, MAX_CHAT_NAME)
+        .trim_end()
+        .to_string()
 }
 
 fn chat_bounds(msg: &ChatMsg) -> Result<(), ProtocolError> {

@@ -67,13 +67,33 @@ export function classifyLink(input) {
     return "invalid";
 }
 
-/** A share link posted inside chat text, if any (trailing punctuation stripped). */
-export function findShareLink(text) {
+/** A share link posted inside chat text, if any (trailing punctuation stripped). With
+ *  `origin`, only a link on that origin counts: anyone in a room can post, and a link to
+ *  another site would have this browser open and download from a page nobody vetted. */
+export function findShareLink(text, origin = null) {
     for (const match of String(text).matchAll(/https?:\/\/\S+/g)) {
         const candidate = match[0].replace(/[\s.,;:!?)\]]+$/, "");
-        if (classifyLink(candidate) === "share") return candidate;
+        if (classifyLink(candidate) !== "share") continue;
+        if (origin !== null && new URL(candidate).origin !== new URL(origin).origin) continue;
+        return candidate;
     }
     return null;
+}
+
+/** The text the room relays for `text`, as the host's `clean_chat_text` makes it: control
+ *  characters other than newline and tab dropped, ends trimmed, cut to 4096 UTF-8 bytes. */
+export function cleanChatText(text) {
+    const cleaned = String(text)
+        .replace(/[\p{Cc}]/gu, c => (c === "\n" || c === "\t" ? c : ""))
+        .replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
+    let out = "";
+    let bytes = 0;
+    for (const c of cleaned) {
+        bytes += Buffer.byteLength(c);
+        if (bytes > 4096) break;
+        out += c;
+    }
+    return out;
 }
 
 /** The room link with the display name the agent wants to join as. */
@@ -449,7 +469,7 @@ class Session {
         const before = this.chat.items.length;
         await page.evaluate(t => globalThis.oxfer.chat.send(t), String(text));
         if (you === null) return;
-        const wanted = String(text).trim();
+        const wanted = cleanChatText(text);
         await this.waitForChat(
             (e, index) => index >= before && e.type === "message" && e.from === you && e.text === wanted,
             15_000,
@@ -512,12 +532,15 @@ async function send(files, options) {
         await session.open(origin);
         await session.snap("home");
 
-        // Armed before the click so the event is not missed; its timeout is only observed
-        // below, so a rejection must not surface as an unhandled one while we wait for the
-        // button (Node would abort the process).
+        // Find the button first: on a slow software-rendered first frame that can take most
+        // of --timeout, and the chooser's own 15 s must not be spent on it. The chooser is
+        // armed before the click so the event is not missed; its timeout is only observed
+        // after the click, so a rejection must not surface as an unhandled one (Node would
+        // abort the process).
+        const button = await session.waitForPrimaryButton("Send files");
         const chooser = session.page.waitForEvent("filechooser", { timeout: 15_000 });
         chooser.catch(() => {});
-        await session.clickPrimaryButton("Send files");
+        await session.page.mouse.click(button.x, button.y);
         await (await chooser).setFiles(files.map(f => path.resolve(f)));
         await session.waitForLog(/ready to share/, session.timeoutMs, "file hashing to finish (\"ready to share\")");
         await session.snap("ready");
@@ -594,11 +617,11 @@ async function recv(link, outDir, options) {
             chatYou = joined.you;
             session.say(`CHAT joined as ${chatYou}; members: ${joined.members.join(", ")}`);
             const posted = await session.waitForChat(
-                e => e.type === "message" && e.from !== chatYou && findShareLink(e.text),
+                e => e.type === "message" && e.from !== chatYou && findShareLink(e.text, link),
                 Number(options.wait ?? 600) * 1000,
                 "a share link to be posted in the room (--wait seconds)",
             );
-            link = findShareLink(posted.text);
+            link = findShareLink(posted.text, link);
             session.say(`CHAT ${posted.from} posted a share link`);
             session.page = await session.newPage();
         }
@@ -652,7 +675,10 @@ async function room(options) {
     const origin = appOrigin(options);
     await run(options, async session => {
         session.onChat = event => { if (event.type !== "ready") session.say(JSON.stringify(event)); };
-        await session.open(`${origin.replace(/\/?$/, "/")}#chat&agent`);
+        const base = new URL(origin);
+        // Keep the origin's own flags (`#dev`, `#sink=…`) as tokens of the room fragment.
+        base.hash = [base.hash.slice(1), "chat&agent"].filter(Boolean).join("&");
+        await session.open(base.href);
         const ready = await session.waitForChat(e => e.type === "ready" || e.type === "failed", session.timeoutMs, "the room to open");
         if (ready.type !== "ready") throw new Error(`could not open a room: ${ready.message}`);
         session.say(`ROOM ${ready.link}`);

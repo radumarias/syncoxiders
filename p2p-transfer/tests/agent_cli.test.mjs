@@ -5,6 +5,7 @@ import test from "node:test";
 import {
     awaitDownloads,
     classifyLink,
+    cleanChatText,
     findPrimaryButton,
     findShareLink,
     parseArgs,
@@ -39,6 +40,20 @@ test("share links are found inside chat text and names are appended safely", () 
     assert.equal(findShareLink(`room ${share.replace("/#", "/#chat&")}`), null, "a room link is not a share link");
     assert.equal(withChatName("https://oxfer.app/#chat&x&cap=y", "agent-1"), "https://oxfer.app/#chat&x&cap=y&name=agent-1");
     assert.equal(withChatName("https://oxfer.app/#chat&x&cap=y", "no spaces"), "https://oxfer.app/#chat&x&cap=y");
+});
+
+test("a room only hands the receiver share links on its own origin", () => {
+    const room = "https://oxfer.app/#chat&x&cap=y";
+    const elsewhere = share.replace("https://oxfer.app/", "https://evil.example/");
+    assert.equal(findShareLink(`take ${share}`, room), share);
+    assert.equal(findShareLink(`take ${elsewhere}`, room), null, "another site is never opened");
+    assert.equal(findShareLink(`take ${elsewhere} or ${share}`, room), share);
+});
+
+test("cleanChatText matches what the host relays", () => {
+    assert.equal(cleanChatText("  hi\u0000there \n"), "hithere");
+    assert.equal(cleanChatText("a\tb\nc"), "a\tb\nc");
+    assert.equal(cleanChatText("é".repeat(3000)).length, 2048, "cut to 4096 UTF-8 bytes on a character boundary");
 });
 
 test("parseArgs separates positionals, flags and values", () => {

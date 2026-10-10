@@ -3332,6 +3332,11 @@ fn local_test_chat_frames_round_trip_within_bounds() {
     assert_eq!(clean_chat_name("  Ana   Maria \n"), "Ana Maria");
     assert_eq!(clean_chat_name("\u{7}"), "");
     assert!(clean_chat_name(&"é".repeat(40)).len() <= MAX_CHAT_NAME);
+    // Cut first, then trim: a cut just after a space leaves no trailing space.
+    assert_eq!(
+        clean_chat_name(&format!("{} x", "a".repeat(MAX_CHAT_NAME - 1))),
+        "a".repeat(MAX_CHAT_NAME - 1)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

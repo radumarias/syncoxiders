@@ -557,6 +557,16 @@ impl ChatState {
         }
     }
 
+    /// The session is over: drop it, and take `window.oxfer.chat` away with it so a page
+    /// script's `send` throws instead of queueing text nothing will deliver.
+    fn end_session(&mut self) {
+        self.handle = None;
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.bridge = None;
+        }
+    }
+
     fn note(&mut self, text: impl Into<String>) {
         self.push_line(None, text.into());
     }
@@ -591,7 +601,11 @@ impl ChatState {
                 self.status = ChatStatus::Open;
                 self.note("Room open. Send the link to the person you want to talk to.");
             }
-            ChatEvent::Connected { you, members } => {
+            ChatEvent::Connected { you, mut members } => {
+                // The host's roster omits the newcomer; list it, as the host lists itself.
+                if !members.contains(&you) {
+                    members.push(you.clone());
+                }
                 self.you = Some(you);
                 self.members = members;
                 self.status = ChatStatus::Open;
@@ -610,11 +624,11 @@ impl ChatState {
             }
             ChatEvent::Failed(message) => {
                 self.status = ChatStatus::Failed(message);
-                self.handle = None;
+                self.end_session();
             }
             ChatEvent::Closed => {
                 self.status = ChatStatus::Closed;
-                self.handle = None;
+                self.end_session();
                 self.note("The room is closed.");
             }
         }
@@ -4112,7 +4126,10 @@ impl P2PTransfer {
     fn agents_room_button(&mut self, ui: &mut Ui) {
         if ui
             .add_enabled(
-                !self.is_preparing_share(),
+                // Like "Choose File", never offered over a running receive: opening a room
+                // replaces the mode and would drop the download.
+                !self.is_preparing_share()
+                    && !matches!(&self.mode, Mode::Receive(r) if r.handle.is_some()),
                 Button::new("Start a room for agents"),
             )
             .clicked()

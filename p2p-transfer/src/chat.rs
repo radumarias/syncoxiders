@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use bytes::Bytes;
 use iroh::endpoint::{ApplicationClose, Connection, ConnectionError};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
-use iroh::{EndpointId, SecretKey};
+use iroh::SecretKey;
 use iroh_tickets::endpoint::EndpointTicket;
 use n0_future::task::{self, JoinHandle};
 use n0_future::time::{timeout, Duration, Instant};
@@ -180,7 +180,8 @@ impl ChatHandle {
 // ── Host ─────────────────────────────────────────────────────────────────────
 
 struct Member {
-    id: EndpointId,
+    /// Unique per session: one endpoint may hold several connections, so its id is not.
+    session: u64,
     name: String,
     /// The guest's control stream, with an [`OUTBOUND_QUEUE`]-deep queue in front of it.
     tx: ControlTx,
@@ -196,6 +197,8 @@ struct RoomState {
     /// The last [`HISTORY`] `Said` frames, already encoded, replayed after `Welcome`.
     history: VecDeque<Bytes>,
     seq: u64,
+    /// Source of [`Member::session`].
+    sessions: u64,
 }
 
 /// Shared state of one hosted room.
@@ -283,11 +286,10 @@ impl Room {
     /// newcomer is not told about its own arrival. Returns the assigned name.
     fn register(
         &self,
-        id: EndpointId,
         requested: &str,
         tx: ControlTx,
         cancel: CancellationToken,
-    ) -> Result<String, &'static str> {
+    ) -> Result<(String, u64), &'static str> {
         let mut state = self.state.lock().unwrap();
         if state.members.len() >= MAX_CHAT_MEMBERS {
             return Err("this room is full");
@@ -305,18 +307,20 @@ impl Room {
         if let Ok(joined) = encode_chat(&ChatMsg::Joined { name: name.clone() }) {
             Self::broadcast_to(&state.members, &joined);
         }
+        state.sessions += 1;
+        let session = state.sessions;
         state.members.push(Member {
-            id,
+            session,
             name: name.clone(),
             tx,
             cancel,
         });
-        Ok(name)
+        Ok((name, session))
     }
 
-    fn remove(&self, id: EndpointId) -> Option<String> {
+    fn remove(&self, session: u64) -> Option<String> {
         let members = &mut self.state.lock().unwrap().members;
-        let index = members.iter().position(|m| m.id == id)?;
+        let index = members.iter().position(|m| m.session == session)?;
         Some(members.remove(index).name)
     }
 }
@@ -352,7 +356,6 @@ fn display_name(requested: &str, default: &str) -> String {
 }
 
 async fn serve_guest(room: Arc<Room>, connection: Connection) -> std::io::Result<()> {
-    let id = connection.remote_id();
     let (send, recv) = timeout(HELLO_DEADLINE, connection.accept_bi())
         .await
         .map_err(|_| io_error("guest opened no stream"))?
@@ -378,9 +381,7 @@ async fn serve_guest(room: Arc<Room>, connection: Connection) -> std::io::Result
         Ok(ChatMsg::Hello { cap, .. }) if !cap_eq(&cap, &room.cap) => {
             Err("the room rejected this link (wrong or expired access code)")
         }
-        Ok(ChatMsg::Hello { name, .. }) => {
-            room.register(id, &name, tx.clone(), member_cancel.clone())
-        }
+        Ok(ChatMsg::Hello { name, .. }) => room.register(&name, tx.clone(), member_cancel.clone()),
         _ => Err("expected a Hello frame"),
     };
     let reject = |message: &str| {
@@ -389,8 +390,8 @@ async fn serve_guest(room: Arc<Room>, connection: Connection) -> std::io::Result
         })
         .expect("a short error message always encodes")
     };
-    let name = match accepted {
-        Ok(name) => name,
+    let (name, session) = match accepted {
+        Ok(accepted) => accepted,
         Err(message) => {
             let _ = tx.send(reject(message)).await;
             connection.close(1u8.into(), message.as_bytes());
@@ -440,7 +441,7 @@ async fn serve_guest(room: Arc<Room>, connection: Connection) -> std::io::Result
         }
     };
 
-    if let Some(name) = room.remove(id) {
+    if let Some(name) = room.remove(session) {
         if let Ok(frame) = encode_chat(&ChatMsg::Left { name: name.clone() }) {
             room.broadcast(&frame);
         }
