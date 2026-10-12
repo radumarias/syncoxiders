@@ -2404,11 +2404,14 @@ fn home_story_step(ui: &mut Ui, tc: &Tc, icon: HomeIcon, title: &str, body: &str
             ui.horizontal(|ui| {
                 home_story_icon(ui, tc, icon);
                 ui.vertical(|ui| {
-                    ui.label(
-                        RichText::new(title)
-                            .color(tc.on_surface)
-                            .size(16.0)
-                            .strong(),
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(title)
+                                .color(tc.on_surface)
+                                .size(16.0)
+                                .strong(),
+                        )
+                        .wrap(),
                     );
                     ui.add(egui::Label::new(RichText::new(body).color(tc.on_surface_var)).wrap());
                 });
@@ -2426,11 +2429,15 @@ fn process_step(ui: &mut Ui, tc: &Tc, number: &str, title: &str, body: &str) {
             ui.set_min_height(142.0);
             ui.horizontal(|ui| {
                 pill(ui, tc, number, number == "03");
-                ui.label(
-                    RichText::new(title)
-                        .color(tc.on_surface)
-                        .size(17.0)
-                        .strong(),
+                // Wrap long titles: an unwrapped row widens the card past a phone screen.
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(title)
+                            .color(tc.on_surface)
+                            .size(17.0)
+                            .strong(),
+                    )
+                    .wrap(),
                 );
             });
             ui.add_space(6.0);
