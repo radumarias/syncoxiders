@@ -4299,16 +4299,36 @@ impl P2PTransfer {
                                     );
                                 }
                                 Some(from) => {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label(RichText::new(format!("{from}:")).strong().color(
-                                            if Some(from.as_str()) == you {
-                                                tc.primary
-                                            } else {
-                                                tc.on_surface
-                                            },
-                                        ));
-                                        ui.label(RichText::new(&line.text).color(tc.on_surface));
-                                    });
+                                    // One wrapped galley for name and text: two labels in a
+                                    // wrapped row misplace a long unbroken link, drawing part of
+                                    // it outside the box.
+                                    let mut job = egui::text::LayoutJob::default();
+                                    let style = ui.style().clone();
+                                    RichText::new(format!("{from}: "))
+                                        .strong()
+                                        .color(if Some(from.as_str()) == you {
+                                            tc.primary
+                                        } else {
+                                            tc.on_surface
+                                        })
+                                        .append_to(
+                                            &mut job,
+                                            &style,
+                                            egui::FontSelection::Default,
+                                            egui::Align::LEFT,
+                                        );
+                                    RichText::new(&line.text).color(tc.on_surface).append_to(
+                                        &mut job,
+                                        &style,
+                                        egui::FontSelection::Default,
+                                        egui::Align::LEFT,
+                                    );
+                                    // The transcript is in a centered column; messages read
+                                    // from the left edge.
+                                    ui.with_layout(
+                                        egui::Layout::top_down(egui::Align::Min),
+                                        |ui| ui.add(egui::Label::new(job).wrap()),
+                                    );
                                 }
                             }
                         }
