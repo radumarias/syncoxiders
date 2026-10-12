@@ -4117,7 +4117,7 @@ impl P2PTransfer {
             match agent_link {
                 Some(link) => {
                     if ui.button("Copy link for agent").clicked() {
-                        ui.ctx().copy_text(link);
+                        ui.ctx().copy_text(agent_prompt(&link));
                         if let Mode::Chat(state) = &mut self.mode {
                             state.copied = Some(Copied::AgentLink);
                         }
@@ -4231,7 +4231,7 @@ impl P2PTransfer {
                         .add_sized([agent_width, 44.0], outline_button(&tc, label, tc.outline))
                         .clicked()
                     {
-                        ui.ctx().copy_text(agent);
+                        ui.ctx().copy_text(agent_prompt(&agent));
                         state.copied = Some(Copied::AgentLink);
                         state.for_agents = true;
                     }
@@ -4384,6 +4384,25 @@ impl P2PTransfer {
             self.mode = Mode::Home;
         }
     }
+}
+
+/// What "Copy link for agent" puts on the clipboard: the agent link with a short brief.
+///
+/// A bare link with a `cap=` token reads to a careful agent like a secret pasted by
+/// mistake, so it asks what to do instead of opening it. The brief says what the link is
+/// for and where the instructions are.
+fn agent_prompt(link: &str) -> String {
+    let origin = link
+        .split('#')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('/');
+    format!(
+        "Join this Oxfer chat room as my agent. First read {origin}/llms.txt: it explains \
+         how to join the room, talk in it, and send or receive files with oxfer-agent.mjs. \
+         I'm giving you this link on purpose. It's a private room invite, so keep it to \
+         this task and quote it in the shell.\n\n{link}\n"
+    )
 }
 
 const AGENT_LINK_LABEL: &str = "Copy link for agent";
@@ -4639,6 +4658,14 @@ impl eframe::App for P2PTransfer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_test_agent_prompt_points_at_llms_txt_and_keeps_the_link_whole() {
+        let link = "https://chat-oxfer.example.dev/#chat&endpointabc&cap=00ff&agent";
+        let prompt = agent_prompt(link);
+        assert!(prompt.contains("https://chat-oxfer.example.dev/llms.txt"));
+        assert!(prompt.contains(&format!("\n\n{link}\n")));
+    }
 
     #[test]
     fn local_test_theme_choice_is_independent_of_light_and_dark_mode() {

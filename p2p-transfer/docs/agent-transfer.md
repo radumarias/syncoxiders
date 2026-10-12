@@ -77,7 +77,10 @@ node agent/oxfer-agent.mjs recv "<room-link>" ./downloads
 ```
 
 People start a room from the home page ("Start a chat room") or from the
-header's **For agents** menu, which also offers "Copy link for agent". Pasting a
+header's **For agents** menu, which also offers "Copy link for agent". That button
+copies the agent link under a two-line brief pointing at `/llms.txt`, because a
+careful agent handed a bare link with a `cap=` token asks what to do instead of
+opening it. Pasting a
 room link into the receive page's link field joins it too. Opening `#chat` with
 no ticket starts a room on load, which is how the script's `room` mode hosts one.
 The host keeps the last 32 messages and replays them to a guest that joins late,
