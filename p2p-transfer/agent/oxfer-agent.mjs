@@ -7,11 +7,13 @@
 //
 //   node oxfer-agent.mjs send <file> [--once] [--chat <room-link>] [--link-file path]
 //   node oxfer-agent.mjs recv <share-link | room-link> [out-dir]
-//   node oxfer-agent.mjs chat <room-link> [--name N] [--say text] [--until regex]
+//   node oxfer-agent.mjs chat <room-link> [--name N] [--say text] [--until regex] [--wait s]
 //   node oxfer-agent.mjs room [--say text]
 //
 // A room link (`#chat&…&cap=…`) is a chat room hosted by another open page. `chat` joins
-// it and prints one JSON object per event; stdin lines are posted as messages. `send
+// it and prints one JSON object per event; stdin lines are posted as messages. With
+// `--until`, it exits once someone else posts a matching message (after `--say`, a reply
+// to it), or with code 4 after `--wait` seconds. `send
 // --chat` posts the share link into the room once the file is ready, and `recv` with a
 // room link waits for a share link to be posted there, then downloads it.
 //
@@ -485,12 +487,17 @@ class Session {
     }
 
     /** Resolves with the exit code once the room session is over: 2 on `failed`, 0 on
-     *  `closed`, or 0 when a message from someone else matches `until`. */
-    chatDone(you, until = null) {
+     *  `closed`, or 0 when a message from someone else matches `until`. Events in `old`
+     *  never match `until`; after `timeoutMs` without a match it resolves with 4. */
+    chatDone(you, until = null, { old = new Set(), timeoutMs = Infinity } = {}) {
         return this.waitForChat(
-            e => e.type === "failed" || e.type === "closed" || (until && e.type === "message" && e.from !== you && until.test(e.text)),
-            Infinity,
-        ).then(e => (e.type === "failed" ? 2 : 0));
+            e => e.type === "failed" || e.type === "closed"
+                || (until && e.type === "message" && e.from !== you && !old.has(e) && until.test(e.text)),
+            timeoutMs,
+        ).then(e => (e.type === "failed" ? 2 : 0), () => {
+            this.say(JSON.stringify({ type: "timeout", seconds: timeoutMs / 1000 }));
+            return 4;
+        });
     }
 
     async close() {
@@ -697,7 +704,10 @@ async function chat(link, options) {
         const joined = await session.joinChat(session.page, link, options.name ?? "agent");
         if (options.say) await session.chatSend(session.page, options.say, joined.you);
         session.postStdinLines(session.page, joined.you);
-        return session.chatDone(joined.you, options.until ? new RegExp(options.until) : null);
+        // After --say, wait for a reply to it: the history replayed on join is not one.
+        const old = new Set(options.say ? session.chat.items : []);
+        const timeoutMs = options.wait === undefined ? Infinity : Number(options.wait) * 1000;
+        return session.chatDone(joined.you, options.until ? new RegExp(options.until) : null, { old, timeoutMs });
     });
 }
 
@@ -705,13 +715,14 @@ export function usage() {
     return `Usage:
   oxfer-agent.mjs send <file> [--once | --count N] [--chat <room-link>] [--link-file path]
   oxfer-agent.mjs recv <share-link | room-link> [out-dir] [--wait seconds]
-  oxfer-agent.mjs chat <room-link> [--name N] [--say text] [--until regex]
+  oxfer-agent.mjs chat <room-link> [--name N] [--say text] [--until regex] [--wait seconds]
   oxfer-agent.mjs room [--say text]            host a room here; prints ROOM and AGENT links
 Options: --browser chrome|chromium|firefox|webkit  --headed  --timeout seconds  --name N
          --origin https://oxfer.app/  --snap dir  --verbose
 Output lines: LINK <url>, SHARING, SERVED n, COMPLETE n, CHAT … (send);
               SAVED <path> <bytes> <sha256>, VERIFIED (recv); one JSON object per event (chat).
-Exit codes: 0 ok, 1 usage, 2 failure, 3 saved but no verification receipt.`;
+Exit codes: 0 ok, 1 usage, 2 failure, 3 saved but no verification receipt,
+            4 chat --until matched nothing within --wait.`;
 }
 
 export async function main(argv) {

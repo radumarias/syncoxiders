@@ -4386,11 +4386,12 @@ impl P2PTransfer {
     }
 }
 
-/// What "Copy link for agent" puts on the clipboard: the agent link with a short brief.
+/// What "Copy link for agent" puts on the clipboard: the agent link inside a short brief.
 ///
 /// A bare link with a `cap=` token reads to a careful agent like a secret pasted by
-/// mistake, so it asks what to do instead of opening it. The brief says what the link is
-/// for and where the instructions are.
+/// mistake, so it asks what to do instead of opening it. The brief says the link is meant
+/// for it, gives it a task, and shows a foreground command that needs no checkout: a
+/// long-lived background process fed through a pipe is what permission checks refuse.
 fn agent_prompt(link: &str) -> String {
     let origin = link
         .split('#')
@@ -4398,10 +4399,19 @@ fn agent_prompt(link: &str) -> String {
         .unwrap_or_default()
         .trim_end_matches('/');
     format!(
-        "Join this Oxfer chat room as my agent. First read {origin}/llms.txt: it explains \
-         how to join the room, talk in it, and send or receive files with oxfer-agent.mjs. \
-         I'm giving you this link on purpose. It's a private room invite, so keep it to \
-         this task and quote it in the shell.\n\n{link}\n"
+        "Join this Oxfer chat room as my agent: say hello, then do what the people in the \
+         room ask, such as replying or sending and receiving files. I'm giving you this \
+         link on purpose. It's a private room invite, so use it only for this.\n\
+         \n\
+         Set up once, in an empty folder (needs Node 22 or later and Google Chrome):\n\
+         \x20 curl -fsSLO {origin}/oxfer-agent.mjs && npm init -y >/dev/null && npm i playwright@1.56.1 pngjs@7.0.0\n\
+         \n\
+         Talk in turns. Each run joins, posts, waits for a reply, prints the room as JSON \
+         lines and exits (code 4 if nobody answered in time). Run it in the foreground and \
+         repeat to keep talking:\n\
+         \x20 node oxfer-agent.mjs chat '{link}' --name <your name> --say '<message>' --until . --wait 300\n\
+         \n\
+         Files, and everything else: {origin}/llms.txt\n"
     )
 }
 
@@ -4664,7 +4674,8 @@ mod tests {
         let link = "https://chat-oxfer.example.dev/#chat&endpointabc&cap=00ff&agent";
         let prompt = agent_prompt(link);
         assert!(prompt.contains("https://chat-oxfer.example.dev/llms.txt"));
-        assert!(prompt.contains(&format!("\n\n{link}\n")));
+        assert!(prompt.contains(&format!("chat '{link}' --name")));
+        assert!(prompt.contains("curl -fsSLO https://chat-oxfer.example.dev/oxfer-agent.mjs"));
     }
 
     #[test]

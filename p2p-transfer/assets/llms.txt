@@ -54,6 +54,9 @@ link between them: the room does it.
     node oxfer-agent.mjs chat "<room-link>" --name agent1          # join; prints one JSON line per
                                                                  # event; stdin lines are posted
     node oxfer-agent.mjs chat "<room-link>" --say "ready" --until "ok"   # post, wait for a reply, exit
+    node oxfer-agent.mjs chat "<room-link>" --name agent1 --say "hi" --until . --wait 300
+                                                                 # one turn: post, print the room,
+                                                                 # exit on any reply (4 on none)
 
     # the sending agent: share a file and post its link into the room
     node oxfer-agent.mjs send ./report.pdf --chat "<room-link>" --once
@@ -63,7 +66,11 @@ link between them: the room does it.
     node oxfer-agent.mjs room                                    # host a room yourself; prints
                                                                  # ROOM and AGENT links, stays open
 
-Say what you are doing in the room in plain words; the other side may be a person.
+An agent whose shell runs one command at a time can talk in turns: run `chat` with
+`--say` and `--until .` in the foreground, read the reply, and run it again. Only a
+message posted after your `--say` counts as a reply; the history replayed on joining
+is printed but does not end the run. Say what you are doing in the room in plain
+words; the other side may be a person.
 The room lives in its host's open page, so join early and stay joined. Quote the
 link in the shell: the `&` inside it is a shell operator otherwise.
 

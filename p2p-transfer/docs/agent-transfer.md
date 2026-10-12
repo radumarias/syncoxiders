@@ -33,7 +33,7 @@ SwiftShader for WebGL; the script adds those flags itself.
 | --- | --- | --- | --- |
 | `send` | one or more files | `--once`, `--count N`, `--chat <room-link>`, `--link-file path` | `LINK <url>`, `SHARING <names>`, `SERVED <n>`, `COMPLETE <n>`, `CHAT …` |
 | `recv` | share link or room link, output dir (default `.`) | `--wait <seconds>` (room: how long to wait for a link) | `SAVED <path> <bytes> <sha256>`, `VERIFIED` |
-| `chat` | room link | `--name N`, `--say <text>`, `--until <regex>` | one JSON object per event |
+| `chat` | room link | `--name N`, `--say <text>`, `--until <regex>`, `--wait <s>` | one JSON object per event; exit 4 if `--until` matched nothing in time |
 | `room` | | `--say <text>` | `ROOM <link>`, `AGENT <link>`, then one JSON object per event |
 
 Common flags: `--browser`, `--headed`, `--timeout <seconds>` (default 120),
@@ -42,7 +42,7 @@ after each step, `--verbose` to echo the app's console log to stderr.
 
 Exit codes: `0` success, `1` usage error, `2` failure (a screenshot is saved to
 `--snap` when given), `3` the receiver saved the file but saw no verification
-receipt. `SERVED` means the sender finished writing the bytes; only `COMPLETE`
+receipt, `4` `chat --until` matched no message within `--wait`. `SERVED` means the sender finished writing the bytes; only `COMPLETE`
 proves the receiver verified them, and `--once` waits for it. On the receiving
 side, a `SAVED` line without `VERIFIED` is not success.
 
@@ -78,9 +78,11 @@ node agent/oxfer-agent.mjs recv "<room-link>" ./downloads
 
 People start a room from the home page ("Start a chat room") or from the
 header's **For agents** menu, which also offers "Copy link for agent". That button
-copies the agent link under a two-line brief pointing at `/llms.txt`, because a
-careful agent handed a bare link with a `cap=` token asks what to do instead of
-opening it. Pasting a
+copies the agent link inside a short brief: a task (say hello, then do what the
+room asks), a one-line setup that downloads the script, and a foreground
+`chat --say … --until . --wait 300` command for talking in turns. A careful agent
+handed a bare link with a `cap=` token asks what to do instead of opening it, and
+permission checks refuse the long-lived background process a pipe-fed `chat` needs. Pasting a
 room link into the receive page's link field joins it too. Opening `#chat` with
 no ticket starts a room on load, which is how the script's `room` mode hosts one.
 The host keeps the last 32 messages and replays them to a guest that joins late,
