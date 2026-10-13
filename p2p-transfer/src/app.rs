@@ -616,7 +616,21 @@ impl ChatState {
                 if !self.members.contains(&name) {
                     self.members.push(name.clone());
                 }
-                self.note(format!("{name} joined"));
+                // An agent talking in turns leaves after each turn and rejoins for the next;
+                // a rejoin with only notices since its leave just takes the leave back.
+                let left = format!("{name} left");
+                let rejoin = self
+                    .lines
+                    .iter()
+                    .rev()
+                    .take_while(|line| line.from.is_none())
+                    .position(|line| line.text == left);
+                match rejoin {
+                    Some(back) => {
+                        self.lines.remove(self.lines.len() - 1 - back);
+                    }
+                    None => self.note(format!("{name} joined")),
+                }
             }
             ChatEvent::Left { name } => {
                 self.members.retain(|m| *m != name);
@@ -4420,15 +4434,23 @@ fn agent_prompt(link: &str) -> String {
         .trim_end_matches('/');
     format!(
         "Join this Oxfer chat room as my agent: say hello, then do what the people in the \
-         room ask, such as replying or sending and receiving files. I'm giving you this \
-         link on purpose. It's a private room invite, so use it only for this.\n\
+         room ask, such as replying or sending and receiving files. Keep listening until the \
+         room closes or I tell you to stop. I'm giving you this link on purpose. It's a \
+         private room invite, so use it only for this.\n\
          \n\
          Set up once, in an empty folder (needs Node 22 or later and Google Chrome):\n\
          \x20 curl -fsSLO {origin}/oxfer-agent.mjs && npm init -y >/dev/null && npm i playwright@1.56.1 pngjs@7.0.0\n\
          \n\
-         Talk in turns. Each run joins, posts, waits for a reply, prints the room as JSON \
-         lines and exits (code 4 if nobody answered in time). Run it in the foreground and \
-         repeat to keep talking:\n\
+         If you can run a background command, stay in the room. Start this once in the \
+         background:\n\
+         \x20 node oxfer-agent.mjs chat '{link}' --name <your name> --dir room\n\
+         Then each turn is a foreground run that prints what is new, posts, and waits for a \
+         reply (exit code 4 if nobody answered in time):\n\
+         \x20 node oxfer-agent.mjs post room --say '<message>' --wait 300\n\
+         Leave with: node oxfer-agent.mjs post room --leave\n\
+         \n\
+         Otherwise talk in turns. Each run joins, posts, waits for a reply, prints the room \
+         and leaves:\n\
          \x20 node oxfer-agent.mjs chat '{link}' --name <your name> --say '<message>' --until . --wait 300\n\
          \n\
          Files, and everything else: {origin}/llms.txt\n"
@@ -4688,6 +4710,35 @@ impl eframe::App for P2PTransfer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_test_chat_rejoin_takes_back_the_leave_notice() {
+        let mut state = ChatState::new(ChatRole::Host, None, false);
+        let joined = |name: &str| ChatEvent::Joined { name: name.into() };
+        let left = |name: &str| ChatEvent::Left { name: name.into() };
+        state.apply(joined("oz"));
+        state.apply(left("oz"));
+        state.apply(left("bot"));
+        state.apply(joined("oz"));
+        let texts = |state: &ChatState| {
+            state
+                .lines
+                .iter()
+                .map(|l| l.text.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(texts(&state), ["oz joined", "bot left"]);
+        assert_eq!(state.members, ["oz"]);
+
+        // A message after the leave keeps both notices: the gap was visible.
+        state.apply(left("oz"));
+        state.lines.push_back(ChatLine {
+            from: Some("bot".into()),
+            text: "hi".into(),
+        });
+        state.apply(joined("oz"));
+        assert_eq!(texts(&state)[2..], ["oz left", "hi", "oz joined"]);
+    }
 
     #[test]
     fn local_test_agent_prompt_points_at_llms_txt_and_keeps_the_link_whole() {

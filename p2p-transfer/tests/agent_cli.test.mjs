@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -9,6 +11,7 @@ import {
     findPrimaryButton,
     findShareLink,
     parseArgs,
+    post,
     withChatName,
     PRIMARY_BLUE,
 } from "../agent/oxfer-agent.mjs";
@@ -122,4 +125,31 @@ test("awaitDownloads resolves when downloads finish and fails on a stall or a cl
     await assert.rejects(awaitDownloads([never], { ...quick, bytesSoFar: () => 7 }), /no progress for 0.05s/);
     await assert.rejects(awaitDownloads([never], { ...quick, isGone: () => true, bytesSoFar: null }), /closed or crashed/);
     await assert.rejects(awaitDownloads([Promise.reject(new Error("canceled"))], { ...quick, bytesSoFar: null }), /canceled/);
+});
+
+test("post takes turns against a room kept open by chat --dir", async t => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "oxfer-post-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const event = e => appendFile(path.join(dir, "events.jsonl"), `${JSON.stringify(e)}\n`);
+    const quiet = t.mock.method(process.stdout, "write", () => true);
+    await writeFile(path.join(dir, "pid"), String(process.pid));
+    await event({ type: "connected", you: "bot", members: ["Host", "bot"] });
+    await event({ type: "message", from: "Host", text: "send me the report" });
+
+    // A message the agent has not seen yet ends the turn at once.
+    assert.equal(await post(dir, {}, { pollMs: 10 }), 0);
+    // Seen now: a turn with nothing new times out.
+    assert.equal(await post(dir, { wait: "0.05" }, { pollMs: 10 }), 4);
+
+    // --say is queued for the background process; only a later message is the reply.
+    const turn = post(dir, { say: "on it", wait: "5" }, { pollMs: 10 });
+    await new Promise(r => setTimeout(r, 50));
+    assert.match(await readFile(path.join(dir, "outbox.jsonl"), "utf8"), /"text":"on it"/);
+    await event({ type: "message", from: "bot", text: "on it" });
+    await event({ type: "message", from: "Host", text: "thanks" });
+    assert.equal(await turn, 0);
+
+    await writeFile(path.join(dir, "pid"), "0");
+    assert.equal(await post(dir, { wait: "1" }, { pollMs: 10 }), 2);
+    quiet.mock.restore();
 });

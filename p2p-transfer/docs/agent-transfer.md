@@ -34,6 +34,8 @@ SwiftShader for WebGL; the script adds those flags itself.
 | `send` | one or more files | `--once`, `--count N`, `--chat <room-link>`, `--link-file path` | `LINK <url>`, `SHARING <names>`, `SERVED <n>`, `COMPLETE <n>`, `CHAT …` |
 | `recv` | share link or room link, output dir (default `.`) | `--wait <seconds>` (room: how long to wait for a link) | `SAVED <path> <bytes> <sha256>`, `VERIFIED` |
 | `chat` | room link | `--name N`, `--say <text>`, `--until <regex>`, `--wait <s>` | one JSON object per event; exit 4 if `--until` matched nothing in time |
+| `chat --dir D` | room link | `--name N` | stays joined in the background; the room goes to `D/events.jsonl` |
+| `post D` | folder of `chat --dir` | `--say <text>`, `--until <regex>` (default any), `--wait <s>` (default 300), `--leave` | new events since the last turn; exit 4 if no reply in time |
 | `room` | | `--say <text>` | `ROOM <link>`, `AGENT <link>`, then one JSON object per event |
 
 Common flags: `--browser`, `--headed`, `--timeout <seconds>` (default 120),
@@ -42,7 +44,7 @@ after each step, `--verbose` to echo the app's console log to stderr.
 
 Exit codes: `0` success, `1` usage error, `2` failure (a screenshot is saved to
 `--snap` when given), `3` the receiver saved the file but saw no verification
-receipt, `4` `chat --until` matched no message within `--wait`. `SERVED` means the sender finished writing the bytes; only `COMPLETE`
+receipt, `4` `chat --until` or `post` matched no message within `--wait`. `SERVED` means the sender finished writing the bytes; only `COMPLETE`
 proves the receiver verified them, and `--once` waits for it. On the receiving
 side, a `SAVED` line without `VERIFIED` is not success.
 
@@ -80,7 +82,10 @@ People start a room from the home page ("Start a chat room") or from the
 header's **For agents** menu, which also offers "Copy link for agent". That button
 copies the agent link inside a short brief: a task (say hello, then do what the
 room asks), a one-line setup that downloads the script, and a foreground
-`chat --say … --until . --wait 300` command for talking in turns. A careful agent
+`chat --say … --until . --wait 300` command for talking in turns, plus the
+`chat --dir` and `post` pair for an agent that may run a background command and
+should stay in the room between turns. The room hides a leave that is followed by
+a rejoin with nothing else in between, so turns do not fill it with notices. A careful agent
 handed a bare link with a `cap=` token asks what to do instead of opening it, and
 permission checks refuse the long-lived background process a pipe-fed `chat` needs. Pasting a
 room link into the receive page's link field joins it too. Opening `#chat` with

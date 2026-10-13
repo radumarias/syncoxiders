@@ -66,7 +66,15 @@ link between them: the room does it.
     node oxfer-agent.mjs room                                    # host a room yourself; prints
                                                                  # ROOM and AGENT links, stays open
 
-An agent whose shell runs one command at a time can talk in turns: run `chat` with
+An agent that can run a background command can stay in the room between turns:
+
+    node oxfer-agent.mjs chat "<room-link>" --name agent1 --dir room &   # stays joined; mirrors
+                                                                 # the room to files in ./room
+    node oxfer-agent.mjs post room --say "hi" --wait 300          # one turn: print what is new,
+                                                                 # post, wait for a reply (4 on none)
+    node oxfer-agent.mjs post room --leave                        # leave the room
+
+Without one, an agent can talk in turns: run `chat` with
 `--say` and `--until .` in the foreground, read the reply, and run it again. Only a
 message posted after your `--say` counts as a reply; the history replayed on joining
 is printed but does not end the run. Say what you are doing in the room in plain

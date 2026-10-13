@@ -8,12 +8,15 @@
 //   node oxfer-agent.mjs send <file> [--once] [--chat <room-link>] [--link-file path]
 //   node oxfer-agent.mjs recv <share-link | room-link> [out-dir]
 //   node oxfer-agent.mjs chat <room-link> [--name N] [--say text] [--until regex] [--wait s]
+//   node oxfer-agent.mjs chat <room-link> --dir D &   then   node oxfer-agent.mjs post D --say …
 //   node oxfer-agent.mjs room [--say text]
 //
 // A room link (`#chat&…&cap=…`) is a chat room hosted by another open page. `chat` joins
 // it and prints one JSON object per event; stdin lines are posted as messages. With
 // `--until`, it exits once someone else posts a matching message (after `--say`, a reply
-// to it), or with code 4 after `--wait` seconds. `send
+// to it), or with code 4 after `--wait` seconds. With `--dir D` it stays in the room and
+// mirrors it to files in D instead; each `post D` is then one turn: it prints what is new,
+// posts `--say`, and waits for a reply, without leaving the room. `send
 // --chat` posts the share link into the room once the file is ready, and `recv` with a
 // room link waits for a share link to be posted there, then downloads it.
 //
@@ -26,8 +29,8 @@
 // and never writes it anywhere else unless --link-file is given.
 
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { access, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { appendFileSync, createReadStream } from "node:fs";
+import { access, appendFile, mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -696,12 +699,124 @@ async function room(options) {
     });
 }
 
-/** Join a room: one JSON line per event, stdin lines posted, exit on --until or close. */
+// Staying in a room between turns: `chat --dir D` keeps the room open in the background and
+// mirrors it to files, and each `post D` is one short foreground turn against those files.
+const EVENTS_FILE = "events.jsonl"; // every room event, one JSON object per line
+const OUTBOX_FILE = "outbox.jsonl"; // {"text": …} lines for the background process to post
+const CURSOR_FILE = "cursor";       // bytes of events.jsonl that `post` has already printed
+const PID_FILE = "pid";
+
+/** Post every complete line appended to `file` from now on. */
+async function postOutboxLines(session, page, you, file, pollMs = 300) {
+    let offset = (await stat(file).catch(() => ({ size: 0 }))).size;
+    let partial = "";
+    for (;;) {
+        await sleep(pollMs);
+        const { size } = await stat(file).catch(() => ({ size: offset }));
+        if (size <= offset) continue;
+        const handle = await open(file, "r");
+        const buffer = Buffer.alloc(size - offset);
+        await handle.read(buffer, 0, buffer.length, offset).finally(() => handle.close());
+        offset = size;
+        const lines = (partial + buffer.toString("utf8")).split("\n");
+        partial = lines.pop();
+        for (const line of lines) {
+            let text = line;
+            try { text = JSON.parse(line).text ?? ""; } catch { /* a plain line is the message */ }
+            if (String(text).trim()) await session.chatSend(page, String(text), you).catch(e => session.debug(`send failed: ${e.message}`));
+        }
+    }
+}
+
+/** Read the new complete lines of `dir`'s events file past the saved cursor. */
+async function readNewEvents(dir) {
+    const events = path.join(dir, EVENTS_FILE);
+    const cursor = Number(await readFile(path.join(dir, CURSOR_FILE), "utf8").catch(() => "0")) || 0;
+    const text = await readFile(events, "utf8").catch(() => "");
+    const bytes = Buffer.from(text, "utf8");
+    const end = bytes.lastIndexOf(0x0a) + 1;
+    if (end <= cursor) return { lines: [], cursor };
+    const lines = bytes.subarray(cursor, end).toString("utf8").split("\n").filter(Boolean);
+    return { lines, cursor: end };
+}
+
+function isRunning(pid) {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+/** One turn against a room kept open by `chat --dir`: print what is new since the last
+ *  turn, post `--say`, and wait for someone else's message matching `--until` (default:
+ *  any). Exit 0 on a match or when the room closed, 2 if the room failed or the
+ *  background process is gone, 4 when `--wait` (default 300 s) ran out. */
+export async function post(dir, options, { pollMs = 300 } = {}) {
+    const pid = Number(await readFile(path.join(dir, PID_FILE), "utf8").catch(() => "0"));
+    if (options.leave) {
+        if (pid && isRunning(pid)) process.kill(pid, "SIGTERM");
+        return 0;
+    }
+    const until = new RegExp(options.until ?? ".");
+    const deadline = Date.now() + Number(options.wait ?? 300) * 1000;
+    // Who we are is in the "connected" event, which an earlier turn may already have printed.
+    const youIn = text => text.split("\n").map(l => { try { return JSON.parse(l); } catch { return null; } })
+        .find(e => e?.type === "connected")?.you ?? null;
+    let you = youIn(await readFile(path.join(dir, EVENTS_FILE), "utf8").catch(() => ""));
+    let replyFrom = 0; // after --say, only messages printed after it count as a reply
+    let said = !options.say;
+    for (;;) {
+        const { lines, cursor } = await readNewEvents(dir);
+        for (const line of lines) {
+            process.stdout.write(`${line}\n`);
+            let event;
+            try { event = JSON.parse(line); } catch { continue; }
+            if (event.type === "connected") you = event.you;
+            if (event.type === "failed") { await writeFile(path.join(dir, CURSOR_FILE), String(cursor)); return 2; }
+            if (event.type === "closed") { await writeFile(path.join(dir, CURSOR_FILE), String(cursor)); return 0; }
+            if (said && replyFrom === 0 && event.type === "message" && event.from !== you && until.test(event.text)) {
+                await writeFile(path.join(dir, CURSOR_FILE), String(cursor));
+                return 0;
+            }
+            if (event.type === "message" && event.from === you && replyFrom === -1 && event.text === cleanChatText(options.say)) replyFrom = 0;
+        }
+        await writeFile(path.join(dir, CURSOR_FILE), String(cursor));
+        if (!said) {
+            // Post only once caught up, so the reply cannot be confused with older lines.
+            await appendFile(path.join(dir, OUTBOX_FILE), `${JSON.stringify({ text: options.say })}\n`);
+            said = true;
+            replyFrom = -1;
+        }
+        if (!pid || !isRunning(pid)) {
+            process.stdout.write(`${JSON.stringify({ type: "failed", message: "not in the room: start chat --dir in the background first" })}\n`);
+            return 2;
+        }
+        if (Date.now() >= deadline) {
+            process.stdout.write(`${JSON.stringify({ type: "timeout", seconds: Number(options.wait ?? 300) })}\n`);
+            return 4;
+        }
+        await sleep(pollMs);
+    }
+}
+
+/** Join a room: one JSON line per event, stdin lines posted, exit on --until or close.
+ *  With --dir, stay joined and mirror the room to files for `post` instead. */
 async function chat(link, options) {
     if (classifyLink(link) !== "chat") throw new Error("chat needs a room link (#chat&…&cap=…)");
+    const dir = options.dir;
+    if (dir) {
+        await mkdir(dir, { recursive: true });
+        for (const file of [EVENTS_FILE, CURSOR_FILE]) await rm(path.join(dir, file), { force: true });
+        await writeFile(path.join(dir, OUTBOX_FILE), "");
+        await writeFile(path.join(dir, PID_FILE), String(process.pid));
+    }
     await run(options, async session => {
-        session.onChat = event => session.say(JSON.stringify(event));
+        session.onChat = dir
+            ? event => appendFileSync(path.join(dir, EVENTS_FILE), `${JSON.stringify(event)}\n`)
+            : event => session.say(JSON.stringify(event));
         const joined = await session.joinChat(session.page, link, options.name ?? "agent");
+        if (dir) {
+            session.say(`JOINED as ${joined.you}; turns: node oxfer-agent.mjs post ${dir} --say "…"`);
+            postOutboxLines(session, session.page, joined.you, path.join(dir, OUTBOX_FILE));
+            return session.chatDone(joined.you);
+        }
         if (options.say) await session.chatSend(session.page, options.say, joined.you);
         session.postStdinLines(session.page, joined.you);
         // After --say, wait for a reply to it: the history replayed on join is not one.
@@ -716,17 +831,19 @@ export function usage() {
   oxfer-agent.mjs send <file> [--once | --count N] [--chat <room-link>] [--link-file path]
   oxfer-agent.mjs recv <share-link | room-link> [out-dir] [--wait seconds]
   oxfer-agent.mjs chat <room-link> [--name N] [--say text] [--until regex] [--wait seconds]
+  oxfer-agent.mjs chat <room-link> --dir D [--name N] &   stay in the room in the background
+  oxfer-agent.mjs post D [--say text] [--until regex] [--wait seconds] | post D --leave
   oxfer-agent.mjs room [--say text]            host a room here; prints ROOM and AGENT links
 Options: --browser chrome|chromium|firefox|webkit  --headed  --timeout seconds  --name N
          --origin https://oxfer.app/  --snap dir  --verbose
 Output lines: LINK <url>, SHARING, SERVED n, COMPLETE n, CHAT … (send);
               SAVED <path> <bytes> <sha256>, VERIFIED (recv); one JSON object per event (chat).
 Exit codes: 0 ok, 1 usage, 2 failure, 3 saved but no verification receipt,
-            4 chat --until matched nothing within --wait.`;
+            4 chat --until or post matched nothing within --wait.`;
 }
 
 export async function main(argv) {
-    const { positional, options } = parseArgs(argv, ["once", "headed", "verbose", "help"]);
+    const { positional, options } = parseArgs(argv, ["once", "headed", "verbose", "help", "leave"]);
     const [mode, ...rest] = positional;
     if (options.help || !mode) {
         process.stdout.write(`${usage()}\n`);
@@ -741,6 +858,9 @@ export async function main(argv) {
     } else if (mode === "chat") {
         if (rest.length === 0) throw new Error("chat needs a room link");
         await chat(rest[0], options);
+    } else if (mode === "post") {
+        if (rest.length === 0) throw new Error("post needs the folder given to chat --dir");
+        return post(rest[0], options);
     } else if (mode === "room") {
         await room(options);
     } else {
