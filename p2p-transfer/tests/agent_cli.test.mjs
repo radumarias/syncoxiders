@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { awaitDownloads, classifyLink, findPrimaryButton, parseArgs, PRIMARY_BLUE } from "../agent/oxfer-agent.mjs";
+import { awaitDownloads, classifyLink, findPrimaryButton, parseArgs, positiveNumber, PRIMARY_BLUE } from "../agent/oxfer-agent.mjs";
 
 const read = path => readFile(new URL(path, import.meta.url), "utf8");
 const share = "https://oxfer.app/#endpointadgxn5zl2zfsyzz7clou244grpcaza4t4e62rxsl3agmhvdmo4c7gaiaejuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zp&cap=b12d9525bb44971d1375bf8f2bcf4e9e";
@@ -26,6 +26,13 @@ test("parseArgs separates positionals, flags and values", () => {
     assert.deepEqual({ ...options }, { once: true, timeout: "30", snap: "shots" });
     assert.throws(() => parseArgs(["--timeout"]), /argument missing/);
     assert.throws(() => parseArgs(["--timeot", "30"]), /Unknown option/);
+});
+
+test("positiveNumber rejects zero, negatives, NaN and fractional counts", () => {
+    assert.equal(positiveNumber("30", "--timeout"), 30);
+    assert.equal(positiveNumber("0.5", "--timeout"), 0.5);
+    for (const bad of ["0", "-1", "abc", "Infinity"]) assert.throws(() => positiveNumber(bad, "--timeout"), /--timeout/);
+    assert.throws(() => positiveNumber("1.5", "--count", true), /whole number/);
 });
 
 function bitmap(width, height, boxes) {
