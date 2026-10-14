@@ -62,6 +62,15 @@ const CLI_OPTIONS = Object.fromEntries([
     ...["timeout", "origin", "snap", "browser", "link-file", "count"].map(flag => [flag, { type: "string" }]),
 ]);
 
+/** `value` as a positive number (an integer with `integer`), or a usage error naming `flag`. */
+export function positiveNumber(value, flag, integer = false) {
+    const n = Number(value);
+    if (!(n > 0 && Number.isFinite(n)) || (integer && !Number.isInteger(n))) {
+        throw new Error(`${flag} must be a positive ${integer ? "whole number" : "number"}, got ${value}`);
+    }
+    return n;
+}
+
 /** The command line: positionals plus the flags below; an unknown or valueless flag throws. */
 export function parseArgs(argv) {
     const { positionals, values } = parseCli({ args: argv, options: CLI_OPTIONS, allowPositionals: true, strict: true });
@@ -153,7 +162,7 @@ export async function awaitDownloads(downloads, { isGone, bytesSoFar, stallMs, p
 class Session {
     constructor(options) {
         this.options = options;
-        this.timeoutMs = Number(options.timeout ?? 120) * 1000;
+        this.timeoutMs = positiveNumber(options.timeout ?? 120, "--timeout") * 1000;
         this.log = [];       // recent console lines only; iroh traces are chatty
         this.waiters = [];
         this.counters = [];  // { pattern, n } tallied as lines arrive
@@ -338,6 +347,7 @@ async function send(files, options) {
     }
     const origin = options.origin ?? DEFAULT_ORIGIN;
     if (classifyLink(origin) !== "home") throw new Error(`--origin must be the app origin, got ${origin}`);
+    const wanted = options.once ? 1 : options.count === undefined ? Infinity : positiveNumber(options.count, "--count", true);
     const session = new Session(options);
     const stop = async code => { await session.close(); process.exit(code); };
     process.on("SIGINT", () => stop(130));
@@ -368,7 +378,6 @@ async function send(files, options) {
         session.say(`LINK ${link}`);
         session.say(`SHARING ${files.map(f => path.basename(f)).join(" ")}`);
 
-        const wanted = options.once ? 1 : Number(options.count ?? Infinity);
         // "serve complete" only means the sender finished writing; the receiver's
         // verified receipt ("receiver verified …") is the success signal.
         const servedCount = session.counter(/serve complete/);
