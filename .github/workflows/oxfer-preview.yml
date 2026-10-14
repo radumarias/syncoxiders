@@ -17,6 +17,9 @@ on:
         description: Preview alias (the URL is https://<alias>-oxfer.42dev.workers.dev/)
         required: true
 
+permissions:
+  contents: read
+
 concurrency:
   group: oxfer-preview-${{ github.ref }}
   cancel-in-progress: true
@@ -31,9 +34,11 @@ jobs:
     env:
       ALIAS: ${{ inputs.alias || 'chat' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -61,6 +66,7 @@ jobs:
           case "$ALIAS" in
             "" | *[!a-z0-9-]*) echo "alias must be lowercase letters, digits and dashes" >&2; exit 1 ;;
           esac
+          if [ "${#ALIAS}" -gt 63 ]; then echo "alias must be at most 63 characters" >&2; exit 1; fi
           npx cf workers versions create --prebuilt --preview-alias "$ALIAS" \
             --message "preview ${GITHUB_REF_NAME}@${GITHUB_SHA::7}"
 

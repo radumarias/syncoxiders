@@ -4404,11 +4404,12 @@ impl P2PTransfer {
 /// for it, gives it a task, and shows a foreground command that needs no checkout: a
 /// long-lived background process fed through a pipe is what permission checks refuse.
 fn agent_prompt(link: &str) -> String {
-    let origin = link
-        .split('#')
-        .next()
-        .unwrap_or_default()
-        .trim_end_matches('/');
+    // Only the scheme and host go into the unquoted `curl` line: the page's query string
+    // could carry shell syntax. The link itself is single-quoted for the shell.
+    let origin = url::Url::parse(link)
+        .map(|url| url.origin().ascii_serialization())
+        .unwrap_or_else(|_| "https://oxfer.app".to_string());
+    let link = format!("'{}'", link.replace('\'', "'\\''"));
     format!(
         "Join this Oxfer chat room as my agent: say hello, then do what the people in the \
          room ask, such as replying or sending and receiving files. Keep listening until the \
@@ -4420,7 +4421,7 @@ fn agent_prompt(link: &str) -> String {
          \n\
          If you can run a background command, stay in the room. Start this once in the \
          background:\n\
-         \x20 node oxfer-agent.mjs chat '{link}' --name <your name> --dir room\n\
+         \x20 node oxfer-agent.mjs chat {link} --name <your name> --dir room\n\
          Then each turn is a foreground run that prints what is new, posts, and waits for a \
          reply (exit code 4 if nobody answered in time):\n\
          \x20 node oxfer-agent.mjs post room --say '<message>' --wait 300\n\
@@ -4428,7 +4429,7 @@ fn agent_prompt(link: &str) -> String {
          \n\
          Otherwise talk in turns. Each run joins, posts, waits for a reply, prints the room \
          and leaves:\n\
-         \x20 node oxfer-agent.mjs chat '{link}' --name <your name> --say '<message>' --until . --wait 300\n\
+         \x20 node oxfer-agent.mjs chat {link} --name <your name> --say '<message>' --until . --wait 300\n\
          \n\
          Files, and everything else: {origin}/llms.txt\n"
     )
@@ -4738,6 +4739,15 @@ mod tests {
         assert!(prompt.contains("https://chat-oxfer.example.dev/llms.txt"));
         assert!(prompt.contains(&format!("chat '{link}' --name")));
         assert!(prompt.contains("curl -fsSLO https://chat-oxfer.example.dev/oxfer-agent.mjs"));
+    }
+
+    #[test]
+    fn local_test_agent_prompt_keeps_shell_syntax_out_of_its_commands() {
+        let link = "https://oxfer.app/it's?q=$(id)#chat&endpointabc&cap=00ff&agent";
+        let prompt = agent_prompt(link);
+        assert!(prompt.contains("curl -fsSLO https://oxfer.app/oxfer-agent.mjs &&"));
+        assert!(prompt.contains("chat 'https://oxfer.app/it'\\''s?q=$(id)#chat"));
+        assert!(!prompt.contains("chat https://"));
     }
 
     #[test]
