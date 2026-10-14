@@ -26,10 +26,12 @@
 // --timeout <seconds>, --origin <url>, --snap <dir>, --verbose.
 //
 // The share link fragment is a bearer capability. This script prints it once (`LINK …`)
-// and never writes it anywhere else unless --link-file is given.
+// and never writes it anywhere else unless --link-file is given. `chat --dir D` mirrors the
+// room, including links other members post, into D (owner-only files); `post D --leave`
+// deletes them.
 
 import { createHash } from "node:crypto";
-import { appendFileSync, createReadStream } from "node:fs";
+import { appendFileSync, createReadStream, rmSync } from "node:fs";
 import { access, appendFile, mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -89,7 +91,8 @@ export function findShareLink(text, origin = null) {
 /** The text the room relays for `text`, as the host's `clean_chat_text` makes it: control
  *  characters other than newline and tab dropped, ends trimmed, cut to 4096 UTF-8 bytes. */
 export function cleanChatText(text) {
-    const cleaned = String(text)
+    // Lone surrogates reach the app as U+FFFD, so compare the same way.
+    const cleaned = String(text).toWellFormed()
         .replace(/[\p{Cc}]/gu, c => (c === "\n" || c === "\t" ? c : ""))
         .replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
     let out = "";
@@ -275,6 +278,7 @@ class Session {
         this.console = new Watch(2000); // iroh traces are chatty; keep the recent tail
         this.chat = new Watch();        // every `oxfer:chat` DOM event, as the page emitted it
         this.counters = [];             // { pattern, n, onHit } tallied as console lines arrive
+        this.sending = Promise.resolve(); // chat sends go one at a time (see chatSend)
         this.onChat = null;             // mode-specific printing of chat events
         this.snaps = 0;
         this.crashed = new WeakSet();
@@ -474,12 +478,18 @@ class Session {
     }
 
     /** Post `text` to the room open in `page` and resolve once the host has relayed it back,
-     *  so the message is really in the room before the caller moves on. */
-    async chatSend(page, text, you) {
-        await page.waitForFunction(() => Boolean(globalThis.oxfer?.chat?.send), null, { timeout: 5000 });
-        const before = this.chat.items.length;
-        await page.evaluate(t => globalThis.oxfer.chat.send(t), String(text));
-        await this.waitForChat(e => isEchoOf(e, you, text), 15_000, "the room to echo our message", before);
+     *  so the message is really in the room before the caller moves on. Sends queue behind
+     *  each other and keep under the host's limit of 30 messages per 10 s; the app's own
+     *  queue would silently drop a burst. */
+    chatSend(page, text, you) {
+        const turn = this.sending.then(async () => {
+            await page.waitForFunction(() => Boolean(globalThis.oxfer?.chat?.send), null, { timeout: 5000 });
+            const before = this.chat.items.length;
+            await page.evaluate(t => globalThis.oxfer.chat.send(t), String(text));
+            await this.waitForChat(e => isEchoOf(e, you, text), 15_000, "the room to echo our message", before);
+        });
+        this.sending = turn.catch(() => {}).then(() => sleep(CHAT_SEND_GAP_MS));
+        return turn;
     }
 
     /** Post every stdin line to the room open in `page`. */
@@ -535,8 +545,9 @@ async function send(files, options) {
         if (!info?.isFile()) throw new Error(`not a readable file: ${file}`);
         sizes.push(info.size);
     }
-    const origin = appOrigin(options);
     if (options.chat && classifyLink(options.chat) !== "chat") throw new Error("--chat needs a room link (#chat&…&cap=…)");
+    // The receiver only trusts share links on the room's own origin, so share from there.
+    const origin = options.chat && options.origin === undefined ? `${new URL(options.chat).origin}/` : appOrigin(options);
     const wanted = options.once ? 1 : options.count === undefined ? Infinity : positiveNumber(options.count, "--count", true);
 
     await run(options, async session => {
@@ -704,6 +715,9 @@ const OUTBOX_FILE = "outbox.jsonl"; // {"text": …} lines for the background pr
 const CURSOR_FILE = "cursor";       // bytes of events.jsonl that `post` has already printed
 const PID_FILE = "pid";
 
+const YOU_FILE = "you";             // the name this process joined as
+const CHAT_SEND_GAP_MS = 400;       // the host disconnects a guest above 30 messages per 10 s
+
 /** The complete lines of `file` past byte `offset`, and the offset just after them. */
 async function readLinesFrom(file, offset) {
     const { size } = await stat(file).catch(() => ({ size: offset }));
@@ -715,13 +729,19 @@ async function readLinesFrom(file, offset) {
     return { lines: buffer.subarray(0, end).toString("utf8").split("\n").filter(Boolean), offset: offset + end };
 }
 
-/** Post every complete line appended to `file` from now on. */
+/** Post every complete line of `file`, which `chat --dir` empties before joining, so lines
+ *  `post` wrote while the join was still running are sent too. */
 async function postOutboxLines(session, page, you, file, pollMs = 300) {
-    let { size: offset } = await stat(file).catch(() => ({ size: 0 }));
+    let offset = 0;
     for (;;) {
         await sleep(pollMs);
         let lines;
-        ({ lines, offset } = await readLinesFrom(file, offset));
+        try {
+            ({ lines, offset } = await readLinesFrom(file, offset));
+        } catch (error) {
+            session.debug(`outbox: ${error.message}`);
+            continue;
+        }
         for (const line of lines) {
             let text = line;
             try { text = JSON.parse(line).text ?? ""; } catch { /* a plain line is the message */ }
@@ -741,7 +761,14 @@ function isRunning(pid) {
 export async function post(dir, options, { pollMs = 300 } = {}) {
     const pid = Number(await readFile(path.join(dir, PID_FILE), "utf8").catch(() => "0"));
     if (options.leave) {
-        if (pid && isRunning(pid)) process.kill(pid, "SIGTERM");
+        if (pid && isRunning(pid)) {
+            process.kill(pid, "SIGTERM");
+            for (let i = 0; i < 50 && isRunning(pid); i++) await sleep(100);
+        }
+        // The room mirror can hold share links other members posted.
+        for (const file of [EVENTS_FILE, OUTBOX_FILE, CURSOR_FILE, YOU_FILE, PID_FILE]) {
+            await rm(path.join(dir, file), { force: true });
+        }
         return 0;
     }
     const until = new RegExp(options.until ?? ".");
@@ -750,9 +777,8 @@ export async function post(dir, options, { pollMs = 300 } = {}) {
     const events = path.join(dir, EVENTS_FILE);
     const saveCursor = () => writeFile(path.join(dir, CURSOR_FILE), String(cursor));
     let cursor = Number(await readFile(path.join(dir, CURSOR_FILE), "utf8").catch(() => "0")) || 0;
-    // Who we are is in the "connected" event, which an earlier turn may already have printed.
-    let you = (await readLinesFrom(events, 0)).lines.map(l => { try { return JSON.parse(l); } catch { return null; } })
-        .find(e => e?.type === "connected")?.you ?? null;
+    // Who we are: written at join, so a turn need not re-read the whole room log for it.
+    let you = (await readFile(path.join(dir, YOU_FILE), "utf8").catch(() => "")) || null;
     // With --say: catch up first, then post, then wait for its echo; only later messages are replies.
     let phase = options.say ? "catchup" : "reply";
     for (;;) {
@@ -794,18 +820,21 @@ async function chat(link, options) {
     if (classifyLink(link) !== "chat") throw new Error("chat needs a room link (#chat&…&cap=…)");
     const dir = options.dir;
     if (dir) {
-        await mkdir(dir, { recursive: true });
-        for (const file of [EVENTS_FILE, CURSOR_FILE]) await rm(path.join(dir, file), { force: true });
-        await writeFile(path.join(dir, OUTBOX_FILE), "");
-        await writeFile(path.join(dir, PID_FILE), String(process.pid));
+        await mkdir(dir, { recursive: true, mode: 0o700 });
+        for (const file of [EVENTS_FILE, CURSOR_FILE, YOU_FILE]) await rm(path.join(dir, file), { force: true });
+        await writeFile(path.join(dir, OUTBOX_FILE), "", { mode: 0o600 });
+        await writeFile(path.join(dir, PID_FILE), String(process.pid), { mode: 0o600 });
+        // A pid file left behind could name an unrelated process once the PID is reused.
+        process.on("exit", () => rmSync(path.join(dir, PID_FILE), { force: true }));
     }
     await run(options, async session => {
         // Synchronous, so the final `closed` event is on disk before the process exits.
         session.onChat = dir
-            ? event => appendFileSync(path.join(dir, EVENTS_FILE), `${JSON.stringify(event)}\n`)
+            ? event => appendFileSync(path.join(dir, EVENTS_FILE), `${JSON.stringify(event)}\n`, { mode: 0o600 })
             : event => session.say(JSON.stringify(event));
         const joined = await session.joinChat(session.page, link, options.name ?? "agent");
         if (dir) {
+            await writeFile(path.join(dir, YOU_FILE), joined.you, { mode: 0o600 });
             session.say(`JOINED as ${joined.you}; turns: node oxfer-agent.mjs post ${dir} --say "…"`);
             postOutboxLines(session, session.page, joined.you, path.join(dir, OUTBOX_FILE));
             return session.chatDone(joined.you);

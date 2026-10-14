@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -58,6 +58,7 @@ test("cleanChatText matches what the host relays", () => {
     assert.equal(cleanChatText("  hi\u0000there \n"), "hithere");
     assert.equal(cleanChatText("a\tb\nc"), "a\tb\nc");
     assert.equal(cleanChatText("é".repeat(3000)).length, 2048, "cut to 4096 UTF-8 bytes on a character boundary");
+    assert.equal(cleanChatText("a\uD800b"), "a\uFFFDb", "a lone surrogate arrives as U+FFFD");
 });
 
 test("parseArgs separates positionals, flags and values", () => {
@@ -142,6 +143,7 @@ test("post takes turns against a room kept open by chat --dir", async t => {
     const event = e => appendFile(path.join(dir, "events.jsonl"), `${JSON.stringify(e)}\n`);
     const quiet = t.mock.method(process.stdout, "write", () => true);
     await writeFile(path.join(dir, "pid"), String(process.pid));
+    await writeFile(path.join(dir, "you"), "bot");
     await event({ type: "connected", you: "bot", members: ["Host", "bot"] });
     await event({ type: "message", from: "Host", text: "send me the report" });
 
@@ -160,5 +162,9 @@ test("post takes turns against a room kept open by chat --dir", async t => {
 
     await writeFile(path.join(dir, "pid"), "0");
     assert.equal(await post(dir, { wait: "1" }, { pollMs: 10 }), 2);
+
+    // Leaving deletes the room mirror, which can hold links other members posted.
+    assert.equal(await post(dir, { leave: true }), 0);
+    assert.deepEqual(await readdir(dir), []);
     quiet.mock.restore();
 });

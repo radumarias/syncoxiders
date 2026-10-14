@@ -35,7 +35,7 @@ SwiftShader for WebGL; the script adds those flags itself.
 | `recv` | share link or room link, output dir (default `.`) | `--wait <seconds>` (room: how long to wait for a link) | `SAVED <path> <bytes> <sha256>`, `VERIFIED` |
 | `chat` | room link | `--name N`, `--say <text>`, `--until <regex>`, `--wait <s>` | one JSON object per event; exit 4 if `--until` matched nothing in time |
 | `chat --dir D` | room link | `--name N` | stays joined in the background; the room goes to `D/events.jsonl` |
-| `post D` | folder of `chat --dir` | `--say <text>`, `--until <regex>` (default any), `--wait <s>` (default 300), `--leave` | new events since the last turn; exit 4 if no reply in time |
+| `post D` | folder of `chat --dir` | `--say <text>`, `--until <regex>` (default any), `--wait <s>` (default 300), `--leave` (also deletes the folder's room files, which can hold posted share links) | new events since the last turn; exit 4 if no reply in time |
 | `room` | | `--say <text>` | `ROOM <link>`, `AGENT <link>`, then one JSON object per event |
 
 Common flags: `--browser`, `--headed`, `--timeout <seconds>` (default 120),

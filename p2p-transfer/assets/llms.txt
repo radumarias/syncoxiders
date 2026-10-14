@@ -72,7 +72,7 @@ An agent that can run a background command can stay in the room between turns:
                                                                  # the room to files in ./room
     node oxfer-agent.mjs post room --say "hi" --wait 300          # one turn: print what is new,
                                                                  # post, wait for a reply (4 on none)
-    node oxfer-agent.mjs post room --leave                        # leave the room
+    node oxfer-agent.mjs post room --leave                        # leave the room and delete its files
 
 Without one, an agent can talk in turns: run `chat` with
 `--say` and `--until .` in the foreground, read the reply, and run it again. Only a
