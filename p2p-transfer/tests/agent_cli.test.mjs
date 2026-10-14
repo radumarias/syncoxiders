@@ -21,10 +21,11 @@ test("classifyLink tells the home page, share links and diagnostics apart", () =
 });
 
 test("parseArgs separates positionals, flags and values", () => {
-    const { positional, options } = parseArgs(["send", "a.bin", "--once", "--timeout", "30", "--snap=shots"], ["once"]);
+    const { positional, options } = parseArgs(["send", "a.bin", "--once", "--timeout", "30", "--snap=shots"]);
     assert.deepEqual(positional, ["send", "a.bin"]);
-    assert.deepEqual(options, { once: true, timeout: "30", snap: "shots" });
-    assert.throws(() => parseArgs(["--timeout"]), /needs a value/);
+    assert.deepEqual({ ...options }, { once: true, timeout: "30", snap: "shots" });
+    assert.throws(() => parseArgs(["--timeout"]), /argument missing/);
+    assert.throws(() => parseArgs(["--timeot", "30"]), /Unknown option/);
 });
 
 function bitmap(width, height, boxes) {

@@ -21,6 +21,7 @@ import { access, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/pr
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { parseArgs as parseCli } from "node:util";
 
 export const DEFAULT_ORIGIN = "https://oxfer.app/";
 export const PRIMARY_BLUE = { r: 22, g: 116, b: 216 };
@@ -56,27 +57,15 @@ export function classifyLink(input) {
     return "invalid";
 }
 
-/** Tiny argv parser: positionals plus `--flag` and `--key value`. */
-export function parseArgs(argv, booleans = []) {
-    const positional = [];
-    const options = {};
-    for (let i = 0; i < argv.length; i++) {
-        const arg = argv[i];
-        if (!arg.startsWith("--")) {
-            positional.push(arg);
-            continue;
-        }
-        const [key, inline] = arg.slice(2).split(/=(.*)/s);
-        if (booleans.includes(key)) {
-            options[key] = true;
-        } else if (inline !== undefined) {
-            options[key] = inline;
-        } else {
-            if (i + 1 >= argv.length) throw new Error(`--${key} needs a value`);
-            options[key] = argv[++i];
-        }
-    }
-    return { positional, options };
+const CLI_OPTIONS = Object.fromEntries([
+    ...["once", "headed", "verbose", "help"].map(flag => [flag, { type: "boolean" }]),
+    ...["timeout", "origin", "snap", "browser", "link-file", "count"].map(flag => [flag, { type: "string" }]),
+]);
+
+/** The command line: positionals plus the flags below; an unknown or valueless flag throws. */
+export function parseArgs(argv) {
+    const { positionals, values } = parseCli({ args: argv, options: CLI_OPTIONS, allowPositionals: true, strict: true });
+    return { positional: positionals, options: values };
 }
 
 function isPrimaryBlue(r, g, b) {
@@ -462,10 +451,12 @@ async function recv(link, outDir, options) {
         const verifyDeadline = Date.now() + 60_000;
         while (verified() < downloads.length && Date.now() < verifyDeadline) await sleep(250);
         await session.snap("done");
-        for (const dest of await Promise.all(downloads)) {
-            const info = await stat(dest);
-            session.say(`SAVED ${dest} ${info.size} ${await sha256File(dest)}`);
-        }
+        const saved = await Promise.all(downloads.map(async download => {
+            const dest = await download;
+            const [info, hash] = await Promise.all([stat(dest), sha256File(dest)]);
+            return `SAVED ${dest} ${info.size} ${hash}`;
+        }));
+        for (const line of saved) session.say(line);
         session.say(verified() >= downloads.length ? "VERIFIED" : "UNVERIFIED (no verification receipt seen; compare hashes with the sender)");
         await stop(verified() >= downloads.length ? 0 : 3);
     } catch (error) {
@@ -486,7 +477,7 @@ Exit codes: 0 ok, 1 usage, 2 failure, 3 saved but no verification receipt.`;
 }
 
 export async function main(argv) {
-    const { positional, options } = parseArgs(argv, ["once", "headed", "verbose", "help"]);
+    const { positional, options } = parseArgs(argv);
     const [mode, ...rest] = positional;
     if (options.help || !mode) {
         process.stdout.write(`${usage()}\n`);
