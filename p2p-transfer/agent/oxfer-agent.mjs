@@ -102,6 +102,9 @@ export function cleanChatText(text) {
     return out;
 }
 
+/** Whether chat `event` is the room relaying `text` back from `you`. */
+const isEchoOf = (event, you, text) => event.type === "message" && event.from === you && event.text === cleanChatText(text);
+
 /** The room link with the display name the agent wants to join as. */
 export function withChatName(link, name) {
     if (!/^[A-Za-z0-9_.-]{1,32}$/.test(name ?? "")) return link;
@@ -232,10 +235,14 @@ class Watch {
         }
     }
 
-    /** The first item (past or future) matching `predicate`; `timeoutMs` may be Infinity. */
-    waitFor(predicate, timeoutMs, what) {
-        const seen = this.items.find((item, index) => predicate(item, index));
-        if (seen !== undefined) return Promise.resolve(seen);
+    /** The first item (past or future) at or after index `from` matching `predicate`;
+     *  `timeoutMs` may be Infinity. */
+    waitFor(predicate, timeoutMs, what, from = 0) {
+        for (let index = from; index < this.items.length; index++) {
+            if (predicate(this.items[index], index)) return Promise.resolve(this.items[index]);
+        }
+        const keep = predicate;
+        predicate = (item, index) => index >= from && keep(item, index);
         return new Promise((resolve, reject) => {
             const timer = Number.isFinite(timeoutMs)
                 ? setTimeout(() => {
@@ -381,8 +388,8 @@ class Session {
         return this.console.waitFor(line => pattern.test(line), timeoutMs, what);
     }
 
-    waitForChat(predicate, timeoutMs = this.timeoutMs, what = "a chat event") {
-        return this.chat.waitFor(predicate, timeoutMs, what);
+    waitForChat(predicate, timeoutMs = this.timeoutMs, what = "a chat event", from = 0) {
+        return this.chat.waitFor(predicate, timeoutMs, what, from);
     }
 
     /** Save every download `page` starts into `outDir`, never overwriting. */
@@ -457,19 +464,13 @@ class Session {
         return outcome;
     }
 
-    /** Post `text` to the room open in `page`. With `you`, resolve only once the host has
-     *  relayed it back, so the message is really in the room before the caller moves on. */
-    async chatSend(page, text, you = null) {
+    /** Post `text` to the room open in `page` and resolve once the host has relayed it back,
+     *  so the message is really in the room before the caller moves on. */
+    async chatSend(page, text, you) {
         await page.waitForFunction(() => Boolean(globalThis.oxfer?.chat?.send), null, { timeout: 5000 });
         const before = this.chat.items.length;
         await page.evaluate(t => globalThis.oxfer.chat.send(t), String(text));
-        if (you === null) return;
-        const wanted = cleanChatText(text);
-        await this.waitForChat(
-            (e, index) => index >= before && e.type === "message" && e.from === you && e.text === wanted,
-            15_000,
-            "the room to echo our message",
-        );
+        await this.waitForChat(e => isEchoOf(e, you, text), 15_000, "the room to echo our message", before);
     }
 
     /** Post every stdin line to the room open in `page`. */
@@ -480,12 +481,12 @@ class Session {
     }
 
     /** Resolves with the exit code once the room session is over: 2 on `failed`, 0 on
-     *  `closed`, or 0 when a message from someone else matches `until`. Events in `old`
-     *  never match `until`; after `timeoutMs` without a match it resolves with 4. */
-    chatDone(you, until = null, { old = new Set(), timeoutMs = Infinity } = {}) {
+     *  `closed`, or 0 when a message from someone else matches `until`. Only events from
+     *  index `from` on can match `until`; after `timeoutMs` without one it resolves with 4. */
+    chatDone(you, until = null, { from = 0, timeoutMs = Infinity } = {}) {
         return this.waitForChat(
-            e => e.type === "failed" || e.type === "closed"
-                || (until && e.type === "message" && e.from !== you && !old.has(e) && until.test(e.text)),
+            (e, index) => e.type === "failed" || e.type === "closed"
+                || (until && index >= from && e.type === "message" && e.from !== you && until.test(e.text)),
             timeoutMs,
         ).then(e => (e.type === "failed" ? 2 : 0), () => {
             this.say(JSON.stringify({ type: "timeout", seconds: timeoutMs / 1000 }));
@@ -694,38 +695,30 @@ const OUTBOX_FILE = "outbox.jsonl"; // {"text": …} lines for the background pr
 const CURSOR_FILE = "cursor";       // bytes of events.jsonl that `post` has already printed
 const PID_FILE = "pid";
 
+/** The complete lines of `file` past byte `offset`, and the offset just after them. */
+async function readLinesFrom(file, offset) {
+    const { size } = await stat(file).catch(() => ({ size: offset }));
+    if (size <= offset) return { lines: [], offset };
+    const buffer = Buffer.alloc(size - offset);
+    const handle = await open(file, "r");
+    await handle.read(buffer, 0, buffer.length, offset).finally(() => handle.close());
+    const end = buffer.lastIndexOf(0x0a) + 1;
+    return { lines: buffer.subarray(0, end).toString("utf8").split("\n").filter(Boolean), offset: offset + end };
+}
+
 /** Post every complete line appended to `file` from now on. */
 async function postOutboxLines(session, page, you, file, pollMs = 300) {
-    let offset = (await stat(file).catch(() => ({ size: 0 }))).size;
-    let partial = "";
+    let { size: offset } = await stat(file).catch(() => ({ size: 0 }));
     for (;;) {
         await sleep(pollMs);
-        const { size } = await stat(file).catch(() => ({ size: offset }));
-        if (size <= offset) continue;
-        const handle = await open(file, "r");
-        const buffer = Buffer.alloc(size - offset);
-        await handle.read(buffer, 0, buffer.length, offset).finally(() => handle.close());
-        offset = size;
-        const lines = (partial + buffer.toString("utf8")).split("\n");
-        partial = lines.pop();
+        let lines;
+        ({ lines, offset } = await readLinesFrom(file, offset));
         for (const line of lines) {
             let text = line;
             try { text = JSON.parse(line).text ?? ""; } catch { /* a plain line is the message */ }
             if (String(text).trim()) await session.chatSend(page, String(text), you).catch(e => session.debug(`send failed: ${e.message}`));
         }
     }
-}
-
-/** Read the new complete lines of `dir`'s events file past the saved cursor. */
-async function readNewEvents(dir) {
-    const events = path.join(dir, EVENTS_FILE);
-    const cursor = Number(await readFile(path.join(dir, CURSOR_FILE), "utf8").catch(() => "0")) || 0;
-    const text = await readFile(events, "utf8").catch(() => "");
-    const bytes = Buffer.from(text, "utf8");
-    const end = bytes.lastIndexOf(0x0a) + 1;
-    if (end <= cursor) return { lines: [], cursor };
-    const lines = bytes.subarray(cursor, end).toString("utf8").split("\n").filter(Boolean);
-    return { lines, cursor: end };
 }
 
 function isRunning(pid) {
@@ -743,41 +736,43 @@ export async function post(dir, options, { pollMs = 300 } = {}) {
         return 0;
     }
     const until = new RegExp(options.until ?? ".");
-    const deadline = Date.now() + Number(options.wait ?? 300) * 1000;
+    const waitS = Number(options.wait ?? 300);
+    const deadline = Date.now() + waitS * 1000;
+    const events = path.join(dir, EVENTS_FILE);
+    const saveCursor = () => writeFile(path.join(dir, CURSOR_FILE), String(cursor));
+    let cursor = Number(await readFile(path.join(dir, CURSOR_FILE), "utf8").catch(() => "0")) || 0;
     // Who we are is in the "connected" event, which an earlier turn may already have printed.
-    const youIn = text => text.split("\n").map(l => { try { return JSON.parse(l); } catch { return null; } })
+    let you = (await readLinesFrom(events, 0)).lines.map(l => { try { return JSON.parse(l); } catch { return null; } })
         .find(e => e?.type === "connected")?.you ?? null;
-    let you = youIn(await readFile(path.join(dir, EVENTS_FILE), "utf8").catch(() => ""));
-    let replyFrom = 0; // after --say, only messages printed after it count as a reply
-    let said = !options.say;
+    // With --say: catch up first, then post, then wait for its echo; only later messages are replies.
+    let phase = options.say ? "catchup" : "reply";
     for (;;) {
-        const { lines, cursor } = await readNewEvents(dir);
+        let lines;
+        ({ lines, offset: cursor } = await readLinesFrom(events, cursor));
         for (const line of lines) {
             process.stdout.write(`${line}\n`);
             let event;
             try { event = JSON.parse(line); } catch { continue; }
+            let code = null;
             if (event.type === "connected") you = event.you;
-            if (event.type === "failed") { await writeFile(path.join(dir, CURSOR_FILE), String(cursor)); return 2; }
-            if (event.type === "closed") { await writeFile(path.join(dir, CURSOR_FILE), String(cursor)); return 0; }
-            if (said && replyFrom === 0 && event.type === "message" && event.from !== you && until.test(event.text)) {
-                await writeFile(path.join(dir, CURSOR_FILE), String(cursor));
-                return 0;
-            }
-            if (event.type === "message" && event.from === you && replyFrom === -1 && event.text === cleanChatText(options.say)) replyFrom = 0;
+            else if (event.type === "failed") code = 2;
+            else if (event.type === "closed") code = 0;
+            else if (phase === "echo" && isEchoOf(event, you, options.say)) phase = "reply";
+            else if (phase === "reply" && event.type === "message" && event.from !== you && until.test(event.text)) code = 0;
+            if (code !== null) { await saveCursor(); return code; }
         }
-        await writeFile(path.join(dir, CURSOR_FILE), String(cursor));
-        if (!said) {
+        await saveCursor();
+        if (phase === "catchup") {
             // Post only once caught up, so the reply cannot be confused with older lines.
             await appendFile(path.join(dir, OUTBOX_FILE), `${JSON.stringify({ text: options.say })}\n`);
-            said = true;
-            replyFrom = -1;
+            phase = "echo";
         }
         if (!pid || !isRunning(pid)) {
             process.stdout.write(`${JSON.stringify({ type: "failed", message: "not in the room: start chat --dir in the background first" })}\n`);
             return 2;
         }
         if (Date.now() >= deadline) {
-            process.stdout.write(`${JSON.stringify({ type: "timeout", seconds: Number(options.wait ?? 300) })}\n`);
+            process.stdout.write(`${JSON.stringify({ type: "timeout", seconds: waitS })}\n`);
             return 4;
         }
         await sleep(pollMs);
@@ -796,6 +791,7 @@ async function chat(link, options) {
         await writeFile(path.join(dir, PID_FILE), String(process.pid));
     }
     await run(options, async session => {
+        // Synchronous, so the final `closed` event is on disk before the process exits.
         session.onChat = dir
             ? event => appendFileSync(path.join(dir, EVENTS_FILE), `${JSON.stringify(event)}\n`)
             : event => session.say(JSON.stringify(event));
@@ -808,9 +804,9 @@ async function chat(link, options) {
         if (options.say) await session.chatSend(session.page, options.say, joined.you);
         session.postStdinLines(session.page, joined.you);
         // After --say, wait for a reply to it: the history replayed on join is not one.
-        const old = new Set(options.say ? session.chat.items : []);
+        const from = options.say ? session.chat.items.length : 0;
         const timeoutMs = options.wait === undefined ? Infinity : Number(options.wait) * 1000;
-        return session.chatDone(joined.you, options.until ? new RegExp(options.until) : null, { old, timeoutMs });
+        return session.chatDone(joined.you, options.until ? new RegExp(options.until) : null, { from, timeoutMs });
     });
 }
 
