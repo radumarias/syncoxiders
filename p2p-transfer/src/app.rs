@@ -2245,7 +2245,7 @@ fn primary_button(tc: &Tc, label: &str) -> Button<'static> {
 
 const fn copy_label(copied: bool) -> &'static str {
     if copied {
-        "✓ Copied to clipboard"
+        "✔ Copied to clipboard"
     } else {
         "Copy link"
     }
@@ -4251,9 +4251,9 @@ impl P2PTransfer {
             }
             ui.add_space(6.0);
             inset(&tc, egui::Margin::same(10)).show(ui, |ui| {
-                ui.set_min_height(180.0);
+                ui.set_min_height(260.0);
                 egui::ScrollArea::vertical()
-                    .max_height(if compact { 280.0 } else { 360.0 })
+                    .max_height(if compact { 380.0 } else { 520.0 })
                     .stick_to_bottom(true)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -4491,7 +4491,7 @@ fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
     let mut toggle = false;
     inset(tc, egui::Margin::same(12)).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("🤖").size(20.0).color(tc.secondary));
+            ui.label(RichText::new("💻").size(20.0).color(tc.secondary));
             ui.label(
                 RichText::new("Prompt for your AI agent")
                     .strong()
@@ -4511,11 +4511,11 @@ fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             let label = if copied {
-                "✓ Copied"
+                "✔ Copied"
             } else {
                 "📋 Copy prompt"
             };
-            let width = fit_width(ui, ["✓ Copied", "📋 Copy prompt"].map(outline_text), 150.0);
+            let width = fit_width(ui, ["✔ Copied", "📋 Copy prompt"].map(outline_text), 150.0);
             let button = if state.for_agents {
                 primary_button(tc, label).fill(if copied { tc.secondary } else { tc.primary })
             } else {
@@ -4523,9 +4523,9 @@ fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
             };
             copy = ui.add_sized([width, 40.0], button).clicked();
             let show = if state.prompt_open {
-                "▾ Hide prompt"
+                "⏷ Hide prompt"
             } else {
-                "▸ Show prompt"
+                "⏵ Show prompt"
             };
             toggle = ui
                 .add_sized(
