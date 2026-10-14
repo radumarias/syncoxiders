@@ -4130,7 +4130,7 @@ impl P2PTransfer {
             };
             match agent_link {
                 Some(link) => {
-                    if ui.button("Copy link for agent").clicked() {
+                    if ui.button(AGENT_LINK_LABEL).clicked() {
                         ui.ctx().copy_text(agent_prompt(&link));
                         if let Mode::Chat(state) = &mut self.mode {
                             state.copied = Some(Copied::AgentLink);
@@ -4420,7 +4420,7 @@ impl P2PTransfer {
     }
 }
 
-/// What "Copy link for agent" puts on the clipboard: the agent link inside a short brief.
+/// What "Copy for agent" puts on the clipboard: the agent link inside a short brief.
 ///
 /// A bare link with a `cap=` token reads to a careful agent like a secret pasted by
 /// mistake, so it asks what to do instead of opening it. The brief says the link is meant
@@ -4457,8 +4457,8 @@ fn agent_prompt(link: &str) -> String {
     )
 }
 
-const AGENT_LINK_LABEL: &str = "Copy link for agent";
-const AGENT_LINK_COPIED_LABEL: &str = "✓ Copied agent link";
+const AGENT_LINK_LABEL: &str = "Copy for agent";
+const AGENT_LINK_COPIED_LABEL: &str = "Copied for agent";
 
 /// How much of the canvas, in points, an on-screen keyboard covers right now.
 #[cfg(target_arch = "wasm32")]

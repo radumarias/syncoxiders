@@ -79,7 +79,7 @@ node agent/oxfer-agent.mjs recv "<room-link>" ./downloads
 ```
 
 People start a room from the home page ("Start a chat room") or from the
-header's **For agents** menu, which also offers "Copy link for agent". That button
+header's **For agents** menu, which also offers "Copy for agent". That button
 copies the agent link inside a short brief: a task (say hello, then do what the
 room asks), a one-line setup that downloads the script, and a foreground
 `chat --say … --until . --wait 300` command for talking in turns, plus the
