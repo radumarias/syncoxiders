@@ -231,27 +231,27 @@ impl Room {
         if text.is_empty() {
             return;
         }
-        let said = {
+        let from = from.to_string();
+        let seq = {
             let mut state = self.state.lock().unwrap();
+            let seq = state.seq + 1;
             let said = ChatMsg::Said {
-                from: from.to_string(),
-                text,
-                seq: state.seq + 1,
+                from: from.clone(),
+                text: text.clone(),
+                seq,
             };
             let Ok(frame) = encode_chat(&said) else {
                 return;
             };
-            state.seq += 1;
+            state.seq = seq;
             if state.history.len() >= HISTORY {
                 state.history.pop_front();
             }
             state.history.push_back(frame.clone());
             Self::broadcast_to(&state.members, &frame);
-            said
+            seq
         };
-        if let ChatMsg::Said { from, text, seq } = said {
-            self.out.publish(ChatEvent::Message { from, text, seq });
-        }
+        self.out.publish(ChatEvent::Message { from, text, seq });
     }
 
     fn roster(&self, members: &[Member]) -> Vec<String> {
@@ -594,7 +594,7 @@ async fn guest_session(
                     Ok(ChatMsg::Joined { name }) => out.publish(ChatEvent::Joined { name }),
                     Ok(ChatMsg::Left { name }) => out.publish(ChatEvent::Left { name }),
                     Ok(ChatMsg::Error { message }) => {
-                        break Err(NodeError::Connect(rejection(&message)));
+                        break Err(NodeError::Connect(clean_chat_text(&message)));
                     }
                     Ok(_) => break Err(NodeError::Connect("unexpected chat frame".into())),
                     Err(error) => break Err(NodeError::Connect(error.to_string())),
@@ -605,7 +605,7 @@ async fn guest_session(
                     // leave), anything else carries the reason, which is also the `Error`
                     // frame the host queued just before closing in case `close` dropped it.
                     Some((0, _)) => Ok(()),
-                    Some((_, reason)) => Err(NodeError::Connect(rejection(&reason))),
+                    Some((_, reason)) => Err(NodeError::Connect(clean_chat_text(&reason))),
                     None => Err(NodeError::Connect(error.to_string())),
                 },
             },
@@ -613,12 +613,6 @@ async fn guest_session(
     };
     connection.close(0u8.into(), b"bye");
     outcome
-}
-
-/// What a guest shows for a message the host rejected it with; the host words it for
-/// people, so it only needs cleaning.
-fn rejection(message: &str) -> String {
-    clean_chat_text(message)
 }
 
 /// `(code, reason)` of the host's application close, if the host closed the connection.

@@ -922,9 +922,8 @@ impl Node {
     }
 }
 
-/// An endpoint builder with the relay configuration `relay` asks for. Shared by every
-/// ephemeral endpoint (diagnostics, chat) so the relay rules live in one place.
-pub(crate) fn endpoint_builder(relay: &RelayChoice) -> Result<iroh::endpoint::Builder, NodeError> {
+/// An endpoint builder with the relay configuration `relay` asks for.
+fn endpoint_builder(relay: &RelayChoice) -> Result<iroh::endpoint::Builder, NodeError> {
     Ok(match relay {
         RelayChoice::N0 => Endpoint::builder(presets::N0),
         RelayChoice::N0WithoutTrailingDots => Endpoint::builder(presets::N0)

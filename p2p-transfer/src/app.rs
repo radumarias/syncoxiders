@@ -12,7 +12,7 @@ use eframe::egui;
 use egui::{Button, Color32, CornerRadius, RichText, Stroke, Ui};
 use n0_future::task::{self, AbortOnDropHandle};
 use serde::{Deserialize, Serialize};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 use crate::chat::{ChatCommand, ChatEvent, ChatHandle};
 use crate::file_io::{self, FileOrigin, FileSnapshot, SharedFile, SharedFiles};
@@ -545,15 +545,17 @@ impl ChatState {
         self.handle.is_some()
     }
 
-    fn say(&mut self, text: &str) {
-        let text = text.trim();
-        if text.is_empty() {
-            return;
+    /// Copy the agent brief for this room's agent link.
+    fn copy_for_agent(&mut self, ctx: &egui::Context) {
+        if let Some(links) = &self.links {
+            ctx.copy_text(agent_prompt(&links.agent));
+            self.copied = Some(Copied::AgentLink);
         }
+    }
+
+    fn say(&mut self, text: &str) {
         if let Some(handle) = &self.handle {
-            // A full queue means the session is already behind by 16 messages; dropping
-            // one typed line is better than blocking the frame.
-            let _ = handle.commands.try_send(ChatCommand::Say(text.to_string()));
+            queue_say(&handle.commands, text);
         }
     }
 
@@ -649,34 +651,30 @@ impl ChatState {
     }
 }
 
+/// Queue `text` for the room, from the input box or a page script.
+fn queue_say(commands: &mpsc::Sender<ChatCommand>, text: &str) {
+    let text = text.trim();
+    if !text.is_empty() {
+        // A full queue means the session is already behind by 16 messages; dropping one
+        // line is better than blocking the frame.
+        let _ = commands.try_send(ChatCommand::Say(text.to_string()));
+    }
+}
+
 /// Page-script access to the open room (`assets/chat-bridge.js`): events go out as DOM
-/// events, and `window.oxfer.chat.send` queues text that `poll_chat` turns into messages.
+/// events, and `window.oxfer.chat.send` queues text straight onto the session's commands.
 #[cfg(target_arch = "wasm32")]
 struct ChatBridge {
-    outbox: Arc<Mutex<Vec<String>>>,
     _closure: wasm_bindgen::closure::Closure<dyn FnMut(String)>,
 }
 
 #[cfg(target_arch = "wasm32")]
 impl ChatBridge {
-    fn install(repaint: egui::Context) -> Self {
-        let outbox: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let closure = wasm_bindgen::closure::Closure::new({
-            let outbox = outbox.clone();
-            move |text: String| {
-                outbox.lock().unwrap().push(text);
-                repaint.request_repaint();
-            }
-        });
+    fn install(commands: mpsc::Sender<ChatCommand>) -> Self {
+        let closure =
+            wasm_bindgen::closure::Closure::new(move |text: String| queue_say(&commands, &text));
         install_chat_sender(closure.as_ref());
-        Self {
-            outbox,
-            _closure: closure,
-        }
-    }
-
-    fn drain(&self) -> Vec<String> {
-        std::mem::take(&mut *self.outbox.lock().unwrap())
+        Self { _closure: closure }
     }
 }
 
@@ -797,6 +795,9 @@ pub struct P2PTransfer {
     sharing: Arc<AtomicBool>,
     #[serde(skip)]
     show_terminal_view: bool,
+    /// This frame's [`keyboard_inset`], read once in `ui()`.
+    #[serde(skip)]
+    keyboard_inset: f32,
     /// Stays visible until sharing stops, so copying has an unmistakable result.
     #[serde(skip)]
     link_copied: bool,
@@ -847,6 +848,7 @@ impl Default for P2PTransfer {
             #[cfg(not(target_arch = "wasm32"))]
             save_directory: None,
             theme: Theme::default(),
+            keyboard_inset: 0.0,
             mode: Mode::Home,
             repaint: egui::Context::default(),
             shared_files: Arc::new(Mutex::new(Vec::new())),
@@ -3292,12 +3294,7 @@ impl P2PTransfer {
                 );
                 ui.add_space(6.0);
                 if let Mode::Receive(r) = &mut self.mode {
-                    egui::Frame::new()
-                        .fill(tc.surface_lowest)
-                        .corner_radius(tc.corner(10))
-                        .stroke(Stroke::new(1.0, tc.outline_var))
-                        .inner_margin(egui::Margin::same(12))
-                        .show(ui, |ui| {
+                    inset(&tc, egui::Margin::same(12)).show(ui, |ui| {
                             ui.add_sized(
                                 [ui.available_width(), 48.0],
                                 egui::TextEdit::singleline(&mut r.input)
@@ -4082,28 +4079,20 @@ impl P2PTransfer {
         // Only a running session can send; without one `window.oxfer.chat` stays absent, so
         // a script's `send` throws instead of vanishing.
         #[cfg(target_arch = "wasm32")]
-        if state.handle.is_some() {
-            state.bridge = Some(ChatBridge::install(self.repaint.clone()));
+        {
+            state.bridge = state
+                .handle
+                .as_ref()
+                .map(|handle| ChatBridge::install(handle.commands.clone()));
         }
         self.mode = Mode::Chat(Box::new(state));
     }
 
-    /// Per frame: hand page-script text to the session and apply what the session reported.
+    /// Per frame: apply what the session reported.
     fn poll_chat(&mut self) {
         let Mode::Chat(state) = &mut self.mode else {
             return;
         };
-        #[cfg(target_arch = "wasm32")]
-        {
-            let queued = state
-                .bridge
-                .as_ref()
-                .map(ChatBridge::drain)
-                .unwrap_or_default();
-            for text in queued {
-                state.say(&text);
-            }
-        }
         let events = state
             .handle
             .as_mut()
@@ -4124,21 +4113,14 @@ impl P2PTransfer {
                  to join this room, talk, and send files through it.",
             );
             ui.add_space(6.0);
-            let agent_link = match &self.mode {
-                Mode::Chat(state) => state.links.as_ref().map(|links| links.agent.clone()),
-                _ => None,
-            };
-            match agent_link {
-                Some(link) => {
-                    if ui.button(AGENT_LINK_LABEL).clicked() {
-                        ui.ctx().copy_text(agent_prompt(&link));
-                        if let Mode::Chat(state) = &mut self.mode {
-                            state.copied = Some(Copied::AgentLink);
-                        }
+            match &mut self.mode {
+                Mode::Chat(state) if state.links.is_some() => {
+                    if ui.button(agent_copy_label(false)).clicked() {
+                        state.copy_for_agent(ui.ctx());
                         ui.close();
                     }
                 }
-                None => self.agents_room_button(ui),
+                _ => self.agents_room_button(ui),
             }
         });
     }
@@ -4205,7 +4187,7 @@ impl P2PTransfer {
                 }
             }
 
-            if let Some(RoomLinks { link, agent }) = state.links.clone() {
+            if let Some(RoomLinks { link, .. }) = state.links.clone() {
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new("Send this link to the person you want to talk to.")
@@ -4223,7 +4205,7 @@ impl P2PTransfer {
                     );
                     let agent_width = fit_width(
                         ui,
-                        [AGENT_LINK_LABEL, AGENT_LINK_COPIED_LABEL].map(outline_text),
+                        [false, true].map(|copied| outline_text(agent_copy_label(copied))),
                         200.0,
                     );
                     if ui
@@ -4236,17 +4218,12 @@ impl P2PTransfer {
                         ui.ctx().copy_text(link.clone());
                         state.copied = Some(Copied::Link);
                     }
-                    let label = if state.copied == Some(Copied::AgentLink) {
-                        AGENT_LINK_COPIED_LABEL
-                    } else {
-                        AGENT_LINK_LABEL
-                    };
+                    let label = agent_copy_label(state.copied == Some(Copied::AgentLink));
                     if ui
                         .add_sized([agent_width, 44.0], outline_button(&tc, label, tc.outline))
                         .clicked()
                     {
-                        ui.ctx().copy_text(agent_prompt(&agent));
-                        state.copied = Some(Copied::AgentLink);
+                        state.copy_for_agent(ui.ctx());
                         state.for_agents = true;
                     }
                 });
@@ -4302,6 +4279,7 @@ impl P2PTransfer {
                             ui.label(RichText::new("No messages yet.").color(tc.on_surface_var));
                         }
                         let you = state.you.as_deref();
+                        let style = ui.style().clone();
                         for line in &state.lines {
                             match &line.from {
                                 None => {
@@ -4317,7 +4295,6 @@ impl P2PTransfer {
                                     // wrapped row misplace a long unbroken link, drawing part of
                                     // it outside the box.
                                     let mut job = egui::text::LayoutJob::default();
-                                    let style = ui.style().clone();
                                     RichText::new(format!("{from}: "))
                                         .strong()
                                         .color(if Some(from.as_str()) == you {
@@ -4374,7 +4351,7 @@ impl P2PTransfer {
                     response.request_focus();
                     state.focus_input = false;
                 }
-                let inset = keyboard_inset(ui.ctx());
+                let inset = self.keyboard_inset;
                 if response.has_focus()
                     && (response.gained_focus() || inset != state.input_seen_inset)
                 {
@@ -4457,15 +4434,20 @@ fn agent_prompt(link: &str) -> String {
     )
 }
 
-const AGENT_LINK_LABEL: &str = "Copy for agent";
-const AGENT_LINK_COPIED_LABEL: &str = "Copied for agent";
+const fn agent_copy_label(copied: bool) -> &'static str {
+    if copied {
+        "Copied for agent"
+    } else {
+        "Copy for agent"
+    }
+}
 
 /// How much of the canvas, in points, an on-screen keyboard covers right now.
 #[cfg(target_arch = "wasm32")]
 fn keyboard_inset(ctx: &egui::Context) -> f32 {
     // The browser reports no event egui sees while the keyboard slides, so look again soon
-    // whenever text input is active.
-    if ctx.egui_wants_keyboard_input() {
+    // whenever text input is active on a touch screen; elsewhere there is no such keyboard.
+    if coarse_pointer() && ctx.egui_wants_keyboard_input() {
         ctx.request_repaint_after(std::time::Duration::from_millis(150));
     }
     let Some(window) = web_sys::window() else {
@@ -4492,6 +4474,17 @@ fn keyboard_inset(ctx: &egui::Context) -> f32 {
     }
 }
 
+/// Whether the main pointer is a finger (a phone or tablet), checked once per page load.
+#[cfg(target_arch = "wasm32")]
+fn coarse_pointer() -> bool {
+    thread_local! {
+        static COARSE: bool = web_sys::window()
+            .and_then(|window| window.match_media("(pointer: coarse)").ok().flatten())
+            .is_some_and(|query| query.matches());
+    }
+    COARSE.with(|coarse| *coarse)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn keyboard_inset(_ctx: &egui::Context) -> f32 {
     0.0
@@ -4506,10 +4499,7 @@ fn keyboard_inset(_ctx: &egui::Context) -> f32 {
 /// an IME candidate window still opens next to the cursor.
 #[cfg(target_arch = "wasm32")]
 fn keep_text_agent_on_screen(ctx: &egui::Context) {
-    let coarse = web_sys::window()
-        .and_then(|window| window.match_media("(pointer: coarse)").ok().flatten())
-        .is_some_and(|query| query.matches());
-    if !coarse {
+    if !coarse_pointer() {
         return;
     }
     ctx.output_mut(|output| {
@@ -4648,8 +4638,9 @@ impl eframe::App for P2PTransfer {
         // The panel is always added, even at zero height: adding it only while the keyboard
         // is up would shift the ids of every widget after it, and the focused input would lose
         // focus and close the keyboard again.
+        self.keyboard_inset = keyboard_inset(ctx);
         egui::Panel::bottom("keyboard_inset")
-            .exact_size(keyboard_inset(ctx))
+            .exact_size(self.keyboard_inset)
             .resizable(false)
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(tc.bg))
