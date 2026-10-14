@@ -117,6 +117,15 @@ const CLI_OPTIONS = Object.fromEntries([
         .map(flag => [flag, { type: "string" }]),
 ]);
 
+/** `value` as a positive number (an integer with `integer`), or a usage error naming `flag`. */
+export function positiveNumber(value, flag, integer = false) {
+    const n = Number(value);
+    if (!(n > 0 && Number.isFinite(n)) || (integer && !Number.isInteger(n))) {
+        throw new Error(`${flag} must be a positive ${integer ? "whole number" : "number"}, got ${value}`);
+    }
+    return n;
+}
+
 /** The command line: positionals plus the flags above; an unknown or valueless flag throws. */
 export function parseArgs(argv) {
     const { positionals, values } = parseCli({ args: argv, options: CLI_OPTIONS, allowPositionals: true, strict: true });
@@ -262,7 +271,7 @@ class Watch {
 class Session {
     constructor(options) {
         this.options = options;
-        this.timeoutMs = Number(options.timeout ?? 120) * 1000;
+        this.timeoutMs = positiveNumber(options.timeout ?? 120, "--timeout") * 1000;
         this.console = new Watch(2000); // iroh traces are chatty; keep the recent tail
         this.chat = new Watch();        // every `oxfer:chat` DOM event, as the page emitted it
         this.counters = [];             // { pattern, n, onHit } tallied as console lines arrive
@@ -528,6 +537,7 @@ async function send(files, options) {
     }
     const origin = appOrigin(options);
     if (options.chat && classifyLink(options.chat) !== "chat") throw new Error("--chat needs a room link (#chat&…&cap=…)");
+    const wanted = options.once ? 1 : options.count === undefined ? Infinity : positiveNumber(options.count, "--count", true);
 
     await run(options, async session => {
         await session.open(origin);
@@ -579,7 +589,6 @@ async function send(files, options) {
             session.say("CHAT posted the share link");
         }
 
-        const wanted = options.once ? 1 : Number(options.count ?? Infinity);
         while (verified.n < wanted) {
             await sleep(500);
             if (session.gone(session.page)) throw new Error("the app page closed or crashed while sharing");
@@ -619,7 +628,7 @@ async function recv(link, outDir, options) {
             session.say(`CHAT joined as ${chatYou}; members: ${joined.members.join(", ")}`);
             const posted = await session.waitForChat(
                 e => e.type === "message" && e.from !== chatYou && findShareLink(e.text, link),
-                Number(options.wait ?? 600) * 1000,
+                positiveNumber(options.wait ?? 600, "--wait") * 1000,
                 "a share link to be posted in the room (--wait seconds)",
             );
             link = findShareLink(posted.text, link);
@@ -736,7 +745,7 @@ export async function post(dir, options, { pollMs = 300 } = {}) {
         return 0;
     }
     const until = new RegExp(options.until ?? ".");
-    const waitS = Number(options.wait ?? 300);
+    const waitS = positiveNumber(options.wait ?? 300, "--wait");
     const deadline = Date.now() + waitS * 1000;
     const events = path.join(dir, EVENTS_FILE);
     const saveCursor = () => writeFile(path.join(dir, CURSOR_FILE), String(cursor));
@@ -805,7 +814,7 @@ async function chat(link, options) {
         session.postStdinLines(session.page, joined.you);
         // After --say, wait for a reply to it: the history replayed on join is not one.
         const from = options.say ? session.chat.items.length : 0;
-        const timeoutMs = options.wait === undefined ? Infinity : Number(options.wait) * 1000;
+        const timeoutMs = options.wait === undefined ? Infinity : positiveNumber(options.wait, "--wait") * 1000;
         return session.chatDone(joined.you, options.until ? new RegExp(options.until) : null, { from, timeoutMs });
     });
 }

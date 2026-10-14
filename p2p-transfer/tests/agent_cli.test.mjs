@@ -11,6 +11,7 @@ import {
     findPrimaryButton,
     findShareLink,
     parseArgs,
+    positiveNumber,
     post,
     withChatName,
     PRIMARY_BLUE,
@@ -65,6 +66,13 @@ test("parseArgs separates positionals, flags and values", () => {
     assert.deepEqual({ ...options }, { once: true, timeout: "30", snap: "shots" });
     assert.throws(() => parseArgs(["--timeout"]), /argument missing/);
     assert.throws(() => parseArgs(["--timeot", "30"]), /Unknown option/);
+});
+
+test("positiveNumber rejects zero, negatives, NaN and fractional counts", () => {
+    assert.equal(positiveNumber("30", "--timeout"), 30);
+    assert.equal(positiveNumber("0.5", "--timeout"), 0.5);
+    for (const bad of ["0", "-1", "abc", "Infinity"]) assert.throws(() => positiveNumber(bad, "--timeout"), /--timeout/);
+    assert.throws(() => positiveNumber("1.5", "--count", true), /whole number/);
 });
 
 function bitmap(width, height, boxes) {
