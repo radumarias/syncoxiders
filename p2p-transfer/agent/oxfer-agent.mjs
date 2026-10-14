@@ -35,6 +35,7 @@ import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
+import { parseArgs as parseCli } from "node:util";
 
 export const DEFAULT_ORIGIN = "https://oxfer.app/";
 export const PRIMARY_BLUE = { r: 22, g: 116, b: 216 };
@@ -107,27 +108,16 @@ export function withChatName(link, name) {
     return `${link}&name=${name}`;
 }
 
-/** Tiny argv parser: positionals plus `--flag` and `--key value`. */
-export function parseArgs(argv, booleans = []) {
-    const positional = [];
-    const options = {};
-    for (let i = 0; i < argv.length; i++) {
-        const arg = argv[i];
-        if (!arg.startsWith("--")) {
-            positional.push(arg);
-            continue;
-        }
-        const [key, inline] = arg.slice(2).split(/=(.*)/s);
-        if (booleans.includes(key)) {
-            options[key] = true;
-        } else if (inline !== undefined) {
-            options[key] = inline;
-        } else {
-            if (i + 1 >= argv.length) throw new Error(`--${key} needs a value`);
-            options[key] = argv[++i];
-        }
-    }
-    return { positional, options };
+const CLI_OPTIONS = Object.fromEntries([
+    ...["once", "headed", "verbose", "help", "leave"].map(flag => [flag, { type: "boolean" }]),
+    ...["timeout", "origin", "snap", "browser", "link-file", "count", "chat", "name", "say", "until", "wait", "dir"]
+        .map(flag => [flag, { type: "string" }]),
+]);
+
+/** The command line: positionals plus the flags above; an unknown or valueless flag throws. */
+export function parseArgs(argv) {
+    const { positionals, values } = parseCli({ args: argv, options: CLI_OPTIONS, allowPositionals: true, strict: true });
+    return { positional: positionals, options: values };
 }
 
 // ── Screenshots ──────────────────────────────────────────────────────────────
@@ -666,10 +656,8 @@ async function recv(link, outDir, options) {
         while (verified.n < downloads.length && Date.now() < verifyDeadline) await sleep(250);
         await session.snap("done");
         const saved = await Promise.all(downloads);
-        for (const dest of saved) {
-            const info = await stat(dest);
-            session.say(`SAVED ${dest} ${info.size} ${await sha256File(dest)}`);
-        }
+        const hashes = await Promise.all(saved.map(dest => Promise.all([stat(dest), sha256File(dest)])));
+        saved.forEach((dest, i) => session.say(`SAVED ${dest} ${hashes[i][0].size} ${hashes[i][1]}`));
         const ok = verified.n >= downloads.length;
         session.say(ok ? "VERIFIED" : "UNVERIFIED (no verification receipt seen; compare hashes with the sender)");
         if (chatPage) {
@@ -843,7 +831,7 @@ Exit codes: 0 ok, 1 usage, 2 failure, 3 saved but no verification receipt,
 }
 
 export async function main(argv) {
-    const { positional, options } = parseArgs(argv, ["once", "headed", "verbose", "help", "leave"]);
+    const { positional, options } = parseArgs(argv);
     const [mode, ...rest] = positional;
     if (options.help || !mode) {
         process.stdout.write(`${usage()}\n`);
