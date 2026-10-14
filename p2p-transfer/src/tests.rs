@@ -3534,8 +3534,12 @@ async fn local_test_chat_room_relays_messages_between_guests_over_loopback() {
             other => panic!("expected Failed, got {other:?}"),
         }
 
-        // Leaving is announced; closing the room ends every guest session.
-        drop(ana2);
+        // Leaving is announced, and `Leave` ends the session while its handle still lives
+        // (a page about to close cannot wait for a drop); closing the room ends the rest.
+        ana2.commands
+            .send(ChatCommand::Leave)
+            .await
+            .expect("ana2's session takes commands");
         assert_eq!(
             next_event(&mut host, "host sees ana2 leave").await,
             ChatEvent::Left {

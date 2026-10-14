@@ -514,6 +514,16 @@ class Session {
     }
 
     async close() {
+        // Leave rooms first: a browser that just vanishes stays listed until the host's
+        // connection times out. The pause lets the close reach the host.
+        const pages = this.context?.pages() ?? [];
+        const left = await Promise.all(pages.map(page =>
+            page.evaluate(() => {
+                const chat = globalThis.oxfer?.chat;
+                chat?.leave?.();
+                return Boolean(chat);
+            }).catch(() => false)));
+        if (left.some(Boolean)) await sleep(500);
         // A page mid-transfer can keep browser.close() waiting; never hang exit on it.
         await Promise.race([this.browser?.close().catch(() => {}), sleep(5000)]);
         if (this.downloadsDir) await rm(this.downloadsDir, { recursive: true, force: true }).catch(() => {});

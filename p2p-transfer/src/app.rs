@@ -49,7 +49,7 @@ extern "C" {
 #[wasm_bindgen::prelude::wasm_bindgen(module = "/assets/chat-bridge.js")]
 extern "C" {
     #[wasm_bindgen(js_name = installChatSender)]
-    fn install_chat_sender(callback: &wasm_bindgen::JsValue);
+    fn install_chat_sender(send: &wasm_bindgen::JsValue, leave: &wasm_bindgen::JsValue);
     #[wasm_bindgen(js_name = removeChatSender)]
     fn remove_chat_sender();
     #[wasm_bindgen(js_name = emitChatEvent)]
@@ -512,6 +512,8 @@ struct ChatState {
     handle: Option<ChatHandle>,
     /// Created from the "For agents" menu or opened from an `&agent` link.
     for_agents: bool,
+    /// The agent prompt card shows the full prompt.
+    prompt_open: bool,
     focus_input: bool,
     /// Keyboard inset when the input was last scrolled into view; the keyboard sliding
     /// up must bring the input back into view.
@@ -533,6 +535,7 @@ impl ChatState {
             status: ChatStatus::Starting,
             handle,
             for_agents,
+            prompt_open: false,
             focus_input: true,
             input_seen_inset: 0.0,
             #[cfg(target_arch = "wasm32")]
@@ -665,16 +668,25 @@ fn queue_say(commands: &mpsc::Sender<ChatCommand>, text: &str) {
 /// events, and `window.oxfer.chat.send` queues text straight onto the session's commands.
 #[cfg(target_arch = "wasm32")]
 struct ChatBridge {
-    _closure: wasm_bindgen::closure::Closure<dyn FnMut(String)>,
+    _send: wasm_bindgen::closure::Closure<dyn FnMut(String)>,
+    _leave: wasm_bindgen::closure::Closure<dyn FnMut()>,
 }
 
 #[cfg(target_arch = "wasm32")]
 impl ChatBridge {
     fn install(commands: mpsc::Sender<ChatCommand>) -> Self {
-        let closure =
-            wasm_bindgen::closure::Closure::new(move |text: String| queue_say(&commands, &text));
-        install_chat_sender(closure.as_ref());
-        Self { _closure: closure }
+        let send = wasm_bindgen::closure::Closure::new({
+            let commands = commands.clone();
+            move |text: String| queue_say(&commands, &text)
+        });
+        let leave = wasm_bindgen::closure::Closure::new(move || {
+            let _ = commands.try_send(ChatCommand::Leave);
+        });
+        install_chat_sender(send.as_ref(), leave.as_ref());
+        Self {
+            _send: send,
+            _leave: leave,
+        }
     }
 }
 
@@ -4196,37 +4208,21 @@ impl P2PTransfer {
                 );
                 link_box(ui, &tc, &link);
                 ui.add_space(6.0);
-                ui.horizontal_wrapped(|ui| {
-                    // Wide enough for either label, so the buttons do not shift on copy.
-                    let copy_width = fit_width(
-                        ui,
-                        [false, true].map(|copied| primary_text(copy_label(copied))),
-                        200.0,
-                    );
-                    let agent_width = fit_width(
-                        ui,
-                        [false, true].map(|copied| outline_text(agent_copy_label(copied))),
-                        200.0,
-                    );
-                    if ui
-                        .add_sized(
-                            [copy_width, 44.0],
-                            copy_button(&tc, state.copied == Some(Copied::Link)),
-                        )
-                        .clicked()
-                    {
-                        ui.ctx().copy_text(link.clone());
-                        state.copied = Some(Copied::Link);
-                    }
-                    let label = agent_copy_label(state.copied == Some(Copied::AgentLink));
-                    if ui
-                        .add_sized([agent_width, 44.0], outline_button(&tc, label, tc.outline))
-                        .clicked()
-                    {
-                        state.copy_for_agent(ui.ctx());
-                        state.for_agents = true;
-                    }
-                });
+                let copy_width = fit_width(
+                    ui,
+                    [false, true].map(|copied| primary_text(copy_label(copied))),
+                    200.0,
+                );
+                if ui
+                    .add_sized(
+                        [copy_width, 44.0],
+                        copy_button(&tc, state.copied == Some(Copied::Link)),
+                    )
+                    .clicked()
+                {
+                    ui.ctx().copy_text(link.clone());
+                    state.copied = Some(Copied::Link);
+                }
                 ui.label(
                     RichText::new(
                         "Anyone with this link can join while this page is open. Send it only \
@@ -4235,36 +4231,23 @@ impl P2PTransfer {
                     .color(tc.error)
                     .size(12.0),
                 );
+                ui.add_space(12.0);
+                show_agent_prompt(ui, &tc, state);
             }
 
-            if state.for_agents {
-                ui.add_space(8.0);
-                egui::CollapsingHeader::new(RichText::new("For agents").strong())
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(
-                                "An agent that opens the agent link finds instructions in the \
-                                 page itself (/llms.txt): how to join this room, read and post \
-                                 messages, and send a file by sharing it here and posting the \
-                                 share link in the room. Both agents need the same link.",
-                            )
+            ui.add_space(12.0);
+            if !state.members.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                    ui.label(
+                        RichText::new("In the room")
                             .color(tc.on_surface_var)
                             .size(13.0),
-                        );
-                        if let Some(links) = &state.links {
-                            link_box(ui, &tc, &links.agent);
-                        }
-                    });
-            }
-
-            ui.add_space(10.0);
-            if !state.members.is_empty() {
-                ui.label(
-                    RichText::new(format!("In the room: {}", state.members.join(", ")))
-                        .color(tc.on_surface_var)
-                        .size(13.0),
-                );
+                    );
+                    for member in &state.members {
+                        member_chip(ui, &tc, member, state.you.as_deref() == Some(member));
+                    }
+                });
             }
             ui.add_space(6.0);
             inset(&tc, egui::Margin::same(10)).show(ui, |ui| {
@@ -4274,7 +4257,7 @@ impl P2PTransfer {
                     .stick_to_bottom(true)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 4.0;
+                        ui.spacing_mut().item_spacing.y = 8.0;
                         if state.lines.is_empty() {
                             ui.label(RichText::new("No messages yet.").color(tc.on_surface_var));
                         }
@@ -4295,13 +4278,10 @@ impl P2PTransfer {
                                     // wrapped row misplace a long unbroken link, drawing part of
                                     // it outside the box.
                                     let mut job = egui::text::LayoutJob::default();
-                                    RichText::new(format!("{from}: "))
+                                    RichText::new(format!("{from}  "))
                                         .strong()
-                                        .color(if Some(from.as_str()) == you {
-                                            tc.primary
-                                        } else {
-                                            tc.on_surface
-                                        })
+                                        .size(15.0)
+                                        .color(member_color(&tc, from, Some(from.as_str()) == you))
                                         .append_to(
                                             &mut job,
                                             &style,
@@ -4440,6 +4420,152 @@ const fn agent_copy_label(copied: bool) -> &'static str {
         "Copied for agent"
     } else {
         "Copy for agent"
+    }
+}
+
+/// Names the transcript and roster draw in, so a speaker is easy to pick out. You are the
+/// theme's primary colour; everyone else gets a hue of their own from their name. Phosphor
+/// is one phosphor colour by design, so its members differ in brightness instead.
+fn member_color(tc: &Tc, name: &str, you: bool) -> Color32 {
+    if you {
+        return tc.primary;
+    }
+    const DARK: [Color32; 7] = [
+        Color32::from_rgb(255, 180, 84),  // amber
+        Color32::from_rgb(177, 140, 255), // violet
+        Color32::from_rgb(79, 214, 190),  // teal
+        Color32::from_rgb(255, 143, 177), // pink
+        Color32::from_rgb(155, 225, 93),  // lime
+        Color32::from_rgb(255, 209, 102), // yellow
+        Color32::from_rgb(122, 162, 255), // periwinkle
+    ];
+    const LIGHT: [Color32; 7] = [
+        Color32::from_rgb(166, 86, 0),
+        Color32::from_rgb(107, 63, 214),
+        Color32::from_rgb(0, 122, 104),
+        Color32::from_rgb(194, 24, 91),
+        Color32::from_rgb(63, 125, 18),
+        Color32::from_rgb(138, 109, 0),
+        Color32::from_rgb(47, 85, 201),
+    ];
+    // FNV-1a: stable across sessions and peers, so a name keeps its colour.
+    let hash = name.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    if tc.theme == Theme::Phosphor {
+        let shades = [tc.secondary, tc.on_surface, tc.on_surface_var];
+        return shades[hash as usize % shades.len()];
+    }
+    let dark = u16::from(tc.bg.r()) + u16::from(tc.bg.g()) + u16::from(tc.bg.b()) < 384;
+    let palette = if dark { DARK } else { LIGHT };
+    palette[hash as usize % palette.len()]
+}
+
+/// One member in the "In the room" roster: their name in their colour, in a small pill.
+fn member_chip(ui: &mut Ui, tc: &Tc, name: &str, you: bool) {
+    let color = member_color(tc, name, you);
+    egui::Frame::new()
+        .fill(color.gamma_multiply(0.12))
+        .stroke(Stroke::new(1.0, color.gamma_multiply(0.6)))
+        .corner_radius(tc.corner(12))
+        .inner_margin(egui::Margin::symmetric(8, 2))
+        .show(ui, |ui| {
+            let label = if you {
+                format!("{name} (you)")
+            } else {
+                name.to_string()
+            };
+            ui.label(RichText::new(label).strong().size(13.0).color(color));
+        });
+}
+
+/// The agent brief as a prompt card, the way agent docs present one: what it is, one copy
+/// button, and the full text folded away until someone wants to read it.
+fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
+    let Some(links) = &state.links else {
+        return;
+    };
+    let prompt = agent_prompt(&links.agent);
+    let copied = state.copied == Some(Copied::AgentLink);
+    let mut copy = false;
+    let mut toggle = false;
+    inset(tc, egui::Margin::same(12)).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("🤖").size(20.0).color(tc.secondary));
+            ui.label(
+                RichText::new("Prompt for your AI agent")
+                    .strong()
+                    .size(15.0)
+                    .color(tc.on_surface),
+            );
+        });
+        ui.label(
+            RichText::new(
+                "Paste it into Claude Code, Codex, Warp or any agent that can run commands. It \
+                 tells the agent how to join this room, talk, and send files. Each agent needs \
+                 its own copy.",
+            )
+            .color(tc.on_surface_var)
+            .size(13.0),
+        );
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            let label = if copied {
+                "✓ Copied"
+            } else {
+                "📋 Copy prompt"
+            };
+            let width = fit_width(ui, ["✓ Copied", "📋 Copy prompt"].map(outline_text), 150.0);
+            let button = if state.for_agents {
+                primary_button(tc, label).fill(if copied { tc.secondary } else { tc.primary })
+            } else {
+                outline_button(tc, label, if copied { tc.secondary } else { tc.outline })
+            };
+            copy = ui.add_sized([width, 40.0], button).clicked();
+            let show = if state.prompt_open {
+                "▾ Hide prompt"
+            } else {
+                "▸ Show prompt"
+            };
+            toggle = ui
+                .add_sized(
+                    [0.0, 40.0],
+                    Button::new(RichText::new(show).size(14.0).color(tc.on_surface_var))
+                        .frame(false),
+                )
+                .clicked();
+        });
+        if state.prompt_open {
+            ui.add_space(6.0);
+            egui::Frame::new()
+                .fill(tc.bg)
+                .stroke(Stroke::new(1.0, tc.outline_var))
+                .corner_radius(tc.corner(8))
+                .inner_margin(egui::Margin::same(10))
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("agent_prompt")
+                        .max_height(240.0)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(prompt.as_str())
+                                        .monospace()
+                                        .size(12.0)
+                                        .color(tc.on_surface),
+                                )
+                                .wrap()
+                                .selectable(true),
+                            );
+                        });
+                });
+        }
+    });
+    if copy {
+        state.copy_for_agent(ui.ctx());
+    }
+    if toggle {
+        state.prompt_open = !state.prompt_open;
     }
 }
 
