@@ -2207,18 +2207,22 @@ fn file_attachment(ui: &mut Ui, tc: &Tc, name: &str, detail: &str, outgoing: boo
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                egui::Frame::new()
-                    .fill(tc.primary)
-                    .corner_radius(tc.corner(18))
-                    .inner_margin(egui::Margin::same(9))
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(if outgoing { "↑" } else { "↓" })
-                                .color(tc.on_primary)
-                                .strong()
-                                .size(17.0),
-                        );
-                    });
+                if tc.theme == Theme::Phosphor {
+                    direction_telltale(ui, tc, outgoing);
+                } else {
+                    egui::Frame::new()
+                        .fill(tc.primary)
+                        .corner_radius(tc.corner(18))
+                        .inner_margin(egui::Margin::same(9))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new(if outgoing { "↑" } else { "↓" })
+                                    .color(tc.on_primary)
+                                    .strong()
+                                    .size(17.0),
+                            );
+                        });
+                }
                 ui.vertical(|ui| {
                     ui.add(
                         egui::Label::new(
@@ -2240,6 +2244,53 @@ fn file_attachment(ui: &mut Ui, tc: &Tc, name: &str, detail: &str, outgoing: boo
         });
 }
 
+/// Phosphor's icons are a dashboard's warning lamps: bold solid symbols lit on a black
+/// housing, glowing in the dark. `draw` paints the symbol in `lit`, cutting details out in
+/// the housing color it is also given.
+fn telltale(
+    ui: &Ui,
+    tc: &Tc,
+    rect: egui::Rect,
+    draw: impl FnOnce(&egui::Painter, egui::Pos2, Color32, Color32),
+) {
+    let painter = ui.painter();
+    let housing = tc.surface_lowest;
+    painter.rect(
+        rect,
+        tc.corner(12),
+        housing,
+        Stroke::new(1.0, tc.outline_var),
+        egui::StrokeKind::Inside,
+    );
+    let center = rect.center();
+    if ui.visuals().dark_mode {
+        let radius = rect.width().min(rect.height()) * 0.42;
+        for (scale, alpha) in [(1.0, 0.06), (0.7, 0.08)] {
+            painter.circle_filled(center, radius * scale, tc.primary.gamma_multiply(alpha));
+        }
+    }
+    draw(painter, center, tc.primary, housing);
+}
+
+/// A transfer direction, as a solid lamp arrow.
+fn direction_telltale(ui: &mut Ui, tc: &Tc, outgoing: bool) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
+    telltale(ui, tc, rect, |painter, center, lit, _| {
+        let sign = if outgoing { -1.0 } else { 1.0 };
+        let at = |x: f32, y: f32| center + egui::vec2(x, sign * y);
+        painter.add(egui::Shape::convex_polygon(
+            vec![at(0.0, -10.0), at(9.0, -1.0), at(-9.0, -1.0)],
+            lit,
+            Stroke::NONE,
+        ));
+        painter.rect_filled(
+            egui::Rect::from_two_pos(at(-3.5, -2.0), at(3.5, 10.0)),
+            0.0,
+            lit,
+        );
+    });
+}
+
 #[derive(Clone, Copy)]
 enum HomeIcon {
     File,
@@ -2249,6 +2300,47 @@ enum HomeIcon {
 
 fn home_story_icon(ui: &mut Ui, tc: &Tc, icon: HomeIcon) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(48.0, 48.0), egui::Sense::hover());
+    if tc.theme == Theme::Phosphor {
+        telltale(ui, tc, rect, |painter, center, lit, cut| match icon {
+            HomeIcon::File => {
+                let corner = |x: f32, y: f32| center + egui::vec2(x, y);
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        corner(-10.0, -14.0),
+                        corner(4.0, -14.0),
+                        corner(10.0, -8.0),
+                        corner(10.0, 14.0),
+                        corner(-10.0, 14.0),
+                    ],
+                    lit,
+                    Stroke::NONE,
+                ));
+                for y in [-3.0, 3.0, 9.0] {
+                    painter.hline(
+                        center.x - 6.0..=center.x + 6.0,
+                        center.y + y,
+                        Stroke::new(2.5, cut),
+                    );
+                }
+            }
+            HomeIcon::Link => {
+                let stroke = Stroke::new(4.0, lit);
+                painter.circle_stroke(center + egui::vec2(-6.0, 5.0), 8.0, stroke);
+                painter.circle_stroke(center + egui::vec2(6.0, -5.0), 8.0, stroke);
+            }
+            HomeIcon::Device => {
+                let body = egui::Rect::from_center_size(center, egui::vec2(22.0, 30.0));
+                painter.rect_filled(body, 4.0, lit);
+                let screen = egui::Rect::from_center_size(
+                    center - egui::vec2(0.0, 2.0),
+                    egui::vec2(15.0, 19.0),
+                );
+                painter.rect_filled(screen, 1.0, cut);
+                painter.circle_filled(center + egui::vec2(0.0, 11.0), 2.0, cut);
+            }
+        });
+        return;
+    }
     let painter = ui.painter();
     painter.rect_filled(rect, tc.corner(12), tc.surface_high);
     let center = rect.center();
