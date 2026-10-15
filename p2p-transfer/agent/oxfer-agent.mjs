@@ -477,6 +477,17 @@ class Session {
         return outcome;
     }
 
+    /** Resolve once no room event has arrived for `quietMs`, or after `maxMs`. Used after a
+     *  join, so the replayed history is in `chat.items` before it is searched. */
+    async chatSettled(quietMs = 400, maxMs = 3000) {
+        const until = Date.now() + maxMs;
+        let seen = -1;
+        while (seen !== this.chat.items.length && Date.now() < until) {
+            seen = this.chat.items.length;
+            await sleep(quietMs);
+        }
+    }
+
     /** Post `text` to the room open in `page` and resolve once the host has relayed it back,
      *  so the message is really in the room before the caller moves on. Sends queue behind
      *  each other and keep under the host's limit of 30 messages per 10 s; the app's own
@@ -647,8 +658,13 @@ async function recv(link, outDir, options) {
             const joined = await session.joinChat(chatPage, link, options.name ?? "receiver-agent");
             chatYou = joined.you;
             session.say(`CHAT joined as ${chatYou}; members: ${joined.members.join(", ")}`);
-            const posted = await session.waitForChat(
-                e => e.type === "message" && e.from !== chatYou && findShareLink(e.text, link),
+            const isShare = e => e.type === "message" && e.from !== chatYou && findShareLink(e.text, link);
+            // The host replays recent messages, oldest first, right after accepting us. An
+            // older link may belong to a sender that already stopped, so let the replay
+            // settle and take the newest link in it before waiting for a live one.
+            await session.chatSettled();
+            const posted = session.chat.items.findLast(isShare) ?? await session.waitForChat(
+                isShare,
                 positiveNumber(options.wait ?? 600, "--wait") * 1000,
                 "a share link to be posted in the room (--wait seconds)",
             );

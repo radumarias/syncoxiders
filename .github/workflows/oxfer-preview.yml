@@ -64,9 +64,10 @@ jobs:
             exit 1
           fi
           case "$ALIAS" in
-            "" | *[!a-z0-9-]*) echo "alias must be lowercase letters, digits and dashes" >&2; exit 1 ;;
+            "" | [!a-z]* | *[!a-z0-9-]*) echo "alias must start with a lowercase letter and use only lowercase letters, digits and dashes" >&2; exit 1 ;;
           esac
-          if [ "${#ALIAS}" -gt 63 ]; then echo "alias must be at most 63 characters" >&2; exit 1; fi
+          # The preview host is <alias>-<worker>, one DNS label of at most 63 characters.
+          if [ "${#ALIAS}" -gt 57 ]; then echo "alias must be at most 57 characters" >&2; exit 1; fi
           npx cf workers versions create --prebuilt --preview-alias "$ALIAS" \
             --message "preview ${GITHUB_REF_NAME}@${GITHUB_SHA::7}"
 
