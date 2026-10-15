@@ -5174,9 +5174,11 @@ mod tests {
         assert_eq!(restored.save_directory, app.save_directory);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[derive(Debug)]
     struct TestDrop(std::path::PathBuf);
 
+    #[cfg(not(target_arch = "wasm32"))]
     impl egui::DroppedFile for TestDrop {
         fn path(&self) -> &std::path::Path {
             &self.0
@@ -5188,6 +5190,7 @@ mod tests {
     }
 
     /// A dropped file queues exactly like a picked one; a dropped folder is refused by name.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn local_test_dropped_files_queue_like_picks() {
         let dir = std::env::temp_dir().join(format!("oxfer-drop-{}", std::process::id()));
