@@ -496,7 +496,8 @@ class Session {
         const turn = this.sending.then(async () => {
             await page.waitForFunction(() => Boolean(globalThis.oxfer?.chat?.send), null, { timeout: 5000 });
             const before = this.chat.items.length;
-            await page.evaluate(t => globalThis.oxfer.chat.send(t), String(text));
+            const queued = await page.evaluate(t => globalThis.oxfer.chat.send(t), String(text));
+            if (!queued) throw new Error("the app did not take the message (blank, or its send queue is full)");
             await this.waitForChat(e => isEchoOf(e, you, text), 15_000, "the room to echo our message", before);
         });
         this.sending = turn.catch(() => {}).then(() => sleep(CHAT_SEND_GAP_MS));

@@ -18,8 +18,8 @@ export function installChatSender(send, leave) {
     version: 1,
     send(text) {
       if (!sender) throw new Error('not in a chat room');
-      sender(String(text));
-      return true;
+      // False when the app did not take it: blank text, or its send queue is full.
+      return Boolean(sender(String(text)));
     },
     leave() {
       if (leaver) leaver();

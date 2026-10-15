@@ -67,7 +67,8 @@ as).
 The UI is still a canvas, so the page exposes the room to scripts through
 `assets/chat-bridge.js`: every event is dispatched as a DOM `oxfer:chat` event
 (`{type: ready|connected|message|joined|left|failed|closed, …}`) and
-`window.oxfer.chat.send(text)` posts a message. The agent script's `chat` mode
+`window.oxfer.chat.send(text)` posts a message (it returns false when the app
+did not take it: blank text, or a full send queue). The agent script's `chat` mode
 listens to the events and prints them as JSON lines; `send --chat` posts the
 share link into the room once the file is ready; `recv <room-link>` waits for a
 share link to appear in the room and then receives it. So two agents that were

@@ -655,20 +655,21 @@ impl ChatState {
 }
 
 /// Queue `text` for the room, from the input box or a page script.
-fn queue_say(commands: &mpsc::Sender<ChatCommand>, text: &str) {
+/// Queue `text` for the room; false when it is blank or the queue is full. A full queue
+/// means the session is already 16 messages behind; dropping a line beats blocking the frame.
+fn queue_say(commands: &mpsc::Sender<ChatCommand>, text: &str) -> bool {
     let text = text.trim();
-    if !text.is_empty() {
-        // A full queue means the session is already behind by 16 messages; dropping one
-        // line is better than blocking the frame.
-        let _ = commands.try_send(ChatCommand::Say(text.to_string()));
-    }
+    !text.is_empty()
+        && commands
+            .try_send(ChatCommand::Say(text.to_string()))
+            .is_ok()
 }
 
 /// Page-script access to the open room (`assets/chat-bridge.js`): events go out as DOM
 /// events, and `window.oxfer.chat.send` queues text straight onto the session's commands.
 #[cfg(target_arch = "wasm32")]
 struct ChatBridge {
-    _send: wasm_bindgen::closure::Closure<dyn FnMut(String)>,
+    _send: wasm_bindgen::closure::Closure<dyn FnMut(String) -> bool>,
     _leave: wasm_bindgen::closure::Closure<dyn FnMut()>,
 }
 
@@ -4395,20 +4396,20 @@ impl P2PTransfer {
 /// for it, gives it a task, and shows a foreground command that needs no checkout: a
 /// long-lived background process fed through a pipe is what permission checks refuse.
 fn agent_prompt(link: &str) -> String {
-    // The app's address without its query or fragment, so a sub-path deployment still
-    // works; everything that reaches a shell is single-quoted, since a path or query can
-    // carry shell syntax.
-    let base = url::Url::parse(link)
+    // The script and llms.txt sit next to the app page, so resolve them against it (a
+    // sub-path deployment keeps working). Everything that reaches a shell is single-quoted,
+    // since a path or query can carry shell syntax.
+    let page = url::Url::parse(link)
         .ok()
-        .filter(|url| matches!(url.scheme(), "http" | "https"))
-        .map(|mut url| {
-            url.set_query(None);
-            url.set_fragment(None);
-            url.as_str().trim_end_matches('/').to_string()
-        })
-        .unwrap_or_else(|| "https://oxfer.app".to_string());
+        .filter(|url| matches!(url.scheme(), "http" | "https"));
+    let asset = |name: &str| {
+        page.as_ref()
+            .and_then(|page| page.join(name).ok())
+            .map_or_else(|| format!("https://oxfer.app/{name}"), String::from)
+    };
     let quote = |text: &str| format!("'{}'", text.replace('\'', "'\\''"));
-    let script = quote(&format!("{base}/oxfer-agent.mjs"));
+    let script = quote(&asset("oxfer-agent.mjs"));
+    let llms = asset("llms.txt");
     let link = quote(link);
     format!(
         "Join this Oxfer chat room as my agent: say hello, then do what the people in the \
@@ -4431,7 +4432,7 @@ fn agent_prompt(link: &str) -> String {
          and leaves:\n\
          \x20 node oxfer-agent.mjs chat {link} --name <your name> --say '<message>' --until . --wait 300\n\
          \n\
-         Files, and everything else: {base}/llms.txt\n"
+         Files, and everything else: {llms}\n"
     )
 }
 
@@ -4878,9 +4879,17 @@ mod tests {
     fn local_test_agent_prompt_keeps_shell_syntax_out_of_its_commands() {
         let link = "https://oxfer.app/it's?q=$(id)#chat&endpointabc&cap=00ff&agent";
         let prompt = agent_prompt(link);
-        assert!(prompt.contains("curl -fsSLO 'https://oxfer.app/it'\\''s/oxfer-agent.mjs' &&"));
+        assert!(prompt.contains("curl -fsSLO 'https://oxfer.app/oxfer-agent.mjs' &&"));
         assert!(prompt.contains("chat 'https://oxfer.app/it'\\''s?q=$(id)#chat"));
         assert!(!prompt.contains("chat https://"));
+    }
+
+    #[test]
+    fn local_test_agent_prompt_finds_its_files_next_to_a_sub_path_page() {
+        let prompt =
+            agent_prompt("https://example.dev/preview/index.html#chat&endpointabc&cap=00ff");
+        assert!(prompt.contains("curl -fsSLO 'https://example.dev/preview/oxfer-agent.mjs' &&"));
+        assert!(prompt.contains("everything else: https://example.dev/preview/llms.txt"));
     }
 
     #[test]
