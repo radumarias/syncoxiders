@@ -82,9 +82,6 @@ pub enum ChatEvent {
 #[derive(Debug)]
 pub enum ChatCommand {
     Say(String),
-    /// End this side's session now: a guest leaves, a host closes the room. Dropping the
-    /// handle does the same, but a page that is about to close cannot wait for a drop.
-    Leave,
 }
 
 /// Called after every event is queued, so a UI without its own callback (egui) can repaint
@@ -168,6 +165,12 @@ impl ChatHandle {
             cancel,
             _task: task,
         }
+    }
+
+    /// A token that ends this session when cancelled, as dropping the handle does: a guest
+    /// leaves, a host closes the room. For a page about to close, which can't wait for a drop.
+    pub fn leave_token(&self) -> CancellationToken {
+        self.cancel.clone()
     }
 
     /// Everything the session has reported since the last call, without blocking.
@@ -503,7 +506,7 @@ async fn run_host(
             _ = cancel.cancelled() => break,
             command = commands.recv() => match command {
                 Some(ChatCommand::Say(text)) => room.say(&host, &text),
-                Some(ChatCommand::Leave) | None => break,
+                None => break,
             },
         }
     }
@@ -584,7 +587,7 @@ async fn guest_session(
                         break Err(NodeError::Connect(error.to_string()));
                     }
                 }
-                Some(ChatCommand::Leave) | None => break Ok(()),
+                None => break Ok(()),
             },
             frame = rx.recv() => match frame {
                 Ok(Some(frame)) => match decode_chat(&frame) {

@@ -674,23 +674,12 @@ struct ChatBridge {
 
 #[cfg(target_arch = "wasm32")]
 impl ChatBridge {
-    fn install(commands: mpsc::Sender<ChatCommand>) -> Self {
-        let send = wasm_bindgen::closure::Closure::new({
-            let commands = commands.clone();
-            move |text: String| queue_say(&commands, &text)
-        });
-        let leave = wasm_bindgen::closure::Closure::new(move || {
-            // Unlike a message, a leave must not be dropped when the queue is full: then
-            // the member would stay listed until the connection times out.
-            if let Err(mpsc::error::TrySendError::Full(leave)) =
-                commands.try_send(ChatCommand::Leave)
-            {
-                let commands = commands.clone();
-                wasm_bindgen_futures::spawn_local(async move {
-                    let _ = commands.send(leave).await;
-                });
-            }
-        });
+    fn install(handle: &ChatHandle) -> Self {
+        let commands = handle.commands.clone();
+        let send =
+            wasm_bindgen::closure::Closure::new(move |text: String| queue_say(&commands, &text));
+        let leave_token = handle.leave_token();
+        let leave = wasm_bindgen::closure::Closure::new(move || leave_token.cancel());
         install_chat_sender(send.as_ref(), leave.as_ref());
         Self {
             _send: send,
@@ -2260,9 +2249,10 @@ const fn copy_label(copied: bool) -> &'static str {
     }
 }
 
-fn copy_button(tc: &Tc, copied: bool) -> Button<'static> {
+/// A primary button that turns the secondary colour once its text was copied.
+fn copy_button(tc: &Tc, label: &str, copied: bool) -> Button<'static> {
     let color = if copied { tc.secondary } else { tc.primary };
-    primary_button(tc, copy_label(copied))
+    primary_button(tc, label)
         .fill(color)
         .stroke(Stroke::new(1.0, color))
 }
@@ -3000,7 +2990,10 @@ impl P2PTransfer {
                     if compact {
                         let width = ui.available_width();
                         if ui
-                            .add_sized([width, 48.0], copy_button(&tc, self.link_copied))
+                            .add_sized(
+                                [width, 48.0],
+                                copy_button(&tc, copy_label(self.link_copied), self.link_copied),
+                            )
                             .clicked()
                         {
                             #[cfg(target_arch = "wasm32")]
@@ -3030,7 +3023,14 @@ impl P2PTransfer {
                             let row_width = copy_width + stop_width + ui.spacing().item_spacing.x;
                             ui.add_space(((ui.available_width() - row_width) / 2.0).max(0.0));
                             if ui
-                                .add_sized([copy_width, 48.0], copy_button(&tc, self.link_copied))
+                                .add_sized(
+                                    [copy_width, 48.0],
+                                    copy_button(
+                                        &tc,
+                                        copy_label(self.link_copied),
+                                        self.link_copied,
+                                    ),
+                                )
                                 .clicked()
                             {
                                 #[cfg(target_arch = "wasm32")]
@@ -4101,10 +4101,7 @@ impl P2PTransfer {
         // a script's `send` throws instead of vanishing.
         #[cfg(target_arch = "wasm32")]
         {
-            state.bridge = state
-                .handle
-                .as_ref()
-                .map(|handle| ChatBridge::install(handle.commands.clone()));
+            state.bridge = state.handle.as_ref().map(ChatBridge::install);
         }
         self.mode = Mode::Chat(Box::new(state));
     }
@@ -4136,7 +4133,7 @@ impl P2PTransfer {
             ui.add_space(6.0);
             match &mut self.mode {
                 Mode::Chat(state) if state.links.is_some() => {
-                    if ui.button(agent_copy_label(false)).clicked() {
+                    if ui.button("Copy for agent").clicked() {
                         state.copy_for_agent(ui.ctx());
                         ui.close();
                     }
@@ -4223,10 +4220,10 @@ impl P2PTransfer {
                     200.0,
                 );
                 if ui
-                    .add_sized(
-                        [copy_width, 44.0],
-                        copy_button(&tc, state.copied == Some(Copied::Link)),
-                    )
+                    .add_sized([copy_width, 44.0], {
+                        let copied = state.copied == Some(Copied::Link);
+                        copy_button(&tc, copy_label(copied), copied)
+                    })
                     .clicked()
                 {
                     ui.ctx().copy_text(link.clone());
@@ -4290,7 +4287,12 @@ impl P2PTransfer {
                                     RichText::new(format!("{from}  "))
                                         .strong()
                                         .size(15.0)
-                                        .color(member_color(&tc, from, Some(from.as_str()) == you))
+                                        .color(member_color(
+                                            &tc,
+                                            ui.visuals().dark_mode,
+                                            from,
+                                            Some(from.as_str()) == you,
+                                        ))
                                         .append_to(
                                             &mut job,
                                             &style,
@@ -4433,18 +4435,10 @@ fn agent_prompt(link: &str) -> String {
     )
 }
 
-const fn agent_copy_label(copied: bool) -> &'static str {
-    if copied {
-        "Copied for agent"
-    } else {
-        "Copy for agent"
-    }
-}
-
 /// Names the transcript and roster draw in, so a speaker is easy to pick out. You are the
 /// theme's primary colour; everyone else gets a hue of their own from their name. Phosphor
 /// is one phosphor colour by design, so its members differ in brightness instead.
-fn member_color(tc: &Tc, name: &str, you: bool) -> Color32 {
+fn member_color(tc: &Tc, dark: bool, name: &str, you: bool) -> Color32 {
     if you {
         return tc.primary;
     }
@@ -4474,14 +4468,13 @@ fn member_color(tc: &Tc, name: &str, you: bool) -> Color32 {
         let shades = [tc.secondary, tc.on_surface, tc.on_surface_var];
         return shades[hash as usize % shades.len()];
     }
-    let dark = u16::from(tc.bg.r()) + u16::from(tc.bg.g()) + u16::from(tc.bg.b()) < 384;
     let palette = if dark { DARK } else { LIGHT };
     palette[hash as usize % palette.len()]
 }
 
 /// One member in the "In the room" roster: their name in their colour, in a small pill.
 fn member_chip(ui: &mut Ui, tc: &Tc, name: &str, you: bool) {
-    let color = member_color(tc, name, you);
+    let color = member_color(tc, ui.visuals().dark_mode, name, you);
     egui::Frame::new()
         .fill(color.gamma_multiply(0.12))
         .stroke(Stroke::new(1.0, color.gamma_multiply(0.6)))
@@ -4527,14 +4520,11 @@ fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
         );
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
-            let label = if copied {
-                "✔ Copied"
-            } else {
-                "📋 Copy prompt"
-            };
-            let width = fit_width(ui, ["✔ Copied", "📋 Copy prompt"].map(primary_text), 150.0);
+            const LABELS: [&str; 2] = ["📋 Copy prompt", "✔ Copied"];
+            let label = LABELS[usize::from(copied)];
+            let width = fit_width(ui, LABELS.map(primary_text), 150.0);
             let button = if state.for_agents {
-                primary_button(tc, label).fill(if copied { tc.secondary } else { tc.primary })
+                copy_button(tc, label, copied)
             } else {
                 outline_button(tc, label, if copied { tc.secondary } else { tc.outline })
             };
