@@ -978,11 +978,26 @@ impl P2PTransfer {
         let Some(path) = rfd::FileDialog::new().pick_file() else {
             return;
         };
+        self.queue_path(path);
+    }
+
+    /// Queue a file from the picker or a drop: both reach hashing through this one path.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn queue_path(&mut self, path: std::path::PathBuf) {
         let name = path
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
+        // The picker only returns files; a drop can carry a folder, which the protocol has no
+        // way to send.
+        if path.is_dir() {
+            Self::report(
+                &self.node_error,
+                format!("{name} is a folder: drop or choose the files inside it"),
+            );
+            return;
+        }
         // The snapshot is taken *before* hashing, so `open_source` can tell later whether the
         // bytes still match the hash the manifest advertises.
         match file_io::snapshot_path(&path) {
@@ -1037,17 +1052,7 @@ impl P2PTransfer {
             // A file-picker change is still a user action on WebKit. Try the
             // first screen wake lock here, before async hashing/binding.
             set_transfer_wake_lock(true);
-            // `File` freezes name, size and mtime at pick time, so this snapshot is the
-            // one the browser will still report later.
-            let snapshot = file_io::snapshot_web(&file);
-            let name = file.name();
-            if let Ok(mut picks) = picks.lock() {
-                picks.push(PendingPick {
-                    name,
-                    origin: FileOrigin::Web(send_wrapper::SendWrapper::new(file)),
-                    snapshot,
-                });
-            }
+            Self::queue_web_file(&picks, file);
             repaint.request_repaint();
         })
             as Box<dyn FnMut(web_sys::Event)>);
@@ -1056,6 +1061,79 @@ impl P2PTransfer {
         input.click();
         // Keep the closure alive for as long as the input can fire it.
         self.file_input_closure = Some(closure);
+    }
+
+    /// Queue a browser file from the picker or a drop: both reach hashing through this one path.
+    #[cfg(target_arch = "wasm32")]
+    fn queue_web_file(picks: &Mutex<Vec<PendingPick>>, file: web_sys::File) {
+        // `File` freezes name, size and mtime at pick time, so this snapshot is the
+        // one the browser will still report later.
+        let snapshot = file_io::snapshot_web(&file);
+        let name = file.name();
+        if let Ok(mut picks) = picks.lock() {
+            picks.push(PendingPick {
+                name,
+                origin: FileOrigin::Web(send_wrapper::SendWrapper::new(file)),
+                snapshot,
+            });
+        }
+    }
+
+    /// Queue files dropped on the window, as if each had been picked.
+    fn accept_dropped_files(&mut self, ctx: &egui::Context) {
+        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+        if dropped.is_empty() || !self.accepts_file_drop() {
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        for file in dropped {
+            self.queue_path(file.path().to_path_buf());
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            // eframe hands over the `File` itself and reads no bytes unless asked to.
+            let files: Vec<web_sys::File> = dropped
+                .iter()
+                .filter_map(|file| file.web_file().cloned())
+                .collect();
+            if files.is_empty() {
+                return;
+            }
+            set_transfer_wake_lock(true);
+            let picks = self.pending_picks.clone();
+            let errors = self.node_error.clone();
+            let repaint = self.repaint.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                // A dropped folder arrives as a `File` that cannot be read, which the picker
+                // never returns. Reading its first byte tells the two apart before hashing.
+                for file in files {
+                    let readable = match file.slice_with_f64_and_f64(0.0, 1.0) {
+                        Ok(head) => wasm_bindgen_futures::JsFuture::from(head.array_buffer())
+                            .await
+                            .is_ok(),
+                        Err(_) => false,
+                    };
+                    if readable {
+                        Self::queue_web_file(&picks, file);
+                    } else {
+                        Self::report(
+                            &errors,
+                            format!(
+                                "{} is a folder or cannot be read: drop or choose the files \
+                                 inside it",
+                                file.name()
+                            ),
+                        );
+                    }
+                }
+                repaint.request_repaint();
+            });
+        }
+    }
+
+    /// Drops are taken wherever the header offers "Choose File" (or Home offers "Send files").
+    fn accepts_file_drop(&self) -> bool {
+        !matches!(self.mode, Mode::Receive(_) | Mode::Chat(_))
     }
 
     /// Hash a picked file, then publish it as a `SharedFile`.
@@ -4683,6 +4761,7 @@ impl eframe::App for P2PTransfer {
         #[cfg(target_arch = "wasm32")]
         self.check_fragment_change();
 
+        self.accept_dropped_files(ctx);
         self.drain_picks();
         self.prune_preparing();
         self.adopt_pending_handle();
@@ -4831,7 +4910,52 @@ impl eframe::App for P2PTransfer {
             });
         keep_text_agent_on_screen(ctx);
         paint_press_feedback(ctx, &tc);
+        if self.accepts_file_drop() {
+            paint_drop_target(ctx, &tc);
+        }
     }
+}
+
+/// While files are dragged over the window, cover it with a target that says a drop sends them.
+fn paint_drop_target(ctx: &egui::Context, tc: &Tc) {
+    if ctx.input(|i| i.raw.hovered_files.is_empty()) {
+        return;
+    }
+    let screen = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("file_drop_target"),
+    ));
+    painter.rect_filled(screen, 0.0, tc.bg.gamma_multiply(0.85));
+    let target = screen.shrink(16.0);
+    let border = egui::Shape::dashed_line(
+        &[
+            target.left_top(),
+            target.right_top(),
+            target.right_bottom(),
+            target.left_bottom(),
+            target.left_top(),
+        ],
+        Stroke::new(2.0, tc.primary),
+        10.0,
+        6.0,
+    );
+    painter.extend(border);
+    // On a card of its own, so the faded page behind cannot run through the words.
+    let label = painter.layout_no_wrap(
+        "Drop files to send".to_string(),
+        egui::FontId::proportional(24.0),
+        tc.on_surface,
+    );
+    let card = egui::Rect::from_center_size(target.center(), label.size() + egui::vec2(48.0, 28.0));
+    painter.rect(
+        card,
+        tc.corner(12),
+        tc.surface,
+        Stroke::new(1.0, tc.primary),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(card.center() - label.size() / 2.0, label, tc.on_surface);
 }
 
 /// How long a clicked button keeps a fading tint after the pointer lets go.
@@ -5048,6 +5172,70 @@ mod tests {
         let restored: P2PTransfer = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
         assert_eq!(restored.theme, Theme::Rusty);
         assert_eq!(restored.save_directory, app.save_directory);
+    }
+
+    #[derive(Debug)]
+    struct TestDrop(std::path::PathBuf);
+
+    impl egui::DroppedFile for TestDrop {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            std::fs::read(&self.0).map_err(|e| e.to_string())
+        }
+    }
+
+    /// A dropped file queues exactly like a picked one; a dropped folder is refused by name.
+    #[test]
+    fn local_test_dropped_files_queue_like_picks() {
+        let dir = std::env::temp_dir().join(format!("oxfer-drop-{}", std::process::id()));
+        let folder = dir.join("photos");
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, b"hello").unwrap();
+        let drops = || egui::RawInput {
+            dropped_files: vec![
+                Arc::new(TestDrop(file.clone())) as egui::DroppedFileHandle,
+                Arc::new(TestDrop(folder.clone())),
+            ],
+            ..Default::default()
+        };
+
+        let ctx = egui::Context::default();
+        let mut app = P2PTransfer::default();
+        ctx.run_ui(drops(), |ui| app.accept_dropped_files(ui.ctx()))
+            .drop_without_applying_deltas();
+        {
+            let picks = app.pending_picks.lock().unwrap();
+            assert_eq!(picks.len(), 1);
+            assert_eq!(picks[0].name, "notes.txt");
+            assert_eq!(picks[0].snapshot.size, 5);
+            assert!(matches!(&picks[0].origin, FileOrigin::Path(p) if *p == file));
+        }
+        let error = app.node_error.lock().unwrap().clone().unwrap();
+        assert!(error.contains("photos is a folder"), "{error}");
+
+        // Receive has no picker, so it takes no drops either.
+        let mut app = P2PTransfer {
+            mode: Mode::Receive(Box::new(ReceiveState {
+                input: String::new(),
+                params: FragmentParams::default(),
+                handle: None,
+                error: None,
+                opening: false,
+                startup: Arc::default(),
+                save_pending: Arc::new(AtomicBool::new(false)),
+            })),
+            ..P2PTransfer::default()
+        };
+        ctx.run_ui(drops(), |ui| app.accept_dropped_files(ui.ctx()))
+            .drop_without_applying_deltas();
+        assert!(app.pending_picks.lock().unwrap().is_empty());
+        assert!(app.node_error.lock().unwrap().is_none());
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
