@@ -1,8 +1,21 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
-import { awaitDownloads, classifyLink, findPrimaryButton, parseArgs, positiveNumber, PRIMARY_BLUE } from "../agent/oxfer-agent.mjs";
+import {
+    awaitDownloads,
+    classifyLink,
+    cleanChatText,
+    findPrimaryButton,
+    findShareLink,
+    parseArgs,
+    positiveNumber,
+    post,
+    withChatName,
+    PRIMARY_BLUE,
+} from "../agent/oxfer-agent.mjs";
 
 const read = path => readFile(new URL(path, import.meta.url), "utf8");
 const share = "https://oxfer.app/#endpointadgxn5zl2zfsyzz7clou244grpcaza4t4e62rxsl3agmhvdmo4c7gaiaejuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zp&cap=b12d9525bb44971d1375bf8f2bcf4e9e";
@@ -18,6 +31,34 @@ test("classifyLink tells the home page, share links and diagnostics apart", () =
     assert.equal(classifyLink(share.replace("&cap=b12d9525bb44971d1375bf8f2bcf4e9e", "")), "invalid", "a link without its access code");
     assert.equal(classifyLink("https://oxfer.app/?cap=b12d9525bb44971d1375bf8f2bcf4e9e"), "invalid", "the capability must stay in the fragment");
     assert.equal(classifyLink("not a url"), "invalid");
+    const room = share.replace("/#", "/#chat&");
+    assert.equal(classifyLink(room), "chat");
+    assert.equal(classifyLink(`${room}&agent`), "chat");
+    assert.equal(classifyLink(`${room}&name=agent1`), "chat");
+});
+
+test("share links are found inside chat text and names are appended safely", () => {
+    assert.equal(findShareLink(`Sharing a.bin (97 bytes). Open this link to receive it: ${share}`), share);
+    assert.equal(findShareLink(`here: ${share}.`), share, "trailing punctuation is not part of the link");
+    assert.equal(findShareLink("no link here https://oxfer.app/"), null);
+    assert.equal(findShareLink(`room ${share.replace("/#", "/#chat&")}`), null, "a room link is not a share link");
+    assert.equal(withChatName("https://oxfer.app/#chat&x&cap=y", "agent-1"), "https://oxfer.app/#chat&x&cap=y&name=agent-1");
+    assert.equal(withChatName("https://oxfer.app/#chat&x&cap=y", "no spaces"), "https://oxfer.app/#chat&x&cap=y");
+});
+
+test("a room only hands the receiver share links on its own origin", () => {
+    const room = "https://oxfer.app/#chat&x&cap=y";
+    const elsewhere = share.replace("https://oxfer.app/", "https://evil.example/");
+    assert.equal(findShareLink(`take ${share}`, room), share);
+    assert.equal(findShareLink(`take ${elsewhere}`, room), null, "another site is never opened");
+    assert.equal(findShareLink(`take ${elsewhere} or ${share}`, room), share);
+});
+
+test("cleanChatText matches what the host relays", () => {
+    assert.equal(cleanChatText("  hi\u0000there \n"), "hithere");
+    assert.equal(cleanChatText("a\tb\nc"), "a\tb\nc");
+    assert.equal(cleanChatText("é".repeat(3000)).length, 2048, "cut to 4096 UTF-8 bytes on a character boundary");
+    assert.equal(cleanChatText("a\uD800b"), "a\uFFFDb", "a lone surrogate arrives as U+FFFD");
 });
 
 test("parseArgs separates positionals, flags and values", () => {
@@ -73,6 +114,13 @@ test("the site tells HTTP-only clients how to drive it", async () => {
     assert.match(llms, /oxfer-agent\.mjs send/);
     assert.match(llms, /oxfer-agent\.mjs recv/);
     assert.match(llms, /#endpoint…&cap=…/);
+    assert.match(llms, /#chat&endpoint…&cap=…/);
+    assert.match(llms, /oxfer-agent\.mjs chat/);
+    assert.match(llms, /send .* --chat/);
+    assert.match(html, /<noscript>[\s\S]*#chat&amp;[\s\S]*<\/noscript>/);
+    const bridge = await read("../assets/chat-bridge.js");
+    assert.match(bridge, /oxfer:chat/);
+    assert.match(bridge, /export function installChatSender/);
     assert.doesNotMatch(llms, /cap=[0-9a-f]{32}/, "never publish a real capability");
 });
 
@@ -87,4 +135,36 @@ test("awaitDownloads resolves when downloads finish and fails on a stall or a cl
     await assert.rejects(awaitDownloads([never], { ...quick, bytesSoFar: () => 7 }), /no progress for 0.05s/);
     await assert.rejects(awaitDownloads([never], { ...quick, isGone: () => true, bytesSoFar: null }), /closed or crashed/);
     await assert.rejects(awaitDownloads([Promise.reject(new Error("canceled"))], { ...quick, bytesSoFar: null }), /canceled/);
+});
+
+test("post takes turns against a room kept open by chat --dir", async t => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "oxfer-post-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const event = e => appendFile(path.join(dir, "events.jsonl"), `${JSON.stringify(e)}\n`);
+    const quiet = t.mock.method(process.stdout, "write", () => true);
+    await writeFile(path.join(dir, "pid"), String(process.pid));
+    await writeFile(path.join(dir, "you"), "bot");
+    await event({ type: "connected", you: "bot", members: ["Host", "bot"] });
+    await event({ type: "message", from: "Host", text: "send me the report" });
+
+    // A message the agent has not seen yet ends the turn at once.
+    assert.equal(await post(dir, {}, { pollMs: 10 }), 0);
+    // Seen now: a turn with nothing new times out.
+    assert.equal(await post(dir, { wait: "0.05" }, { pollMs: 10 }), 4);
+
+    // --say is queued for the background process; only a later message is the reply.
+    const turn = post(dir, { say: "on it", wait: "5" }, { pollMs: 10 });
+    await new Promise(r => setTimeout(r, 50));
+    assert.match(await readFile(path.join(dir, "outbox.jsonl"), "utf8"), /"text":"on it"/);
+    await event({ type: "message", from: "bot", text: "on it" });
+    await event({ type: "message", from: "Host", text: "thanks" });
+    assert.equal(await turn, 0);
+
+    await writeFile(path.join(dir, "pid"), "0");
+    assert.equal(await post(dir, { wait: "1" }, { pollMs: 10 }), 2);
+
+    // Leaving deletes the room mirror, which can hold links other members posted.
+    assert.equal(await post(dir, { leave: true }), 0);
+    assert.deepEqual(await readdir(dir), []);
+    quiet.mock.restore();
 });

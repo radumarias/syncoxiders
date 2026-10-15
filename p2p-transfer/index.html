@@ -3,7 +3,7 @@
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="description" content="Oxfer sends files directly between two browsers, encrypted, with no cloud copy. This page is an app shell drawn by WebAssembly. A link with a #endpoint…&amp;cap=… fragment is a share link to receive from; the bare origin is where sending starts. Automation: /llms.txt">
+<meta name="description" content="Oxfer sends files directly between two browsers, encrypted, with no cloud copy. This page is an app shell drawn by WebAssembly. A link with a #endpoint…&amp;cap=… fragment is a share link to receive from; one with #chat&amp;… is a chat room to join; the bare origin is where sending starts. Automation: /llms.txt">
 
 <head>
     <title>Oxfer</title>
@@ -12,6 +12,8 @@
     <base data-trunk-public-url />
 
     <link data-trunk rel="copy-file" href="theme.html">
+    <link data-trunk rel="copy-file" href="agents-demo.html">
+    <link data-trunk rel="copy-dir" href="assets/demo" data-target-path="assets/demo">
     <link data-trunk rel="copy-file" href="assets/oxfer-favicon-light.svg" data-target-path="assets">
     <link data-trunk rel="copy-file" href="assets/oxfer-favicon-dark.svg" data-target-path="assets">
     <link data-trunk rel="copy-file" href="assets/favicon.js" data-target-path="assets">
@@ -23,6 +25,8 @@
         href="assets/oxfer-favicon-light.svg"
         data-light="assets/oxfer-favicon-light.svg" data-dark="assets/oxfer-favicon-dark.svg">
     <script defer src="assets/favicon.js"></script>
+    <link data-trunk rel="copy-file" href="assets/keyboard-focus.js" data-target-path="assets">
+    <script src="assets/keyboard-focus.js"></script>
 
 
     <link data-trunk rel="copy-file" href="assets/sw.js"/>
@@ -151,7 +155,7 @@
     <canvas id="the_canvas_id"></canvas>
     <noscript>
         <p>Oxfer needs JavaScript and WebAssembly. It sends files directly from one browser to another, encrypted, with no copy on a server.</p>
-        <p>Automated clients: this page is only an app shell, and the part of a link after <code>#</code> never reaches the server. A link with a <code>#endpoint…&amp;cap=…</code> fragment is a share link to receive from; <code>https://oxfer.app/</code> alone is where sending starts. Read <a href="/llms.txt">/llms.txt</a> for the scripted sender and receiver (<a href="/oxfer-agent.mjs">/oxfer-agent.mjs</a>).</p>
+        <p>Automated clients: this page is only an app shell, and the part of a link after <code>#</code> never reaches the server. A link with a <code>#endpoint…&amp;cap=…</code> fragment is a share link to receive from; one starting <code>#chat&amp;</code> is a chat room to join and talk in; <code>https://oxfer.app/</code> alone is where sending starts. Read <a href="/llms.txt">/llms.txt</a> for the scripted sender and receiver (<a href="/oxfer-agent.mjs">/oxfer-agent.mjs</a>).</p>
     </noscript>
     <div class="centered" id="loading_text">
         <img class="brand-logo brand-logo-light" src="assets/oxfer-wordmark-light.svg" alt="Oxfer" width="256" height="40">

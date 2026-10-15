@@ -6,7 +6,7 @@ import vm from "node:vm";
 const read = path => readFile(new URL(path, import.meta.url), "utf8");
 const source = await read("../assets/favicon.js");
 
-for (const page of ["index.html", "theme.html"]) {
+for (const page of ["index.html", "theme.html", "agents-demo.html"]) {
     test(`${page} advertises only the theme-aware tab icon`, async () => {
         const html = await read(`../${page}`);
         const icons = [...html.matchAll(/<link\b[^>]*>/g)]

@@ -2,6 +2,7 @@
 
 mod app;
 pub mod blob_store;
+pub mod chat;
 #[cfg(target_arch = "wasm32")]
 mod diagnostics;
 pub mod file_io;

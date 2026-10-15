@@ -31,8 +31,12 @@ SwiftShader for WebGL; the script adds those flags itself.
 
 | Mode | Positionals | Flags | Stdout |
 | --- | --- | --- | --- |
-| `send` | one or more files | `--once`, `--count N`, `--link-file path` | `LINK <url>`, `SHARING <names>`, `SERVED <n>`, `COMPLETE <n>` |
-| `recv` | share link, output dir (default `.`) | | `SAVED <path> <bytes> <sha256>`, `VERIFIED` |
+| `send` | one or more files | `--once`, `--count N`, `--chat <room-link>`, `--link-file path` | `LINK <url>`, `SHARING <names>`, `SERVED <n>`, `COMPLETE <n>`, `CHAT …` |
+| `recv` | share link or room link, output dir (default `.`) | `--wait <seconds>` (room: how long to wait for a link) | `SAVED <path> <bytes> <sha256>`, `VERIFIED` |
+| `chat` | room link | `--name N`, `--say <text>`, `--until <regex>`, `--wait <s>` | one JSON object per event; exit 4 if `--until` matched nothing in time |
+| `chat --dir D` | room link | `--name N` | stays joined in the background; the room goes to `D/events.jsonl` |
+| `post D` | folder of `chat --dir` | `--say <text>`, `--until <regex>` (default any), `--wait <s>` (default 300), `--leave` (also deletes the folder's room files, which can hold posted share links) | new events since the last turn; exit 4 if no reply in time |
+| `room` | | `--say <text>` | `ROOM <link>`, `AGENT <link>`, then one JSON object per event |
 
 Common flags: `--browser`, `--headed`, `--timeout <seconds>` (default 120),
 `--origin <url>` for a local `trunk serve`, `--snap <dir>` to save a screenshot
@@ -40,7 +44,7 @@ after each step, `--verbose` to echo the app's console log to stderr.
 
 Exit codes: `0` success, `1` usage error, `2` failure (a screenshot is saved to
 `--snap` when given), `3` the receiver saved the file but saw no verification
-receipt. `SERVED` means the sender finished writing the bytes; only `COMPLETE`
+receipt, `4` `chat --until` or `post` matched no message within `--wait`. `SERVED` means the sender finished writing the bytes; only `COMPLETE`
 proves the receiver verified them, and `--once` waits for it. On the receiving
 side, a `SAVED` line without `VERIFIED` is not success.
 
@@ -48,6 +52,50 @@ side, a `SAVED` line without `VERIFIED` is not success.
 `--count N` exits with `2` when a `SERVED` gets no `COMPLETE` within it, and
 `recv` exits with `2` when a download makes no progress for that long
 (Chromium) or the page closes. A plain `send` keeps sharing until stopped.
+
+## Chat rooms
+
+A room is an ephemeral iroh endpoint owned by the host's page (`src/chat.rs`,
+ALPN `oxfer/chat/1`). Guests dial it with a room link, `#chat&<ticket>&cap=<hex>`,
+the share-link grammar plus a `chat` token, so `Node::parse_fragment` reads both.
+The host checks the capability in the first frame, assigns display names, relays
+every message to every member in one order, and announces joins and leaves. The
+room ends when the host's page closes. Optional tokens: `&agent` (copied for an
+agent; the page shows the agent notes) and `&name=<n>` (the display name to join
+as).
+
+The UI is still a canvas, so the page exposes the room to scripts through
+`assets/chat-bridge.js`: every event is dispatched as a DOM `oxfer:chat` event
+(`{type: ready|connected|message|joined|left|failed|closed, …}`) and
+`window.oxfer.chat.send(text)` posts a message (it returns false when the app
+did not take it: blank text, or a full send queue). `window.oxfer.chat.leave()`
+leaves at once, and closing or navigating away from the tab does the same, so the
+others see a person go right away instead of after the 30 s idle timeout (a host
+leaving closes the room). The agent script's `chat` mode
+listens to the events and prints them as JSON lines; `send --chat` posts the
+share link into the room once the file is ready; `recv <room-link>` waits for a
+share link to appear in the room and then receives it. So two agents that were
+each handed the same room link can complete a transfer with one command each:
+
+```sh
+node agent/oxfer-agent.mjs send ./file.bin --chat "<room-link>" --once
+node agent/oxfer-agent.mjs recv "<room-link>" ./downloads
+```
+
+People start a room from the home page ("Start a chat room") or from the
+header's **For agents** menu, which also offers "Copy for agent". That button
+copies the agent link inside a short brief: a task (say hello, then do what the
+room asks), a one-line setup that downloads the script, and a foreground
+`chat --say … --until . --wait 300` command for talking in turns, plus the
+`chat --dir` and `post` pair for an agent that may run a background command and
+should stay in the room between turns. The room hides a leave that is followed by
+a rejoin with nothing else in between, so turns do not fill it with notices. A careful agent
+handed a bare link with a `cap=` token asks what to do instead of opening it, and
+permission checks refuse the long-lived background process a pipe-fed `chat` needs. Pasting a
+room link into the receive page's link field joins it too. Opening `#chat` with
+no ticket starts a room on load, which is how the script's `room` mode hosts one.
+The host keeps the last 32 messages and replays them to a guest that joins late,
+so a share link posted a moment early is not lost.
 
 ## How it works
 
@@ -64,10 +112,10 @@ side, a `SAVED` line without `VERIFIED` is not success.
   when the receiver's verified receipt arrives. `serve complete` fires earlier,
   when the sender has merely finished writing, and is reported as `SERVED`.
 - **Receiving** waits for the "Choose where to save" button, which only appears
-  once the manifest arrived. The init script removes `showSaveFilePicker`
-  because headless Chromium exposes the API but cannot show the dialog, which
-  would hang the click. Oxfer then uses its service-worker streaming sink, which
-  Playwright surfaces as a `download` event. The script saves every download,
+  once the manifest arrived. The script opens the link with the existing
+  `sink=sw` fragment flag, so Oxfer streams through its service worker instead
+  of the native save dialog, which headless Chromium cannot show; Playwright
+  surfaces that stream as a `download` event. The script saves every download,
   then waits for one `verified and saved` log line per file.
 - **Share links** are validated with `classifyLink`: a fragment of
   `endpoint<base32>&cap=<32 hex>` is a share link, an empty fragment (or only
@@ -90,6 +138,13 @@ Tell agents directly when you can. A sending agent needs: run `send`, keep the
 process alive, pass the `LINK` line on verbatim, exit after `COMPLETE`. A
 receiving agent needs: run `recv` with the link in quotes (the `&` would
 otherwise be a shell operator), treat `VERIFIED` and exit code 0 as done.
+
+With a room link, the hand-off happens inside Oxfer: a person starts a room,
+copies the agent link, gives it to their agent and sends the same link to the
+other person for theirs. Each agent fetches the link, reads `/llms.txt`, and
+runs `send --chat` or `recv <room-link>`. Room links are the same shape as share
+links, so an agent that can tell the two apart (the `chat` token) needs nothing
+else.
 
 ## Limits
 

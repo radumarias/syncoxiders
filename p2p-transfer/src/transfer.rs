@@ -212,6 +212,7 @@ pub trait FrameRx {
 /// serve future and the error paths can all send without sharing a `&mut`. The send is
 /// bounded by construction: it races the queue reservation against cancellation and a 30 s
 /// stall deadline, which is what makes it exempt from rule §4.6.0-R's inner-race requirement.
+#[derive(Clone)]
 pub struct ControlTx {
     tx: mpsc::Sender<Bytes>,
     path: Path,
@@ -259,6 +260,24 @@ impl FrameTx for ControlTx {
 
     fn path(&self) -> Path {
         self.path
+    }
+}
+
+impl ControlTx {
+    /// Queue a frame without waiting: `Ok(false)` when the queue is full, so a caller that
+    /// fans out to many peers can drop a slow one instead of stalling the others.
+    pub fn try_send(&self, frame: Bytes) -> Result<bool, TransportError> {
+        if self.cancel.is_cancelled() {
+            return Err(TransportError::Cancelled);
+        }
+        match self.tx.try_reserve() {
+            Ok(permit) => {
+                permit.send(frame);
+                Ok(true)
+            }
+            Err(mpsc::error::TrySendError::Closed(())) => Err(TransportError::Closed),
+            Err(mpsc::error::TrySendError::Full(())) => Ok(false),
+        }
     }
 }
 
@@ -321,7 +340,19 @@ pub fn split_control(
     path: Path,
     cancel: CancellationToken,
 ) -> (ControlTx, ControlRx, AbortOnDropHandle<()>) {
-    let (tx, mut queue) = mpsc::channel::<Bytes>(CONTROL_QUEUE);
+    split_control_with_queue(send, recv, path, cancel, CONTROL_QUEUE)
+}
+
+/// [`split_control`] with an explicit send-queue depth, for callers that queue bursts (a
+/// chat room replaying history) and police the depth themselves with [`ControlTx::try_send`].
+pub fn split_control_with_queue(
+    send: SendStream,
+    recv: RecvStream,
+    path: Path,
+    cancel: CancellationToken,
+    queue: usize,
+) -> (ControlTx, ControlRx, AbortOnDropHandle<()>) {
+    let (tx, mut queue) = mpsc::channel::<Bytes>(queue);
     let writer = task::spawn(async move {
         let mut send = send;
         while let Some(frame) = queue.recv().await {

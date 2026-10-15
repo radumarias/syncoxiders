@@ -1,25 +1,41 @@
 #!/usr/bin/env node
-// Scripted sender and receiver for Oxfer (https://oxfer.app), for automation and
-// AI agents. The app's UI is an egui canvas, so there is no DOM to drive: this
-// script locates the primary (blue) button in screenshots, answers the browser
-// file chooser, and reads the share link from the clipboard hook it installs.
+// Scripted sender, receiver and chat client for Oxfer (https://oxfer.app), for automation
+// and AI agents. The app's UI is an egui canvas, so there is no DOM to drive: this script
+// locates the primary (blue) button in screenshots, answers the browser file chooser, reads
+// the share link from the clipboard hook it installs, and talks to chat rooms through the
+// page's `oxfer:chat` events and `window.oxfer.chat.send`.
 //
-//   node oxfer-agent.mjs send <file> [--once] [--link-file path] [--snap dir]
-//   node oxfer-agent.mjs recv <share-link> [out-dir] [--snap dir]
+//   node oxfer-agent.mjs send <file> [--once] [--chat <room-link>] [--link-file path]
+//   node oxfer-agent.mjs recv <share-link | room-link> [out-dir]
+//   node oxfer-agent.mjs chat <room-link> [--name N] [--say text] [--until regex] [--wait s]
+//   node oxfer-agent.mjs chat <room-link> --dir D &   then   node oxfer-agent.mjs post D --say …
+//   node oxfer-agent.mjs room [--say text]
 //
-// Requires Node >= 22, `playwright` and `pngjs`, and a browser Playwright can
-// launch (Google Chrome, or `npx playwright install chromium|firefox|webkit`).
-// Common flags: --browser chrome|chromium|firefox|webkit (default: chrome, then
-// chromium), --headed, --timeout <seconds>, --origin <url>, --verbose.
+// A room link (`#chat&…&cap=…`) is a chat room hosted by another open page. `chat` joins
+// it and prints one JSON object per event; stdin lines are posted as messages. With
+// `--until`, it exits once someone else posts a matching message (after `--say`, a reply
+// to it), or with code 4 after `--wait` seconds. With `--dir D` it stays in the room and
+// mirrors it to files in D instead; each `post D` is then one turn: it prints what is new,
+// posts `--say`, and waits for a reply, without leaving the room. `send
+// --chat` posts the share link into the room once the file is ready, and `recv` with a
+// room link waits for a share link to be posted there, then downloads it.
 //
-// The share link fragment is a bearer capability. This script prints it once
-// (`LINK …`) and never writes it anywhere else unless --link-file is given.
+// Requires Node >= 22, `playwright` and `pngjs`, and a browser Playwright can launch
+// (Google Chrome, or `npx playwright install chromium|firefox|webkit`). Common flags:
+// --browser chrome|chromium|firefox|webkit (default: chrome, then chromium), --headed,
+// --timeout <seconds>, --origin <url>, --snap <dir>, --verbose.
+//
+// The share link fragment is a bearer capability. This script prints it once (`LINK …`)
+// and never writes it anywhere else unless --link-file is given. `chat --dir D` mirrors the
+// room, including links other members post, into D (owner-only files); `post D --leave`
+// deletes them.
 
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { access, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { appendFileSync, createReadStream, rmSync } from "node:fs";
+import { access, appendFile, mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { parseArgs as parseCli } from "node:util";
 
@@ -28,8 +44,10 @@ export const PRIMARY_BLUE = { r: 22, g: 116, b: 216 };
 const HEADER_HEIGHT = 70; // the top bar also has a blue "Choose File" button
 const VIEWPORT = { width: 1280, height: 800 };
 
-/** Classify a URL the way an agent sees it: "home" (send from here), "share"
- *  (receive from here), "diagnostics", or "invalid". */
+// ── Links ────────────────────────────────────────────────────────────────────
+
+/** Classify a URL the way an agent sees it: "home" (send from here), "share" (receive
+ *  from here), "chat" (a room to join), "diagnostics", or "invalid". */
 export function classifyLink(input) {
     let url;
     try {
@@ -52,14 +70,54 @@ export function classifyLink(input) {
     );
     const endpoint = Object.keys(parts).find(key => key.startsWith("endpoint"));
     if (endpoint && /^[a-z2-7]{20,}$/.test(endpoint.slice("endpoint".length)) && /^[0-9a-f]{32}$/.test(parts.cap ?? "")) {
-        return "share";
+        return "chat" in parts ? "chat" : "share";
     }
     return "invalid";
 }
 
+/** A share link posted inside chat text, if any (trailing punctuation stripped). With
+ *  `origin`, only a link on that origin counts: anyone in a room can post, and a link to
+ *  another site would have this browser open and download from a page nobody vetted. */
+export function findShareLink(text, origin = null) {
+    for (const match of String(text).matchAll(/https?:\/\/\S+/g)) {
+        const candidate = match[0].replace(/[\s.,;:!?)\]]+$/, "");
+        if (classifyLink(candidate) !== "share") continue;
+        if (origin !== null && new URL(candidate).origin !== new URL(origin).origin) continue;
+        return candidate;
+    }
+    return null;
+}
+
+/** The text the room relays for `text`, as the host's `clean_chat_text` makes it: control
+ *  characters other than newline and tab dropped, ends trimmed, cut to 4096 UTF-8 bytes. */
+export function cleanChatText(text) {
+    // Lone surrogates reach the app as U+FFFD, so compare the same way.
+    const cleaned = String(text).toWellFormed()
+        .replace(/[\p{Cc}]/gu, c => (c === "\n" || c === "\t" ? c : ""))
+        .replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
+    let out = "";
+    let bytes = 0;
+    for (const c of cleaned) {
+        bytes += Buffer.byteLength(c);
+        if (bytes > 4096) break;
+        out += c;
+    }
+    return out;
+}
+
+/** Whether chat `event` is the room relaying `text` back from `you`. */
+const isEchoOf = (event, you, text) => event.type === "message" && event.from === you && event.text === cleanChatText(text);
+
+/** The room link with the display name the agent wants to join as. */
+export function withChatName(link, name) {
+    if (!/^[A-Za-z0-9_.-]{1,32}$/.test(name ?? "")) return link;
+    return `${link}&name=${name}`;
+}
+
 const CLI_OPTIONS = Object.fromEntries([
-    ...["once", "headed", "verbose", "help"].map(flag => [flag, { type: "boolean" }]),
-    ...["timeout", "origin", "snap", "browser", "link-file", "count"].map(flag => [flag, { type: "string" }]),
+    ...["once", "headed", "verbose", "help", "leave"].map(flag => [flag, { type: "boolean" }]),
+    ...["timeout", "origin", "snap", "browser", "link-file", "count", "chat", "name", "say", "until", "wait", "dir"]
+        .map(flag => [flag, { type: "string" }]),
 ]);
 
 /** `value` as a positive number (an integer with `integer`), or a usage error naming `flag`. */
@@ -71,20 +129,22 @@ export function positiveNumber(value, flag, integer = false) {
     return n;
 }
 
-/** The command line: positionals plus the flags below; an unknown or valueless flag throws. */
+/** The command line: positionals plus the flags above; an unknown or valueless flag throws. */
 export function parseArgs(argv) {
     const { positionals, values } = parseCli({ args: argv, options: CLI_OPTIONS, allowPositionals: true, strict: true });
     return { positional: positionals, options: values };
 }
 
+// ── Screenshots ──────────────────────────────────────────────────────────────
+
 function isPrimaryBlue(r, g, b) {
     return b >= 170 && r <= 90 && g >= 70 && g <= 170 && b - r >= 120;
 }
 
-/** Find the largest filled primary-blue box in an RGBA bitmap, ignoring the
- *  header. Returns its centre and bounds, or null. Gaps up to `gap` pixels are
- *  bridged so white button text does not split a row, and up to `rowGap` rows
- *  so a label line does not split the box. */
+/** Find the largest filled primary-blue box in an RGBA bitmap, ignoring the header.
+ *  Returns its centre and bounds, or null. Gaps up to `gap` pixels are bridged so white
+ *  button text does not split a row, and up to `rowGap` rows so a label line does not
+ *  split the box. */
 export function findPrimaryButton(rgba, width, height, { minY = HEADER_HEIGHT, minWidth = 90, minHeight = 24, gap = 16, rowGap = 12 } = {}) {
     const boxes = [];
     for (let y = minY; y < height; y++) {
@@ -97,7 +157,8 @@ export function findPrimaryButton(rgba, width, height, { minY = HEADER_HEIGHT, m
             if (blue) {
                 if (start < 0) start = x;
                 last = x;
-            } else if (start >= 0 && x - last > gap) {
+            } else if (start >= 0 && (x - last > gap || x === width)) {
+                // A run ends after a wide enough gap, or at the right edge of the bitmap.
                 if (last - start + 1 >= minWidth) runs.push([start, last]);
                 start = -1;
             }
@@ -132,6 +193,13 @@ function sha256File(file) {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+/** `--origin`, or the public app, checked to be an app origin rather than a link. */
+function appOrigin(options) {
+    const origin = options.origin ?? DEFAULT_ORIGIN;
+    if (classifyLink(origin) !== "home") throw new Error(`--origin must be the app origin, got ${origin}`);
+    return origin;
+}
+
 /**
  * Wait for every download to settle. Fails when `isGone()` reports the page closed or
  * crashed, or when `bytesSoFar()` (if given) stays the same for `stallMs`, so a sender
@@ -159,21 +227,61 @@ export async function awaitDownloads(downloads, { isGone, bytesSoFar, stallMs, p
     return all;
 }
 
+// ── Session ──────────────────────────────────────────────────────────────────
+
+/** A growing log that waiters can match against: past entries first, then live ones. */
+class Watch {
+    constructor(keep = Infinity) {
+        this.items = [];
+        this.waiters = [];
+        this.keep = keep;
+    }
+
+    push(item) {
+        this.items.push(item);
+        if (this.items.length > this.keep) this.items.splice(0, this.items.length - this.keep / 2);
+        const index = this.items.length - 1;
+        for (const waiter of this.waiters.splice(0)) {
+            if (waiter.predicate(item, index)) waiter.resolve(item);
+            else this.waiters.push(waiter);
+        }
+    }
+
+    /** The first item (past or future) at or after index `from` matching `predicate`;
+     *  `timeoutMs` may be Infinity. */
+    waitFor(predicate, timeoutMs, what, from = 0) {
+        for (let index = from; index < this.items.length; index++) {
+            if (predicate(this.items[index], index)) return Promise.resolve(this.items[index]);
+        }
+        const keep = predicate;
+        predicate = (item, index) => index >= from && keep(item, index);
+        return new Promise((resolve, reject) => {
+            const timer = Number.isFinite(timeoutMs)
+                ? setTimeout(() => {
+                    this.waiters = this.waiters.filter(w => w.resolve !== settle);
+                    reject(new Error(`timed out after ${timeoutMs / 1000}s waiting for ${what}`));
+                }, timeoutMs)
+                : null;
+            const settle = item => {
+                if (timer) clearTimeout(timer);
+                resolve(item);
+            };
+            this.waiters.push({ predicate, resolve: settle });
+        });
+    }
+}
+
 class Session {
     constructor(options) {
         this.options = options;
         this.timeoutMs = positiveNumber(options.timeout ?? 120, "--timeout") * 1000;
-        this.log = [];       // recent console lines only; iroh traces are chatty
-        this.waiters = [];
-        this.counters = [];  // { pattern, n } tallied as lines arrive
+        this.console = new Watch(2000); // iroh traces are chatty; keep the recent tail
+        this.chat = new Watch();        // every `oxfer:chat` DOM event, as the page emitted it
+        this.counters = [];             // { pattern, n, onHit } tallied as console lines arrive
+        this.sending = Promise.resolve(); // chat sends go one at a time (see chatSend)
+        this.onChat = null;             // mode-specific printing of chat events
         this.snaps = 0;
-    }
-
-    /** Count matching console lines from now on, without keeping them. */
-    counter(pattern) {
-        const counter = { pattern, n: 0 };
-        this.counters.push(counter);
-        return counter;
+        this.crashed = new WeakSet();
     }
 
     say(line) {
@@ -184,7 +292,7 @@ class Session {
         if (this.options.verbose) process.stderr.write(`${line}\n`);
     }
 
-    async launch(mode) {
+    async launch() {
         const { chromium, firefox, webkit } = await import("playwright");
         const headless = !this.options.headed;
         const chromiumArgs = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"];
@@ -224,6 +332,11 @@ class Session {
         if (this.family === "chromium") {
             await context.grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
         }
+        await context.exposeFunction("__oxferAgentChatEvent", detail => {
+            this.debug(`[chat] ${JSON.stringify(detail).slice(0, 200)}`);
+            this.chat.push(detail);
+            this.onChat?.(detail);
+        });
         await context.addInitScript(() => {
             // Capture the share link without depending on clipboard-read support.
             const clipboard = navigator.clipboard;
@@ -237,79 +350,105 @@ class Session {
                     },
                 });
             }
-        });
-        if (mode === "recv") {
-            await context.addInitScript(() => {
-                // Headless Chromium exposes the save-file picker but cannot show it, so
-                // the click would hang. Without it Oxfer streams through its service
-                // worker, which Playwright receives as an ordinary download.
-                try {
-                    delete window.showSaveFilePicker;
-                    Object.defineProperty(window, "showSaveFilePicker", { value: undefined, configurable: true });
-                } catch { /* ignore */ }
+            window.addEventListener("oxfer:chat", event => {
+                try { window.__oxferAgentChatEvent(event.detail); } catch { /* page closing */ }
             });
-        }
-        this.context = context;
-        this.page = await context.newPage();
-        this.pageGone = false;
-        this.page.on("close", () => { this.pageGone = true; });
-        this.page.on("crash", () => { this.pageGone = true; });
-        this.page.on("console", message => {
-            const text = message.text();
-            this.log.push(text);
-            if (this.log.length > 2000) this.log.splice(0, this.log.length - 1000);
-            for (const counter of this.counters) if (counter.pattern.test(text)) counter.n++;
-            this.debug(`[console] ${text.replace(/%c/g, "").slice(0, 200)}`);
-            for (const waiter of this.waiters.splice(0)) {
-                if (waiter.pattern.test(text)) waiter.resolve(text);
-                else this.waiters.push(waiter);
-            }
         });
-        this.page.on("pageerror", error => this.debug(`[pageerror] ${error.message}`));
+        this.context = context;
+        this.page = await this.newPage();
+    }
+
+    /** A page whose console feeds the log, counters and waiters. */
+    async newPage() {
+        const page = await this.context.newPage();
+        page.on("console", message => {
+            const text = message.text();
+            this.console.push(text);
+            for (const counter of this.counters) {
+                if (!counter.pattern.test(text)) continue;
+                counter.n++;
+                counter.onHit?.(counter.n);
+            }
+            if (this.options.verbose) this.debug(`[console] ${text.replace(/%c/g, "").slice(0, 200)}`);
+        });
+        page.on("pageerror", error => this.debug(`[pageerror] ${error.message}`));
+        page.on("crash", () => this.crashed.add(page));
+        return page;
+    }
+
+    /** Whether `page` closed or crashed. */
+    gone(page) {
+        return page.isClosed() || this.crashed.has(page);
+    }
+
+    /** Bytes written so far to in-progress and finished downloads. */
+    async downloadedBytes() {
+        let total = 0;
+        for (const name of await readdir(this.downloadsDir).catch(() => [])) {
+            total += (await stat(path.join(this.downloadsDir, name)).catch(() => null))?.size ?? 0;
+        }
+        return total;
+    }
+
+    /** Count matching console lines from now on; `onHit(n)` runs on each. */
+    counter(pattern, onHit = null) {
+        const counter = { pattern, n: 0, onHit };
+        this.counters.push(counter);
+        return counter;
     }
 
     waitForLog(pattern, timeoutMs = this.timeoutMs, what = pattern.source) {
-        const seen = this.log.find(line => pattern.test(line));
-        if (seen) return Promise.resolve(seen);
-        return new Promise((resolve, reject) => {
-            const timer = setTimeout(() => {
-                this.waiters = this.waiters.filter(w => w.resolve !== resolve);
-                reject(new Error(`timed out after ${timeoutMs / 1000}s waiting for ${what}`));
-            }, timeoutMs);
-            this.waiters.push({ pattern, resolve: text => { clearTimeout(timer); resolve(text); } });
+        return this.console.waitFor(line => pattern.test(line), timeoutMs, what);
+    }
+
+    waitForChat(predicate, timeoutMs = this.timeoutMs, what = "a chat event", from = 0) {
+        return this.chat.waitFor(predicate, timeoutMs, what, from);
+    }
+
+    /** Save every download `page` starts into `outDir`, never overwriting. */
+    collectDownloads(page, outDir, downloads) {
+        page.on("download", download => {
+            const saving = (async () => {
+                let dest = path.join(outDir, download.suggestedFilename());
+                for (let n = 1; await access(dest).then(() => true, () => false); n++) {
+                    const { name, ext } = path.parse(download.suggestedFilename());
+                    dest = path.join(outDir, `${name} (${n})${ext}`);
+                }
+                await download.saveAs(dest);
+                return dest;
+            })();
+            downloads.push(saving);
         });
     }
 
-    async open(url) {
-        await this.page.goto(url, { waitUntil: "load", timeout: this.timeoutMs });
-        await this.waitForLog(/event handlers installed/, this.timeoutMs, "the app to start (WebAssembly + WebGL)");
+    /** Navigate `page` and wait for the wasm app to be up (index.html sets `wasmBindings`). */
+    async open(url, page = this.page) {
+        await page.goto(url, { waitUntil: "load", timeout: this.timeoutMs });
+        await page.waitForFunction(() => Boolean(window.wasmBindings), null, { timeout: this.timeoutMs });
         await sleep(500);
     }
 
-    async bitmap() {
-        const { PNG } = await import("pngjs");
-        // egui repaints on input; nudge the pointer so the screenshot is current.
+    /** A current screenshot of `this.page`; egui repaints on input, so nudge the pointer. */
+    async screenshot(file = undefined) {
         await this.page.mouse.move(VIEWPORT.width - 10, VIEWPORT.height - 10);
         await sleep(150);
-        const png = PNG.sync.read(await this.page.screenshot({ type: "png" }));
-        return png;
+        return this.page.screenshot(file ? { path: file } : { type: "png" });
     }
 
     async snap(label) {
         if (!this.options.snap) return;
         await mkdir(this.options.snap, { recursive: true });
         const file = path.join(this.options.snap, `${String(++this.snaps).padStart(2, "0")}-${label}.png`);
-        await this.page.mouse.move(VIEWPORT.width - 10, VIEWPORT.height - 10);
-        await sleep(150);
-        await this.page.screenshot({ path: file });
+        await this.screenshot(file);
         this.debug(`snapshot: ${file}`);
     }
 
     /** Poll until the primary button is visible, then return its centre. */
     async waitForPrimaryButton(what, timeoutMs = this.timeoutMs) {
+        const { PNG } = await import("pngjs");
         const deadline = Date.now() + timeoutMs;
         while (Date.now() < deadline) {
-            const png = await this.bitmap();
+            const png = PNG.sync.read(await this.screenshot());
             const button = findPrimaryButton(png.data, png.width, png.height);
             if (button) return button;
             await sleep(1000);
@@ -324,41 +463,134 @@ class Session {
         await this.page.mouse.click(button.x, button.y);
     }
 
+    /** Open the room in `page` and wait until the host accepted us. */
+    async joinChat(page, link, name) {
+        await this.open(withChatName(link, name), page);
+        const outcome = await this.waitForChat(
+            e => e.type === "connected" || e.type === "failed" || e.type === "closed",
+            this.timeoutMs,
+            "the room to accept us",
+        );
+        if (outcome.type !== "connected") {
+            throw new Error(`could not join the room: ${outcome.message ?? outcome.type}`);
+        }
+        return outcome;
+    }
+
+    /** Resolve once no room event has arrived for `quietMs`, or after `maxMs`. Used after a
+     *  join, so the replayed history is in `chat.items` before it is searched. */
+    async chatSettled(quietMs = 400, maxMs = 3000) {
+        const until = Date.now() + maxMs;
+        let seen = -1;
+        while (seen !== this.chat.items.length && Date.now() < until) {
+            seen = this.chat.items.length;
+            await sleep(quietMs);
+        }
+    }
+
+    /** Post `text` to the room open in `page` and resolve once the host has relayed it back,
+     *  so the message is really in the room before the caller moves on. Sends queue behind
+     *  each other and keep under the host's limit of 30 messages per 10 s; the app's own
+     *  queue would silently drop a burst. */
+    chatSend(page, text, you) {
+        const turn = this.sending.then(async () => {
+            await page.waitForFunction(() => Boolean(globalThis.oxfer?.chat?.send), null, { timeout: 5000 });
+            const before = this.chat.items.length;
+            const queued = await page.evaluate(t => globalThis.oxfer.chat.send(t), String(text));
+            if (!queued) throw new Error("the app did not take the message (blank, or its send queue is full)");
+            await this.waitForChat(e => isEchoOf(e, you, text), 15_000, "the room to echo our message", before);
+        });
+        this.sending = turn.catch(() => {}).then(() => sleep(CHAT_SEND_GAP_MS));
+        return turn;
+    }
+
+    /** Post every stdin line to the room open in `page`. */
+    postStdinLines(page, you) {
+        createInterface({ input: process.stdin }).on("line", line => {
+            if (line.trim()) this.chatSend(page, line, you).catch(e => process.stderr.write(`send failed: ${e.message}\n`));
+        });
+    }
+
+    /** Resolves with the exit code once the room session is over: 2 on `failed`, 0 on
+     *  `closed`, or 0 when a message from someone else matches `until`. Only events from
+     *  index `from` on can match `until`; after `timeoutMs` without one it resolves with 4. */
+    chatDone(you, until = null, { from = 0, timeoutMs = Infinity } = {}) {
+        return this.waitForChat(
+            (e, index) => e.type === "failed" || e.type === "closed"
+                || (until && index >= from && e.type === "message" && e.from !== you && until.test(e.text)),
+            timeoutMs,
+        ).then(e => (e.type === "failed" ? 2 : 0), () => {
+            this.say(JSON.stringify({ type: "timeout", seconds: timeoutMs / 1000 }));
+            return 4;
+        });
+    }
+
     async close() {
+        // Leave rooms first: a browser that just vanishes stays listed until the host's
+        // connection times out. The room reports `closed` once the close went out; a page
+        // busy hashing or stuck must not hold up exit, so all of this is capped at 2 s.
+        const pages = this.context?.pages() ?? [];
+        const from = this.chat.items.length;
+        const leaving = Promise.all(pages.map(page =>
+            page.evaluate(() => {
+                const chat = globalThis.oxfer?.chat;
+                chat?.leave?.();
+                return Boolean(chat);
+            }).catch(() => false)));
+        await Promise.race([
+            leaving.then(left => left.some(Boolean)
+                && this.waitForChat(e => e.type === "closed" || e.type === "failed", 2000, "the room to close", from)),
+            sleep(2000),
+        ]).catch(() => {});
         // A page mid-transfer can keep browser.close() waiting; never hang exit on it.
         await Promise.race([this.browser?.close().catch(() => {}), sleep(5000)]);
         if (this.downloadsDir) await rm(this.downloadsDir, { recursive: true, force: true }).catch(() => {});
     }
-
-    /** Bytes written so far to in-progress and finished downloads. */
-    async downloadedBytes() {
-        let total = 0;
-        for (const name of await readdir(this.downloadsDir).catch(() => [])) {
-            total += (await stat(path.join(this.downloadsDir, name)).catch(() => null))?.size ?? 0;
-        }
-        return total;
-    }
 }
 
-async function send(files, options) {
-    for (const file of files) {
-        const info = await stat(file).catch(() => null);
-        if (!info?.isFile()) throw new Error(`not a readable file: ${file}`);
-    }
-    const origin = options.origin ?? DEFAULT_ORIGIN;
-    if (classifyLink(origin) !== "home") throw new Error(`--origin must be the app origin, got ${origin}`);
-    const wanted = options.once ? 1 : options.count === undefined ? Infinity : positiveNumber(options.count, "--count", true);
+/** Launch a session, run `body(session)` to an exit code, and always close the browser. */
+async function run(options, body) {
     const session = new Session(options);
     const stop = async code => { await session.close(); process.exit(code); };
     process.on("SIGINT", () => stop(130));
     process.on("SIGTERM", () => stop(143));
     try {
-        await session.launch("send");
+        await session.launch();
+        await stop(await body(session));
+    } catch (error) {
+        await session.snap("error");
+        process.stderr.write(`error: ${error.message}\n`);
+        await stop(2);
+    }
+}
+
+// ── Modes ────────────────────────────────────────────────────────────────────
+
+async function send(files, options) {
+    const sizes = [];
+    for (const file of files) {
+        const info = await stat(file).catch(() => null);
+        if (!info?.isFile()) throw new Error(`not a readable file: ${file}`);
+        sizes.push(info.size);
+    }
+    if (options.chat && classifyLink(options.chat) !== "chat") throw new Error("--chat needs a room link (#chat&…&cap=…)");
+    // The receiver only trusts share links on the room's own origin, so share from there.
+    const origin = options.chat && options.origin === undefined ? `${new URL(options.chat).origin}/` : appOrigin(options);
+    const wanted = options.once ? 1 : options.count === undefined ? Infinity : positiveNumber(options.count, "--count", true);
+
+    await run(options, async session => {
         await session.open(origin);
         await session.snap("home");
 
+        // Find the button first: on a slow software-rendered first frame that can take most
+        // of --timeout, and the chooser's own 15 s must not be spent on it. The chooser is
+        // armed before the click so the event is not missed; its timeout is only observed
+        // after the click, so a rejection must not surface as an unhandled one (Node would
+        // abort the process).
+        const button = await session.waitForPrimaryButton("Send files");
         const chooser = session.page.waitForEvent("filechooser", { timeout: 15_000 });
-        await session.clickPrimaryButton("Send files");
+        chooser.catch(() => {});
+        await session.page.mouse.click(button.x, button.y);
         await (await chooser).setFiles(files.map(f => path.resolve(f)));
         await session.waitForLog(/ready to share/, session.timeoutMs, "file hashing to finish (\"ready to share\")");
         await session.snap("ready");
@@ -375,66 +607,85 @@ async function send(files, options) {
         if (classifyLink(link) !== "share") throw new Error(`did not get a share link from the app (got ${link ? "something else" : "nothing"})`);
         await session.snap("sharing");
         if (options["link-file"]) await writeFile(options["link-file"], `${link}\n`, { mode: 0o600 });
+        // Counting starts before the link leaves this process, so no receipt can precede it.
+        // "serve complete" only means the sender finished writing; the receiver's verified
+        // receipt ("receiver verified …") is the success signal.
+        let lastServed = Date.now();
+        const served = session.counter(/serve complete/, n => { session.say(`SERVED ${n}`); lastServed = Date.now(); });
+        const verified = session.counter(/receiver verified/, n => session.say(`COMPLETE ${n}`));
         session.say(`LINK ${link}`);
         session.say(`SHARING ${files.map(f => path.basename(f)).join(" ")}`);
 
-        // "serve complete" only means the sender finished writing; the receiver's
-        // verified receipt ("receiver verified …") is the success signal.
-        const servedCount = session.counter(/serve complete/);
-        const verifiedCount = session.counter(/receiver verified/);
-        let served = 0;
-        let completed = 0;
-        let lastServed = Date.now();
-        while (completed < wanted) {
+        let chatPage = null;
+        let chatYou = null;
+        if (options.chat) {
+            session.onChat = event => session.say(`CHAT ${JSON.stringify(event)}`);
+            chatPage = await session.newPage();
+            const joined = await session.joinChat(chatPage, options.chat, options.name ?? "sender-agent");
+            chatYou = joined.you;
+            const names = files.map((f, i) => `${path.basename(f)} (${sizes[i]} bytes)`).join(", ");
+            await session.chatSend(chatPage, `Sharing ${names}. Open this link to receive it: ${link}`, chatYou);
+            session.say("CHAT posted the share link");
+        }
+
+        while (verified.n < wanted) {
             await sleep(500);
-            while (served < servedCount.n) { session.say(`SERVED ${++served}`); lastServed = Date.now(); }
-            while (completed < verifiedCount.n) session.say(`COMPLETE ${++completed}`);
-            if (session.pageGone) throw new Error("the app page closed or crashed while sharing");
+            if (session.gone(session.page)) throw new Error("the app page closed or crashed while sharing");
             // A bounded run must not wait forever for a receipt that is not coming: the
             // receiver failed, or the build predates the "receiver verified" line.
-            if (Number.isFinite(wanted) && served > completed && Date.now() - lastServed > session.timeoutMs) {
-                throw new Error(`served ${served} but no verification receipt arrived within ${session.timeoutMs / 1000}s`);
+            if (Number.isFinite(wanted) && served.n > verified.n && Date.now() - lastServed > session.timeoutMs) {
+                throw new Error(`served ${served.n} but no verification receipt arrived within ${session.timeoutMs / 1000}s`);
             }
         }
-        await stop(0);
-    } catch (error) {
-        await session.snap("error");
-        process.stderr.write(`error: ${error.message}\n`);
-        await stop(2);
-    }
+        if (chatPage) {
+            await session.chatSend(chatPage, `Transfer verified (${verified.n} receiver${verified.n === 1 ? "" : "s"}).`, chatYou).catch(() => {});
+        }
+        return 0;
+    });
 }
 
 async function recv(link, outDir, options) {
     const kind = classifyLink(link);
-    if (kind !== "share") {
+    if (kind !== "share" && kind !== "chat") {
         throw new Error(kind === "home"
             ? "that is the Oxfer home page, not a share link; a share link has a #endpoint…&cap=… fragment"
-            : `not an Oxfer share link (${kind})`);
+            : `not an Oxfer share or room link (${kind})`);
     }
     await mkdir(outDir, { recursive: true });
-    const session = new Session(options);
-    const stop = async code => { await session.close(); process.exit(code); };
-    process.on("SIGINT", () => stop(130));
-    process.on("SIGTERM", () => stop(143));
-    try {
-        await session.launch("recv");
-        const verifiedCount = session.counter(/verified and saved/);
+
+    await run(options, async session => {
+        const verified = session.counter(/verified and saved/);
         const downloads = [];
-        session.page.on("download", download => {
-            const saving = (async () => {
-                let dest = path.join(outDir, download.suggestedFilename());
-                for (let n = 1; await access(dest).then(() => true, () => false); n++) {
-                    const { name, ext } = path.parse(download.suggestedFilename());
-                    dest = path.join(outDir, `${name} (${n})${ext}`);
-                }
-                await download.saveAs(dest);
-                return dest;
-            })();
-            downloads.push(saving);
-        });
-        await session.open(link);
-        // No log line marks readiness; the "Choose where to save" button appears
-        // once the manifest arrived from the sender.
+        let chatPage = null;
+        let chatYou = null;
+        if (kind === "chat") {
+            // Join the room, wait for someone else to post a share link, then receive it
+            // in a second page so the room stays open for the receipt message.
+            chatPage = session.page;
+            const joined = await session.joinChat(chatPage, link, options.name ?? "receiver-agent");
+            chatYou = joined.you;
+            session.say(`CHAT joined as ${chatYou}; members: ${joined.members.join(", ")}`);
+            const isShare = e => e.type === "message" && e.from !== chatYou && findShareLink(e.text, link);
+            // The host replays recent messages, oldest first, right after accepting us. An
+            // older link may belong to a sender that already stopped, so once a link shows
+            // up (replayed or live) let the replay settle and take the newest one.
+            await session.waitForChat(
+                isShare,
+                positiveNumber(options.wait ?? 600, "--wait") * 1000,
+                "a share link to be posted in the room (--wait seconds)",
+            );
+            await session.chatSettled();
+            const posted = session.chat.items.findLast(isShare);
+            link = findShareLink(posted.text, link);
+            session.say(`CHAT ${posted.from} posted a share link`);
+            session.page = await session.newPage();
+        }
+        session.collectDownloads(session.page, outDir, downloads);
+        // `sink=sw` makes Oxfer stream through its service worker, which Playwright receives
+        // as an ordinary download; headless Chromium cannot show the native save dialog.
+        await session.open(`${link}&sink=sw`);
+        // No log line marks readiness; the "Choose where to save" button appears once the
+        // manifest arrived from the sender.
         await session.clickPrimaryButton("Choose where to save");
         await session.snap("saving");
 
@@ -447,7 +698,7 @@ async function recv(link, outDir, options) {
         while (settled < downloads.length) {
             settled = downloads.length;
             await awaitDownloads(downloads, {
-                isGone: () => session.pageGone,
+                isGone: () => session.gone(session.page),
                 // Only Chromium is known to grow the file in `downloadsPath` as bytes
                 // arrive; elsewhere a long download would look stalled.
                 bytesSoFar: session.family === "chromium" ? () => session.downloadedBytes() : null,
@@ -456,33 +707,195 @@ async function recv(link, outDir, options) {
             await sleep(1500); // more files of the same manifest may start late
         }
         // Oxfer verifies BLAKE3 after the sink closes; wait for every file's receipt.
-        const verified = () => verifiedCount.n;
         const verifyDeadline = Date.now() + 60_000;
-        while (verified() < downloads.length && Date.now() < verifyDeadline) await sleep(250);
+        while (verified.n < downloads.length && Date.now() < verifyDeadline) await sleep(250);
         await session.snap("done");
-        const saved = await Promise.all(downloads.map(async download => {
-            const dest = await download;
-            const [info, hash] = await Promise.all([stat(dest), sha256File(dest)]);
-            return `SAVED ${dest} ${info.size} ${hash}`;
-        }));
-        for (const line of saved) session.say(line);
-        session.say(verified() >= downloads.length ? "VERIFIED" : "UNVERIFIED (no verification receipt seen; compare hashes with the sender)");
-        await stop(verified() >= downloads.length ? 0 : 3);
-    } catch (error) {
-        await session.snap("error");
-        process.stderr.write(`error: ${error.message}\n`);
-        await stop(2);
+        const saved = await Promise.all(downloads);
+        const hashes = await Promise.all(saved.map(dest => Promise.all([stat(dest), sha256File(dest)])));
+        saved.forEach((dest, i) => session.say(`SAVED ${dest} ${hashes[i][0].size} ${hashes[i][1]}`));
+        const ok = verified.n >= downloads.length;
+        session.say(ok ? "VERIFIED" : "UNVERIFIED (no verification receipt seen; compare hashes with the sender)");
+        if (chatPage) {
+            const names = saved.map(d => path.basename(d)).join(", ");
+            await session.chatSend(chatPage, ok ? `Received and verified ${names}.` : `Saved ${names}, but could not verify it.`, chatYou).catch(() => {});
+        }
+        return ok ? 0 : 3;
+    });
+}
+
+/** Host a room from this process: prints the links, then relays events until stopped. */
+async function room(options) {
+    const origin = appOrigin(options);
+    await run(options, async session => {
+        session.onChat = event => { if (event.type !== "ready") session.say(JSON.stringify(event)); };
+        const base = new URL(origin);
+        // Keep the origin's own flags (`#dev`, `#sink=…`) as tokens of the room fragment.
+        base.hash = [base.hash.slice(1), "chat&agent"].filter(Boolean).join("&");
+        await session.open(base.href);
+        const ready = await session.waitForChat(e => e.type === "ready" || e.type === "failed", session.timeoutMs, "the room to open");
+        if (ready.type !== "ready") throw new Error(`could not open a room: ${ready.message}`);
+        session.say(`ROOM ${ready.link}`);
+        session.say(`AGENT ${ready.agentLink}`);
+        if (options.say) await session.chatSend(session.page, options.say, ready.you);
+        session.postStdinLines(session.page, ready.you);
+        return session.chatDone(ready.you);
+    });
+}
+
+// Staying in a room between turns: `chat --dir D` keeps the room open in the background and
+// mirrors it to files, and each `post D` is one short foreground turn against those files.
+const EVENTS_FILE = "events.jsonl"; // every room event, one JSON object per line
+const OUTBOX_FILE = "outbox.jsonl"; // {"text": …} lines for the background process to post
+const CURSOR_FILE = "cursor";       // bytes of events.jsonl that `post` has already printed
+const PID_FILE = "pid";
+
+const YOU_FILE = "you";             // the name this process joined as
+const CHAT_SEND_GAP_MS = 400;       // the host disconnects a guest above 30 messages per 10 s
+
+/** The complete lines of `file` past byte `offset`, and the offset just after them. */
+async function readLinesFrom(file, offset) {
+    const { size } = await stat(file).catch(() => ({ size: offset }));
+    if (size <= offset) return { lines: [], offset };
+    const buffer = Buffer.alloc(size - offset);
+    const handle = await open(file, "r");
+    await handle.read(buffer, 0, buffer.length, offset).finally(() => handle.close());
+    const end = buffer.lastIndexOf(0x0a) + 1;
+    return { lines: buffer.subarray(0, end).toString("utf8").split("\n").filter(Boolean), offset: offset + end };
+}
+
+/** Post every complete line of `file`, which `chat --dir` empties before joining, so lines
+ *  `post` wrote while the join was still running are sent too. */
+async function postOutboxLines(session, page, you, file, pollMs = 300) {
+    let offset = 0;
+    for (;;) {
+        await sleep(pollMs);
+        let lines;
+        try {
+            ({ lines, offset } = await readLinesFrom(file, offset));
+        } catch (error) {
+            session.debug(`outbox: ${error.message}`);
+            continue;
+        }
+        for (const line of lines) {
+            let text = line;
+            try { text = JSON.parse(line).text ?? ""; } catch { /* a plain line is the message */ }
+            if (String(text).trim()) await session.chatSend(page, String(text), you).catch(e => session.debug(`send failed: ${e.message}`));
+        }
     }
+}
+
+function isRunning(pid) {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+/** One turn against a room kept open by `chat --dir`: print what is new since the last
+ *  turn, post `--say`, and wait for someone else's message matching `--until` (default:
+ *  any). Exit 0 on a match or when the room closed, 2 if the room failed or the
+ *  background process is gone, 4 when `--wait` (default 300 s) ran out. */
+export async function post(dir, options, { pollMs = 300 } = {}) {
+    const pid = Number(await readFile(path.join(dir, PID_FILE), "utf8").catch(() => "0"));
+    if (options.leave) {
+        if (pid && isRunning(pid)) {
+            process.kill(pid, "SIGTERM");
+            for (let i = 0; i < 50 && isRunning(pid); i++) await sleep(100);
+        }
+        // The room mirror can hold share links other members posted.
+        for (const file of [EVENTS_FILE, OUTBOX_FILE, CURSOR_FILE, YOU_FILE, PID_FILE]) {
+            await rm(path.join(dir, file), { force: true });
+        }
+        return 0;
+    }
+    const until = new RegExp(options.until ?? ".");
+    const waitS = positiveNumber(options.wait ?? 300, "--wait");
+    const deadline = Date.now() + waitS * 1000;
+    const events = path.join(dir, EVENTS_FILE);
+    const saveCursor = () => writeFile(path.join(dir, CURSOR_FILE), String(cursor));
+    let cursor = Number(await readFile(path.join(dir, CURSOR_FILE), "utf8").catch(() => "0")) || 0;
+    // Who we are: written at join, so a turn need not re-read the whole room log for it.
+    let you = (await readFile(path.join(dir, YOU_FILE), "utf8").catch(() => "")) || null;
+    // With --say: catch up first, then post, then wait for its echo; only later messages are replies.
+    let phase = options.say ? "catchup" : "reply";
+    for (;;) {
+        let lines;
+        ({ lines, offset: cursor } = await readLinesFrom(events, cursor));
+        for (const line of lines) {
+            process.stdout.write(`${line}\n`);
+            let event;
+            try { event = JSON.parse(line); } catch { continue; }
+            let code = null;
+            if (event.type === "connected") you = event.you;
+            else if (event.type === "failed") code = 2;
+            else if (event.type === "closed") code = 0;
+            else if (phase === "echo" && isEchoOf(event, you, options.say)) phase = "reply";
+            else if (phase === "reply" && event.type === "message" && event.from !== you && until.test(event.text)) code = 0;
+            if (code !== null) { await saveCursor(); return code; }
+        }
+        await saveCursor();
+        if (phase === "catchup") {
+            // Post only once caught up, so the reply cannot be confused with older lines.
+            await appendFile(path.join(dir, OUTBOX_FILE), `${JSON.stringify({ text: options.say })}\n`);
+            phase = "echo";
+        }
+        if (!pid || !isRunning(pid)) {
+            process.stdout.write(`${JSON.stringify({ type: "failed", message: "not in the room: start chat --dir in the background first" })}\n`);
+            return 2;
+        }
+        if (Date.now() >= deadline) {
+            process.stdout.write(`${JSON.stringify({ type: "timeout", seconds: waitS })}\n`);
+            return 4;
+        }
+        await sleep(pollMs);
+    }
+}
+
+/** Join a room: one JSON line per event, stdin lines posted, exit on --until or close.
+ *  With --dir, stay joined and mirror the room to files for `post` instead. */
+async function chat(link, options) {
+    if (classifyLink(link) !== "chat") throw new Error("chat needs a room link (#chat&…&cap=…)");
+    const dir = options.dir;
+    if (dir) {
+        await mkdir(dir, { recursive: true, mode: 0o700 });
+        for (const file of [EVENTS_FILE, CURSOR_FILE, YOU_FILE]) await rm(path.join(dir, file), { force: true });
+        await writeFile(path.join(dir, OUTBOX_FILE), "", { mode: 0o600 });
+        await writeFile(path.join(dir, PID_FILE), String(process.pid), { mode: 0o600 });
+        // A pid file left behind could name an unrelated process once the PID is reused.
+        process.on("exit", () => rmSync(path.join(dir, PID_FILE), { force: true }));
+    }
+    await run(options, async session => {
+        // Synchronous, so the final `closed` event is on disk before the process exits.
+        session.onChat = dir
+            ? event => appendFileSync(path.join(dir, EVENTS_FILE), `${JSON.stringify(event)}\n`, { mode: 0o600 })
+            : event => session.say(JSON.stringify(event));
+        const joined = await session.joinChat(session.page, link, options.name ?? "agent");
+        if (dir) {
+            await writeFile(path.join(dir, YOU_FILE), joined.you, { mode: 0o600 });
+            session.say(`JOINED as ${joined.you}; turns: node oxfer-agent.mjs post ${dir} --say "…"`);
+            postOutboxLines(session, session.page, joined.you, path.join(dir, OUTBOX_FILE));
+            return session.chatDone(joined.you);
+        }
+        if (options.say) await session.chatSend(session.page, options.say, joined.you);
+        session.postStdinLines(session.page, joined.you);
+        // After --say, wait for a reply to it: the history replayed on join is not one.
+        const from = options.say ? session.chat.items.length : 0;
+        const timeoutMs = options.wait === undefined ? Infinity : positiveNumber(options.wait, "--wait") * 1000;
+        return session.chatDone(joined.you, options.until ? new RegExp(options.until) : null, { from, timeoutMs });
+    });
 }
 
 export function usage() {
     return `Usage:
-  oxfer-agent.mjs send <file> [--once | --count N] [--link-file path]
-  oxfer-agent.mjs recv <share-link> [out-dir]
-Options: --browser chrome|chromium|firefox|webkit  --headed  --timeout seconds
+  oxfer-agent.mjs send <file> [--once | --count N] [--chat <room-link>] [--link-file path]
+  oxfer-agent.mjs recv <share-link | room-link> [out-dir] [--wait seconds]
+  oxfer-agent.mjs chat <room-link> [--name N] [--say text] [--until regex] [--wait seconds]
+  oxfer-agent.mjs chat <room-link> --dir D [--name N] &   stay in the room in the background
+  oxfer-agent.mjs post D [--say text] [--until regex] [--wait seconds] | post D --leave
+  oxfer-agent.mjs room [--say text]            host a room here; prints ROOM and AGENT links
+Options: --browser chrome|chromium|firefox|webkit  --headed  --timeout seconds  --name N
          --origin https://oxfer.app/  --snap dir  --verbose
-Output lines: LINK <url>, SHARING, COMPLETE n (send); SAVED <path> <bytes> <sha256>, VERIFIED (recv).
-Exit codes: 0 ok, 1 usage, 2 failure, 3 saved but no verification receipt.`;
+Output lines: LINK <url>, SHARING, SERVED n, COMPLETE n, CHAT … (send);
+              SAVED <path> <bytes> <sha256>, VERIFIED (recv); one JSON object per event (chat).
+Exit codes: 0 ok, 1 usage, 2 failure, 3 saved but no verification receipt,
+            4 chat --until or post matched nothing within --wait.`;
 }
 
 export async function main(argv) {
@@ -496,8 +909,16 @@ export async function main(argv) {
         if (rest.length === 0) throw new Error("send needs a file");
         await send(rest, options);
     } else if (mode === "recv" || mode === "receive") {
-        if (rest.length === 0) throw new Error("recv needs a share link");
+        if (rest.length === 0) throw new Error("recv needs a share link or a room link");
         await recv(rest[0], rest[1] ?? ".", options);
+    } else if (mode === "chat") {
+        if (rest.length === 0) throw new Error("chat needs a room link");
+        await chat(rest[0], options);
+    } else if (mode === "post") {
+        if (rest.length === 0) throw new Error("post needs the folder given to chat --dir");
+        return post(rest[0], options);
+    } else if (mode === "room") {
+        await room(options);
     } else {
         throw new Error(`unknown mode ${mode}\n${usage()}`);
     }

@@ -81,6 +81,10 @@ routes stream bounded chunks and are required for larger downloads.
   fallback.
 - `assets/sw.js` — app cache plus capability-addressed, single-use streaming
   download responses with bounded demand/ack flow.
+- `src/chat.rs` — chat rooms on their own ALPN (`oxfer/chat/1`): a host endpoint that
+  checks the link capability, names guests and relays messages; `ChatHandle` is the
+  app's handle for both roles. `assets/chat-bridge.js` exposes the open room to page
+  scripts (`oxfer:chat` DOM events, `window.oxfer.chat.send`) for the agent script.
 - `src/webrtc.rs` and `assets/webrtc-channel.js` — browser data-channel
   implementation: SDP/ICE, bounded inbound queue, `bufferedAmount`
   backpressure, path stats, close/failure signalling, and relay fallback.
