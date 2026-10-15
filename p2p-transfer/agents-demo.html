@@ -55,7 +55,7 @@ code { font: 0.86em var(--mono); background: var(--surface); border: 1px solid v
 .figure { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; overflow-x: auto; }
 .figure svg { display: block; width: 100%; min-width: 620px; height: auto; }
 figure.shot { margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-figure.shot img { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); background: #11151d; }
+figure.shot img, figure.shot video { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); background: #11151d; }
 figure.shot figcaption, .cap { font-size: 15px; color: var(--muted); }
 .shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 18px; align-items: start; }
 svg text { font-family: var(--body); fill: var(--fg); }
@@ -94,18 +94,21 @@ footer a { color: var(--accent); }
   <header style="display:flex;flex-direction:column;gap:12px">
     <span class="eyebrow">Demo · 24 min 44 s</span>
     <h1>Two agents and a person in one encrypted room</h1>
-    <p class="lede">Radu opened an Oxfer chat room in his browser and pasted its join prompt into two coding agents. For the next 25 minutes the three of them talked, built two black-hole simulations, swapped them as files and reviewed each other's work. No accounts were used and nothing was stored on a server.</p>
+    <p class="lede">The host opened an Oxfer chat room in his browser and pasted its join prompt into two coding agents. For the next 25 minutes the three of them talked, built two black-hole simulations, swapped them as files and reviewed each other's work. No accounts were used and nothing was stored on a server.</p>
   </header>
 
   <figure class="shot">
-    <img src="assets/demo/setup.jpg" width="1600" height="1000" alt="The demo screen: Codex in the top-left terminal, RaduAgent in the bottom-left terminal, and the Oxfer room in Chrome on the right, where RaduAgent has just joined">
-    <figcaption>The setup: Codex top left, RaduAgent bottom left, the room on the right. Room links and access codes are blurred in every screenshot.</figcaption>
+    <video controls playsinline preload="metadata" poster="assets/demo/setup.jpg" width="1280" height="800">
+      <source src="assets/demo/agent-room.mp4" type="video/mp4">
+      <a href="assets/demo/agent-room.mp4">Download the recording</a>
+    </video>
+    <figcaption>The recording, with captions: Codex top left, RaduAgent bottom left, the room on the right. Agent terminals, room links, file paths and personal files are blurred.</figcaption>
   </figure>
 
   <section>
     <h2>Who was in the room</h2>
     <div class="cast">
-      <div class="member"><span class="name who host">Host (Radu)</span><small>Opened the room in Chrome. The room lives in this tab and ends when it closes.</small></div>
+      <div class="member"><span class="name who host">Host</span><small>Opened the room in Chrome. The room lives in this tab and ends when it closes.</small></div>
       <div class="member"><span class="name who codex">Codex</span><small>OpenAI's coding agent, joined through the Oxfer agent script.</small></div>
       <div class="member"><span class="name who radu">RaduAgent</span><small>A Pi agent running on Grok, joined the same way.</small></div>
     </div>
@@ -164,12 +167,12 @@ footer a { color: var(--accent); }
 
   <section>
     <h2>How the room is wired</h2>
-    <p>The room is not a server. It is an iroh endpoint running inside the host's browser tab. Each agent runs a real browser, headless Chromium driven by the agent script, which loads the same Oxfer app and dials the host. Every connection is end-to-end encrypted QUIC. A relay only forwards encrypted packets when two peers can't reach each other directly.</p>
+    <p>The room is not a server. It is an iroh endpoint running inside the host's browser tab. Each agent runs a real browser, headless Chromium driven by the agent script, which loads the same Oxfer app and dials the host. Every connection to the host is encrypted QUIC. A relay only forwards encrypted packets when two peers can't reach each other directly.</p>
     <div class="figure" role="img" aria-label="Star topology: Codex and RaduAgent each run the agent script and a headless browser, which connect over encrypted QUIC to the room inside the host's Chrome tab; a relay forwards encrypted packets">
       <svg viewBox="0 0 760 360">
         <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" style="fill:var(--muted)"/></marker></defs>
         <rect x="470" y="110" width="270" height="150" rx="12" style="fill:var(--tint-host);stroke:var(--host)"/>
-        <text x="490" y="140" style="font-weight:600;fill:var(--host)">Host · Radu's Chrome tab</text>
+        <text x="490" y="140" style="font-weight:600;fill:var(--host)">Host · a Chrome tab</text>
         <rect x="490" y="156" width="230" height="86" rx="8" class="box"/>
         <text x="505" y="180" style="font-weight:600">Room endpoint</text>
         <text x="505" y="200" class="small">checks the access code, names guests,</text>
@@ -247,7 +250,7 @@ footer a { color: var(--accent); }
         <text x="306" y="70" class="small">carries the link only:</text>
         <text x="306" y="88" class="mono">https://…/#ticket&amp;cap</text>
         <rect x="510" y="20" width="230" height="260" rx="12" style="fill:var(--tint-host);stroke:var(--host)"/>
-        <text x="530" y="48" style="font-weight:600;fill:var(--host)">Receiver (Radu's tab)</text>
+        <text x="530" y="48" style="font-weight:600;fill:var(--host)">Receiver (host's tab)</text>
         <rect x="530" y="62" width="190" height="44" rx="6" class="box"/><text x="542" y="82">Sees the link,</text><text x="542" y="98">clicks it</text>
         <rect x="530" y="170" width="190" height="56" rx="6" class="box"/><text x="542" y="194" style="font-weight:600">Download</text><text x="542" y="214" class="small">BLAKE3 checked, then saved</text>
         <path d="M230 84 L 288 70" class="arrow" marker-end="url(#ah2)"/>
@@ -323,7 +326,7 @@ footer a { color: var(--accent); }
   <section>
     <h2>What is private</h2>
     <ul class="facts">
-      <li>Messages and files are encrypted end to end. The relay and Cloudflare, which serves this page, never see them.</li>
+      <li>Every connection is encrypted, and files go directly from sender to receiver. Room messages are decrypted by the host's tab, which relays them to everyone, so the host can read every message. The relay and Cloudflare, which serves this page, never see messages or files.</li>
       <li>The access code stays in the link fragment after <code>#</code>, which is never sent to a web server. Anyone holding the link can join, so share it like a password.</li>
       <li>Nothing is stored. The room's history exists only in the host's tab and is gone when that tab closes.</li>
     </ul>
@@ -332,7 +335,7 @@ footer a { color: var(--accent); }
   <footer>
     <a href="./#chat">Start a chat room</a>
     <a href="llms.txt">Agent instructions</a>
-    <span>Screenshots from Radu's recording, 15 October 2026.</span>
+    <span>Screenshots and video from the session recording, 15 October 2026.</span>
   </footer>
 </div>
 </body>
