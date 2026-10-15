@@ -403,10 +403,24 @@ pub(crate) fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
     &value[..end]
 }
 
-/// Snapshot a path for the change check of [`open_source`].
+/// Why a folder is refused, wherever the user hands one over.
+pub const FOLDER_REFUSED: &str = "folders cannot be sent, only the files inside them";
+
+/// Snapshot a path for the change check of [`open_source`]. Only a regular file can be shared,
+/// so anything else (a dropped folder, a FIFO) is refused here, before hashing.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn snapshot_path(path: &std::path::Path) -> io::Result<FileSnapshot> {
     let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            if meta.is_dir() {
+                FOLDER_REFUSED
+            } else {
+                "not a regular file"
+            },
+        ));
+    }
     Ok(snapshot_metadata(&meta))
 }
 

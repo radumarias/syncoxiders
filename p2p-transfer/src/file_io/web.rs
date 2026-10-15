@@ -132,6 +132,21 @@ impl Source for WebFileSource {
     }
 }
 
+/// Read a browser file's first byte. A dropped folder arrives as a `File` that cannot be read,
+/// which the picker never returns, so this tells the two apart before hashing.
+pub async fn probe_readable(file: &web_sys::File) -> io::Result<()> {
+    if file.size() > 0.0 {
+        return WebFileSource::new(file.clone()).read(0, 1).await.map(drop);
+    }
+    // A folder often reports size 0, and a zero-length slice can resolve without touching the
+    // underlying entry, so read the `File` itself: that rejects for a folder and costs nothing
+    // for a genuinely empty file.
+    JsFuture::from(file.array_buffer())
+        .await
+        .map(drop)
+        .map_err(|e| io::Error::other(format!("could not read the file: {e:?}")))
+}
+
 /// File System Access sink (Chromium): streams straight to the location the user picked.
 pub struct FsaSink {
     handle: Option<SendWrapper<JsValue>>,
