@@ -17,6 +17,7 @@ const checks = [
     ["/theme.html", "theme.html", "text/html"],
     ["/agents-demo.html", "agents-demo.html", "text/html"],
     ["/assets/demo/setup.jpg", "assets/demo/setup.jpg", "image/jpeg"],
+    ["/assets/demo/agent-room.mp4", "assets/demo/agent-room.mp4", "video/mp4"],
     ["/llms.txt", "llms.txt", "text/plain"],
     ["/oxfer-agent.mjs", "oxfer-agent.mjs", "javascript"],
     ["/assets/favicon.js", "assets/favicon.js", "javascript"],
