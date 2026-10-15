@@ -1072,10 +1072,13 @@ impl P2PTransfer {
 
     /// Queue files dropped on the window, as if each had been picked.
     fn accept_dropped_files(&mut self, ctx: &egui::Context) {
-        if !self.can_pick_files() || ctx.input(|i| i.raw.dropped_files.is_empty()) {
+        if !self.can_pick_files() {
             return;
         }
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+        if dropped.is_empty() {
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         for file in dropped {
             self.queue_path(file.path().to_path_buf());
@@ -1090,7 +1093,9 @@ impl P2PTransfer {
             if files.is_empty() {
                 return;
             }
-            set_transfer_wake_lock(true);
+            // No wake lock here: a drop is not a user activation, and `logic` resets the lock
+            // to `needs_wake_lock()` this same frame, before the probes below have queued
+            // anything. The lock follows once hashing starts.
             let picks = self.pending_picks.clone();
             let errors = self.node_error.clone();
             let repaint = self.repaint.clone();
@@ -1800,6 +1805,15 @@ impl P2PTransfer {
             Ok(mut picks) if !picks.is_empty() => picks.drain(..).collect(),
             _ => return,
         };
+        // A pick can land after the mode changed under it (a dropped file's async probe, or a
+        // link opened while the picker was up); it must not tear down a receive or a room.
+        if !self.can_pick_files() {
+            log::debug!(
+                "discarding {} pick(s) that arrived outside Send",
+                picks.len()
+            );
+            return;
+        }
         for pick in picks {
             let handle = self.begin_prepare(pick);
             match &mut self.mode {
