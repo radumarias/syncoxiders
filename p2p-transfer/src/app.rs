@@ -4258,9 +4258,9 @@ impl P2PTransfer {
             }
             ui.add_space(6.0);
             inset(&tc, egui::Margin::same(10)).show(ui, |ui| {
-                ui.set_min_height(260.0);
+                ui.set_min_height(320.0);
                 egui::ScrollArea::vertical()
-                    .max_height(if compact { 380.0 } else { 520.0 })
+                    .max_height(if compact { 460.0 } else { 680.0 })
                     .stick_to_bottom(true)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -4830,6 +4830,58 @@ impl eframe::App for P2PTransfer {
                 });
             });
         keep_text_agent_on_screen(ctx);
+        paint_press_feedback(ctx, &tc);
+    }
+}
+
+/// How long a clicked button keeps a fading tint after the pointer lets go.
+const PRESS_FLASH_SECS: f64 = 0.3;
+
+/// Shows that a click landed: a tint on any clickable widget while it is held, fading out
+/// after the click. Most buttons here set their own fill, which egui keeps in every state,
+/// and a quick click is held for a frame or two, so without this nothing visibly changes.
+fn paint_press_feedback(ctx: &egui::Context, tc: &Tc) {
+    let flash_key = egui::Id::new("press_flash");
+    let now = ctx.input(|i| i.time);
+    let held = ctx.input(|i| i.pointer.primary_down());
+    let (clicked, hovered) = ctx.interaction_snapshot(|s| (s.clicked, s.hovered.clone()));
+    if let Some(id) = clicked {
+        ctx.data_mut(|d| d.insert_temp(flash_key, (id, now)));
+    }
+    let flash = ctx
+        .data(|d| d.get_temp::<(egui::Id, f64)>(flash_key))
+        .filter(|(_, at)| now - at < PRESS_FLASH_SECS);
+    let mut tinted: Vec<(egui::Id, f32)> = Vec::new();
+    if held {
+        tinted.extend(hovered.into_iter().map(|id| (id, 1.0)));
+    }
+    if let Some((id, at)) = flash {
+        let left = (1.0 - (now - at) / PRESS_FLASH_SECS) as f32;
+        tinted.push((id, left));
+        ctx.request_repaint();
+    }
+    for (id, strength) in tinted {
+        let Some(response) = ctx.read_response(id) else {
+            continue;
+        };
+        // Buttons, links and toggles; not text fields, which sense drags too.
+        if response.sense != egui::Sense::click() || !response.enabled() {
+            continue;
+        }
+        let alpha = (56.0 * strength) as u8;
+        let tint = Color32::from_rgba_unmultiplied(
+            tc.on_surface.r(),
+            tc.on_surface.g(),
+            tc.on_surface.b(),
+            alpha,
+        );
+        ctx.layer_painter(response.layer_id)
+            .with_clip_rect(response.interact_rect)
+            .rect_filled(
+                response.rect,
+                CornerRadius::same(tc.theme.control_radius()),
+                tint,
+            );
     }
 }
 
