@@ -61,9 +61,40 @@ enum Theme {
     Rusty,
     #[default]
     Clean,
-    /// A vector CRT: one green phosphor on black, wireframe outlines, monospace type. Light
-    /// mode is the same machine's green-bar line-printer paper.
+    /// An 80s digital dashboard: one green phosphor on black, wireframe outlines, and
+    /// 14-segment display type. Light mode is the same machine's green-bar line-printer paper.
     Phosphor,
+}
+
+/// Phosphor's 14-segment display face; see `assets/fonts/derive-oxfer-segment.py`.
+const SEGMENT_FONT: &str = "Oxfer Segment";
+
+/// Registers [`SEGMENT_FONT`] as its own family, falling back to egui's monospace fonts for
+/// the glyphs a segment display cannot draw.
+fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        SEGMENT_FONT.to_owned(),
+        Arc::new(
+            egui::FontData::from_static(include_bytes!("../assets/fonts/OxferSegment-Italic.ttf"))
+                .tweak(egui::FontTweak {
+                    // A segment cell is a full em tall and 0.82 em wide; this brings it to
+                    // monospace's cap height and advance, so layouts sized for it still fit.
+                    scale: 0.74,
+                    ..Default::default()
+                }),
+        ),
+    );
+    let mut family = fonts
+        .families
+        .get(&egui::FontFamily::Monospace)
+        .cloned()
+        .unwrap_or_default();
+    family.insert(0, SEGMENT_FONT.to_owned());
+    fonts
+        .families
+        .insert(egui::FontFamily::Name(SEGMENT_FONT.into()), family);
+    ctx.set_fonts(fonts);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -110,8 +141,16 @@ impl Theme {
         }
     }
 
-    /// Set all UI text in the monospace family, not only meta, links, and logs.
-    const fn monospace(self) -> bool {
+    /// The family for all UI text except `.monospace()` meta, links, and logs.
+    fn text_family(self) -> egui::FontFamily {
+        match self {
+            Self::Phosphor => egui::FontFamily::Name(SEGMENT_FONT.into()),
+            Self::Rusty | Self::Clean => egui::FontFamily::Proportional,
+        }
+    }
+
+    /// Whether [`Self::text_family`] runs wider than egui's proportional face.
+    const fn wide_type(self) -> bool {
         matches!(self, Self::Phosphor)
     }
 
@@ -664,6 +703,7 @@ impl Drop for HashChangeListener {
 
 impl P2PTransfer {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        install_fonts(&cc.egui_ctx);
         #[cfg(target_arch = "wasm32")]
         cc.egui_ctx
             .options_mut(|options| options.sync_window_theme = false);
@@ -1856,11 +1896,7 @@ impl P2PTransfer {
             v.window_shadow = tc.glow;
             v.popup_shadow = tc.glow;
         }
-        let family = if theme.monospace() {
-            egui::FontFamily::Monospace
-        } else {
-            egui::FontFamily::Proportional
-        };
+        let family = theme.text_family();
         let tweak = |style: &mut egui::Style| {
             style.spacing.button_padding = egui::vec2(18.0, 11.0);
             style.spacing.item_spacing = egui::vec2(10.0, 10.0);
@@ -2010,7 +2046,7 @@ fn outline_button(tc: &Tc, label: &str, color: Color32) -> Button<'static> {
 }
 
 /// The width of a fixed-width button: its design width `min`, or wider when any of `texts`
-/// needs more room on one line in the current font, so monospace labels still fit.
+/// needs more room on one line in the current font, so wider type still fits.
 fn fit_width<const N: usize>(ui: &Ui, texts: [RichText; N], min: f32) -> f32 {
     texts.into_iter().fold(min, |width, text| {
         let text = egui::WidgetText::from(text).into_galley(
@@ -2024,10 +2060,99 @@ fn fit_width<const N: usize>(ui: &Ui, texts: [RichText; N], min: f32) -> f32 {
 }
 
 /// egui rounds a progress bar to half its height; keep that, under the theme's corner cap.
-fn progress_bar(tc: &Tc, progress: f32, height: f32) -> egui::ProgressBar {
-    egui::ProgressBar::new(progress)
-        .desired_height(height)
-        .corner_radius(tc.corner((height / 2.0) as u8))
+/// Phosphor draws a dashboard bar graph instead: a row of segments that light up in turn,
+/// with the unlit ones still faintly visible.
+fn progress_bar(tc: &Tc, progress: f32, height: f32) -> impl egui::Widget {
+    let tc = *tc;
+    move |ui: &mut Ui| {
+        if tc.theme != Theme::Phosphor {
+            return ui.add(
+                egui::ProgressBar::new(progress)
+                    .desired_height(height)
+                    .corner_radius(tc.corner((height / 2.0) as u8)),
+            );
+        }
+        const PITCH: f32 = 6.0;
+        const GAP: f32 = 2.0;
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), height),
+            egui::Sense::hover(),
+        );
+        let count = ((rect.width() + GAP) / PITCH).floor().max(1.0);
+        // Spread the leftover width over the gaps so the last segment ends flush.
+        let pitch = (rect.width() + GAP) / count;
+        let lit = progress.clamp(0.0, 1.0) * count;
+        let painter = ui.painter();
+        for index in 0..count as usize {
+            let left = rect.left() + index as f32 * pitch;
+            let segment = egui::Rect::from_x_y_ranges(left..=left + pitch - GAP, rect.y_range());
+            // The segment the bar is partway through glows in proportion.
+            let level = (lit - index as f32).clamp(0.0, 1.0);
+            let color = if level > 0.0 {
+                tc.primary.gamma_multiply(level.max(0.25))
+            } else {
+                unlit(&tc)
+            };
+            painter.rect_filled(segment, 0.0, color);
+        }
+        response
+    }
+}
+
+/// An unlit segment: the faint ghost a dark segment display shows of every digit it can draw.
+fn unlit(tc: &Tc) -> Color32 {
+    tc.outline_var.gamma_multiply(0.6)
+}
+
+/// A card's heading.
+fn card_title(ui: &mut Ui, tc: &Tc, text: &str) {
+    heading(ui, tc, text, 21.0);
+}
+
+/// A heading. Phosphor draws it as a lit segment display: the unlit segments of every cell
+/// show faintly behind it, and in the dark the lit ones bloom.
+fn heading(ui: &mut Ui, tc: &Tc, text: &str, size: f32) {
+    if tc.theme != Theme::Phosphor {
+        ui.add(
+            egui::Label::new(RichText::new(text).color(tc.on_surface).size(size).strong()).wrap(),
+        );
+        return;
+    }
+    let (pos, galley, response) =
+        egui::Label::new(RichText::new(text).color(tc.primary).size(size))
+            .wrap()
+            .selectable(false)
+            .layout_in_ui(ui);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), galley.text())
+    });
+    if !ui.is_rect_visible(response.rect) {
+        return;
+    }
+    // `~` lights all fourteen segments and is one byte wide, like the ASCII letters and
+    // digits it replaces, so the ghost keeps the heading's sections, wrapping, and alignment.
+    let mut ghost = (*galley.job).clone();
+    ghost.text = ghost
+        .text
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { '~' } else { c })
+        .collect();
+    for section in &mut ghost.sections {
+        section.format.color = unlit(tc);
+    }
+    let painter = ui.painter();
+    painter.galley(pos, painter.layout_job(ghost), unlit(tc));
+    if ui.visuals().dark_mode {
+        let bloom = tc.primary.gamma_multiply(0.18);
+        for offset in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+            painter.galley_with_override_text_color(
+                pos + egui::Vec2::from(offset),
+                galley.clone(),
+                bloom,
+            );
+        }
+    }
+    painter.galley(pos, galley, tc.primary);
 }
 
 fn compact(ui: &Ui) -> bool {
@@ -2082,18 +2207,22 @@ fn file_attachment(ui: &mut Ui, tc: &Tc, name: &str, detail: &str, outgoing: boo
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                egui::Frame::new()
-                    .fill(tc.primary)
-                    .corner_radius(tc.corner(18))
-                    .inner_margin(egui::Margin::same(9))
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(if outgoing { "↑" } else { "↓" })
-                                .color(tc.on_primary)
-                                .strong()
-                                .size(17.0),
-                        );
-                    });
+                if tc.theme == Theme::Phosphor {
+                    direction_telltale(ui, tc, outgoing);
+                } else {
+                    egui::Frame::new()
+                        .fill(tc.primary)
+                        .corner_radius(tc.corner(18))
+                        .inner_margin(egui::Margin::same(9))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new(if outgoing { "↑" } else { "↓" })
+                                    .color(tc.on_primary)
+                                    .strong()
+                                    .size(17.0),
+                            );
+                        });
+                }
                 ui.vertical(|ui| {
                     ui.add(
                         egui::Label::new(
@@ -2115,6 +2244,53 @@ fn file_attachment(ui: &mut Ui, tc: &Tc, name: &str, detail: &str, outgoing: boo
         });
 }
 
+/// Phosphor's icons are a dashboard's warning lamps: bold solid symbols lit on a black
+/// housing, glowing in the dark. `draw` paints the symbol in `lit`, cutting details out in
+/// the housing color it is also given.
+fn telltale(
+    ui: &Ui,
+    tc: &Tc,
+    rect: egui::Rect,
+    draw: impl FnOnce(&egui::Painter, egui::Pos2, Color32, Color32),
+) {
+    let painter = ui.painter();
+    let housing = tc.surface_lowest;
+    painter.rect(
+        rect,
+        tc.corner(12),
+        housing,
+        Stroke::new(1.0, tc.outline_var),
+        egui::StrokeKind::Inside,
+    );
+    let center = rect.center();
+    if ui.visuals().dark_mode {
+        let radius = rect.width().min(rect.height()) * 0.42;
+        for (scale, alpha) in [(1.0, 0.06), (0.7, 0.08)] {
+            painter.circle_filled(center, radius * scale, tc.primary.gamma_multiply(alpha));
+        }
+    }
+    draw(painter, center, tc.primary, housing);
+}
+
+/// A transfer direction, as a solid lamp arrow.
+fn direction_telltale(ui: &mut Ui, tc: &Tc, outgoing: bool) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
+    telltale(ui, tc, rect, |painter, center, lit, _| {
+        let sign = if outgoing { -1.0 } else { 1.0 };
+        let at = |x: f32, y: f32| center + egui::vec2(x, sign * y);
+        painter.add(egui::Shape::convex_polygon(
+            vec![at(0.0, -10.0), at(9.0, -1.0), at(-9.0, -1.0)],
+            lit,
+            Stroke::NONE,
+        ));
+        painter.rect_filled(
+            egui::Rect::from_two_pos(at(-3.5, -2.0), at(3.5, 10.0)),
+            0.0,
+            lit,
+        );
+    });
+}
+
 #[derive(Clone, Copy)]
 enum HomeIcon {
     File,
@@ -2124,6 +2300,47 @@ enum HomeIcon {
 
 fn home_story_icon(ui: &mut Ui, tc: &Tc, icon: HomeIcon) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(48.0, 48.0), egui::Sense::hover());
+    if tc.theme == Theme::Phosphor {
+        telltale(ui, tc, rect, |painter, center, lit, cut| match icon {
+            HomeIcon::File => {
+                let corner = |x: f32, y: f32| center + egui::vec2(x, y);
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        corner(-10.0, -14.0),
+                        corner(4.0, -14.0),
+                        corner(10.0, -8.0),
+                        corner(10.0, 14.0),
+                        corner(-10.0, 14.0),
+                    ],
+                    lit,
+                    Stroke::NONE,
+                ));
+                for y in [-3.0, 3.0, 9.0] {
+                    painter.hline(
+                        center.x - 6.0..=center.x + 6.0,
+                        center.y + y,
+                        Stroke::new(2.5, cut),
+                    );
+                }
+            }
+            HomeIcon::Link => {
+                let stroke = Stroke::new(4.0, lit);
+                painter.circle_stroke(center + egui::vec2(-6.0, 5.0), 8.0, stroke);
+                painter.circle_stroke(center + egui::vec2(6.0, -5.0), 8.0, stroke);
+            }
+            HomeIcon::Device => {
+                let body = egui::Rect::from_center_size(center, egui::vec2(22.0, 30.0));
+                painter.rect_filled(body, 4.0, lit);
+                let screen = egui::Rect::from_center_size(
+                    center - egui::vec2(0.0, 2.0),
+                    egui::vec2(15.0, 19.0),
+                );
+                painter.rect_filled(screen, 1.0, cut);
+                painter.circle_filled(center + egui::vec2(0.0, 11.0), 2.0, cut);
+            }
+        });
+        return;
+    }
     let painter = ui.painter();
     painter.rect_filled(rect, tc.corner(12), tc.surface_high);
     let center = rect.center();
@@ -2400,14 +2617,11 @@ impl P2PTransfer {
             .show(ui, |ui| {
                 ui.horizontal(|ui| pill(ui, &tc, "NO ACCOUNT NEEDED", true));
                 ui.add_space(12.0);
-                ui.add(
-                    egui::Label::new(
-                        RichText::new("Send files without cloud storage.")
-                            .color(tc.on_surface)
-                            .size(if compact { 26.0 } else { 34.0 })
-                            .strong(),
-                    )
-                    .wrap(),
+                heading(
+                    ui,
+                    &tc,
+                    "Send files without cloud storage.",
+                    if compact { 26.0 } else { 34.0 },
                 );
                 ui.add_space(10.0);
                 ui.add(
@@ -2465,12 +2679,7 @@ impl P2PTransfer {
                 );
             });
         ui.add_space(if compact { 16.0 } else { 24.0 });
-        ui.label(
-            RichText::new("From your device to theirs")
-                .color(tc.on_surface)
-                .size(21.0)
-                .strong(),
-        );
+        card_title(ui, &tc, "From your device to theirs");
         ui.add_space(10.0);
         if compact {
             for (index, (icon, title, body)) in STEPS.into_iter().enumerate() {
@@ -2602,21 +2811,11 @@ impl P2PTransfer {
 
         card(&tc).show(ui, |ui| {
             if compact {
-                ui.label(
-                    RichText::new("Send a file")
-                        .color(tc.on_surface)
-                        .size(21.0)
-                        .strong(),
-                );
+                card_title(ui, &tc, "Send a file");
                 pill(ui, &tc, "ENCRYPTED", true);
             } else {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new("Send a file")
-                            .color(tc.on_surface)
-                            .size(21.0)
-                            .strong(),
-                    );
+                    card_title(ui, &tc, "Send a file");
                     pill(ui, &tc, "ENCRYPTED", true);
                 });
             }
@@ -2952,21 +3151,11 @@ impl P2PTransfer {
 
         card(&tc).show(ui, |ui| {
             if compact {
-                ui.label(
-                    RichText::new("Receive on this device")
-                        .color(tc.on_surface)
-                        .size(21.0)
-                        .strong(),
-                );
+                card_title(ui, &tc, "Receive on this device");
                 pill(ui, &tc, "ENCRYPTED", true);
             } else {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new("Receive on this device")
-                            .color(tc.on_surface)
-                            .size(21.0)
-                            .strong(),
-                    );
+                    card_title(ui, &tc, "Receive on this device");
                     pill(ui, &tc, "ENCRYPTED", true);
                 });
             }
@@ -3255,12 +3444,7 @@ impl P2PTransfer {
         ui.add_space(12.0);
         card(&tc).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new("Saved files in this browser")
-                        .color(tc.on_surface)
-                        .size(21.0)
-                        .strong(),
-                );
+                card_title(ui, &tc, "Saved files in this browser");
                 if ui
                     .add_enabled(!busy, outline_button(&tc, "Refresh", tc.outline))
                     .clicked()
@@ -3448,9 +3632,9 @@ impl P2PTransfer {
     }
 
     fn show_header(&mut self, ui: &mut Ui, ctx: &egui::Context, tc: &Tc) {
-        // Monospace labels run wider, so the full Send header needs more room before its
+        // Segment labels run wider, so the full Send header needs more room before its
         // controls stop crowding the mode pill.
-        let compact = ui.available_width() < if tc.theme.monospace() { 760.0 } else { 680.0 };
+        let compact = ui.available_width() < if tc.theme.wide_type() { 760.0 } else { 680.0 };
         ui.set_height(64.0);
         ui.horizontal_centered(|ui| {
             {
@@ -3906,6 +4090,24 @@ mod tests {
     }
 
     #[test]
+    fn local_test_segment_ghost_matches_lit_text() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let font = egui::FontId::new(21.0, Theme::Phosphor.text_family());
+            let width = |text: &str| {
+                ui.painter()
+                    .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            };
+            // `heading` relies on `~` having every letter's and digit's advance.
+            assert_eq!(width("Send a file 42"), width("~~~~ ~ ~~~~ ~~"));
+        });
+        output.drop_without_applying_deltas();
+    }
+
+    #[test]
     fn local_test_phosphor_shape_and_type_do_not_leak_into_other_themes() {
         for dark in [false, true] {
             let phosphor = Tc::of(Theme::Phosphor, dark);
@@ -3916,14 +4118,14 @@ mod tests {
                 assert_eq!(tc.corner(20), CornerRadius::same(20));
                 assert_eq!(tc.glow, egui::Shadow::NONE);
                 assert_eq!(tc.backdrop, Backdrop::Plain);
-                assert!(!theme.monospace());
+                assert!(!theme.wide_type());
             }
         }
 
         // Switching away from Phosphor must restore proportional text in the same context.
         let ctx = egui::Context::default();
         for (theme, family) in [
-            (Theme::Phosphor, egui::FontFamily::Monospace),
+            (Theme::Phosphor, egui::FontFamily::Name(SEGMENT_FONT.into())),
             (Theme::Clean, egui::FontFamily::Proportional),
         ] {
             let output = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -4007,6 +4209,7 @@ mod tests {
                 })),
             ] {
                 let ctx = egui::Context::default();
+                install_fonts(&ctx);
                 let mut app = P2PTransfer {
                     theme,
                     mode,
