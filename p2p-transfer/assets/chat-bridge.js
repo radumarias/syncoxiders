@@ -6,6 +6,8 @@
 //   window.oxfer.chat.leave()                               // leave now (a host closes the room), so
 //                                                           // the others see it at once, not after a timeout
 // Installed only while a room is open; removed when the page leaves it.
+// Closing or navigating away from the tab leaves the room too (best effort, on
+// `pagehide`), so a person who just closes the tab drops off the roster right away.
 
 let sender = null;
 let leaver = null;
@@ -26,6 +28,11 @@ export function installChatSender(send, leave) {
     },
   };
 }
+
+// `pagehide`, not `visibilitychange`: a phone that backgrounds the tab stays in the room.
+window.addEventListener('pagehide', () => {
+  if (leaver) leaver();
+});
 
 export function removeChatSender() {
   sender = null;
