@@ -528,12 +528,16 @@ class Session {
         // Leave rooms first: a browser that just vanishes stays listed until the host's
         // connection times out. The pause lets the close reach the host.
         const pages = this.context?.pages() ?? [];
-        const left = await Promise.all(pages.map(page =>
-            page.evaluate(() => {
-                const chat = globalThis.oxfer?.chat;
-                chat?.leave?.();
-                return Boolean(chat);
-            }).catch(() => false)));
+        const left = await Promise.race([
+            Promise.all(pages.map(page =>
+                page.evaluate(() => {
+                    const chat = globalThis.oxfer?.chat;
+                    chat?.leave?.();
+                    return Boolean(chat);
+                }).catch(() => false))),
+            // A page busy hashing or stuck must not hold up exit.
+            sleep(2000).then(() => []),
+        ]);
         if (left.some(Boolean)) await sleep(500);
         // A page mid-transfer can keep browser.close() waiting; never hang exit on it.
         await Promise.race([this.browser?.close().catch(() => {}), sleep(5000)]);
@@ -660,14 +664,15 @@ async function recv(link, outDir, options) {
             session.say(`CHAT joined as ${chatYou}; members: ${joined.members.join(", ")}`);
             const isShare = e => e.type === "message" && e.from !== chatYou && findShareLink(e.text, link);
             // The host replays recent messages, oldest first, right after accepting us. An
-            // older link may belong to a sender that already stopped, so let the replay
-            // settle and take the newest link in it before waiting for a live one.
-            await session.chatSettled();
-            const posted = session.chat.items.findLast(isShare) ?? await session.waitForChat(
+            // older link may belong to a sender that already stopped, so once a link shows
+            // up (replayed or live) let the replay settle and take the newest one.
+            await session.waitForChat(
                 isShare,
                 positiveNumber(options.wait ?? 600, "--wait") * 1000,
                 "a share link to be posted in the room (--wait seconds)",
             );
+            await session.chatSettled();
+            const posted = session.chat.items.findLast(isShare);
             link = findShareLink(posted.text, link);
             session.say(`CHAT ${posted.from} posted a share link`);
             session.page = await session.newPage();

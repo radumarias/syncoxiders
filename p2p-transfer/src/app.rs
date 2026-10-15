@@ -680,7 +680,16 @@ impl ChatBridge {
             move |text: String| queue_say(&commands, &text)
         });
         let leave = wasm_bindgen::closure::Closure::new(move || {
-            let _ = commands.try_send(ChatCommand::Leave);
+            // Unlike a message, a leave must not be dropped when the queue is full: then
+            // the member would stay listed until the connection times out.
+            if let Err(mpsc::error::TrySendError::Full(leave)) =
+                commands.try_send(ChatCommand::Leave)
+            {
+                let commands = commands.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let _ = commands.send(leave).await;
+                });
+            }
         });
         install_chat_sender(send.as_ref(), leave.as_ref());
         Self {
@@ -4384,12 +4393,21 @@ impl P2PTransfer {
 /// for it, gives it a task, and shows a foreground command that needs no checkout: a
 /// long-lived background process fed through a pipe is what permission checks refuse.
 fn agent_prompt(link: &str) -> String {
-    // Only the scheme and host go into the unquoted `curl` line: the page's query string
-    // could carry shell syntax. The link itself is single-quoted for the shell.
-    let origin = url::Url::parse(link)
-        .map(|url| url.origin().ascii_serialization())
-        .unwrap_or_else(|_| "https://oxfer.app".to_string());
-    let link = format!("'{}'", link.replace('\'', "'\\''"));
+    // The app's address without its query or fragment, so a sub-path deployment still
+    // works; everything that reaches a shell is single-quoted, since a path or query can
+    // carry shell syntax.
+    let base = url::Url::parse(link)
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https"))
+        .map(|mut url| {
+            url.set_query(None);
+            url.set_fragment(None);
+            url.as_str().trim_end_matches('/').to_string()
+        })
+        .unwrap_or_else(|| "https://oxfer.app".to_string());
+    let quote = |text: &str| format!("'{}'", text.replace('\'', "'\\''"));
+    let script = quote(&format!("{base}/oxfer-agent.mjs"));
+    let link = quote(link);
     format!(
         "Join this Oxfer chat room as my agent: say hello, then do what the people in the \
          room ask, such as replying or sending and receiving files. Keep listening until the \
@@ -4397,7 +4415,7 @@ fn agent_prompt(link: &str) -> String {
          private room invite, so use it only for this.\n\
          \n\
          Set up once, in an empty folder (needs Node 22 or later and Google Chrome):\n\
-         \x20 curl -fsSLO {origin}/oxfer-agent.mjs && npm init -y >/dev/null && npm i playwright@1.56.1 pngjs@7.0.0\n\
+         \x20 curl -fsSLO {script} && npm init -y >/dev/null && npm i playwright@1.56.1 pngjs@7.0.0\n\
          \n\
          If you can run a background command, stay in the room. Start this once in the \
          background:\n\
@@ -4411,7 +4429,7 @@ fn agent_prompt(link: &str) -> String {
          and leaves:\n\
          \x20 node oxfer-agent.mjs chat {link} --name <your name> --say '<message>' --until . --wait 300\n\
          \n\
-         Files, and everything else: {origin}/llms.txt\n"
+         Files, and everything else: {base}/llms.txt\n"
     )
 }
 
@@ -4485,7 +4503,6 @@ fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
     let Some(links) = &state.links else {
         return;
     };
-    let prompt = agent_prompt(&links.agent);
     let copied = state.copied == Some(Copied::AgentLink);
     let mut copy = false;
     let mut toggle = false;
@@ -4515,7 +4532,7 @@ fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
             } else {
                 "📋 Copy prompt"
             };
-            let width = fit_width(ui, ["✔ Copied", "📋 Copy prompt"].map(outline_text), 150.0);
+            let width = fit_width(ui, ["✔ Copied", "📋 Copy prompt"].map(primary_text), 150.0);
             let button = if state.for_agents {
                 primary_button(tc, label).fill(if copied { tc.secondary } else { tc.primary })
             } else {
@@ -4549,7 +4566,7 @@ fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
                         .show(ui, |ui| {
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(prompt.as_str())
+                                    RichText::new(agent_prompt(&links.agent))
                                         .monospace()
                                         .size(12.0)
                                         .color(tc.on_surface),
@@ -4864,14 +4881,14 @@ mod tests {
         let prompt = agent_prompt(link);
         assert!(prompt.contains("https://chat-oxfer.example.dev/llms.txt"));
         assert!(prompt.contains(&format!("chat '{link}' --name")));
-        assert!(prompt.contains("curl -fsSLO https://chat-oxfer.example.dev/oxfer-agent.mjs"));
+        assert!(prompt.contains("curl -fsSLO 'https://chat-oxfer.example.dev/oxfer-agent.mjs'"));
     }
 
     #[test]
     fn local_test_agent_prompt_keeps_shell_syntax_out_of_its_commands() {
         let link = "https://oxfer.app/it's?q=$(id)#chat&endpointabc&cap=00ff&agent";
         let prompt = agent_prompt(link);
-        assert!(prompt.contains("curl -fsSLO https://oxfer.app/oxfer-agent.mjs &&"));
+        assert!(prompt.contains("curl -fsSLO 'https://oxfer.app/it'\\''s/oxfer-agent.mjs' &&"));
         assert!(prompt.contains("chat 'https://oxfer.app/it'\\''s?q=$(id)#chat"));
         assert!(!prompt.contains("chat https://"));
     }

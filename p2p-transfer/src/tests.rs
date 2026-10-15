@@ -3552,7 +3552,14 @@ async fn local_test_chat_room_relays_messages_between_guests_over_loopback() {
                 name: "Ana 2".into()
             }
         );
-        drop(host);
+        assert!(matches!(
+            next_event(&mut ana2, "ana2's own session ends").await,
+            ChatEvent::Closed
+        ));
+        host.commands
+            .send(ChatCommand::Leave)
+            .await
+            .expect("the host takes commands");
         assert!(matches!(
             next_event(&mut ana, "ana sees room close").await,
             ChatEvent::Closed | ChatEvent::Failed(_)
