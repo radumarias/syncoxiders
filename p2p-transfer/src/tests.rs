@@ -136,11 +136,11 @@ fn test_cap(seed: u8) -> [u8; CAP_LEN] {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-struct TestDir(std::path::PathBuf);
+pub(crate) struct TestDir(pub(crate) std::path::PathBuf);
 
 #[cfg(not(target_arch = "wasm32"))]
 impl TestDir {
-    fn new(label: &str) -> Self {
+    pub(crate) fn new(label: &str) -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(

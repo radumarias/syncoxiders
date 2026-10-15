@@ -989,15 +989,6 @@ impl P2PTransfer {
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        // The picker only returns files; a drop can carry a folder, which the protocol has no
-        // way to send.
-        if path.is_dir() {
-            Self::report(
-                &self.node_error,
-                format!("{name} is a folder: drop or choose the files inside it"),
-            );
-            return;
-        }
         // The snapshot is taken *before* hashing, so `open_source` can tell later whether the
         // bytes still match the hash the manifest advertises.
         match file_io::snapshot_path(&path) {
@@ -1081,10 +1072,10 @@ impl P2PTransfer {
 
     /// Queue files dropped on the window, as if each had been picked.
     fn accept_dropped_files(&mut self, ctx: &egui::Context) {
-        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
-        if dropped.is_empty() || !self.accepts_file_drop() {
+        if !self.can_pick_files() || ctx.input(|i| i.raw.dropped_files.is_empty()) {
             return;
         }
+        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         #[cfg(not(target_arch = "wasm32"))]
         for file in dropped {
             self.queue_path(file.path().to_path_buf());
@@ -1104,26 +1095,21 @@ impl P2PTransfer {
             let errors = self.node_error.clone();
             let repaint = self.repaint.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                // A dropped folder arrives as a `File` that cannot be read, which the picker
-                // never returns. Reading its first byte tells the two apart before hashing.
                 for file in files {
-                    let readable = match file.slice_with_f64_and_f64(0.0, 1.0) {
-                        Ok(head) => wasm_bindgen_futures::JsFuture::from(head.array_buffer())
-                            .await
-                            .is_ok(),
-                        Err(_) => false,
-                    };
-                    if readable {
-                        Self::queue_web_file(&picks, file);
-                    } else {
-                        Self::report(
-                            &errors,
-                            format!(
-                                "{} is a folder or cannot be read: drop or choose the files \
-                                 inside it",
-                                file.name()
-                            ),
-                        );
+                    match file_io::web::probe_readable(&file).await {
+                        Ok(()) => Self::queue_web_file(&picks, file),
+                        Err(e) => {
+                            // The browser's error is a raw DOMException dump; keep it in the log.
+                            log::debug!("probe of {} failed: {e}", file.name());
+                            Self::report(
+                                &errors,
+                                format!(
+                                    "could not read {} ({})",
+                                    file.name(),
+                                    file_io::FOLDER_REFUSED
+                                ),
+                            );
+                        }
                     }
                 }
                 repaint.request_repaint();
@@ -1131,8 +1117,9 @@ impl P2PTransfer {
         }
     }
 
-    /// Drops are taken wherever the header offers "Choose File" (or Home offers "Send files").
-    fn accepts_file_drop(&self) -> bool {
+    /// Whether a picked or dropped file may start or join a share: the header's "Choose File"
+    /// (Home has its own "Send files") and drops both follow this.
+    fn can_pick_files(&self) -> bool {
         !matches!(self.mode, Mode::Receive(_) | Mode::Chat(_))
     }
 
@@ -3933,7 +3920,7 @@ impl P2PTransfer {
                 }
                 if !compact
                     && !at_home
-                    && !matches!(self.mode, Mode::Receive(_) | Mode::Chat(_))
+                    && self.can_pick_files()
                     && ui.add(primary_button(tc, "Choose File")).clicked()
                 {
                     self.pick_file();
@@ -4910,7 +4897,7 @@ impl eframe::App for P2PTransfer {
             });
         keep_text_agent_on_screen(ctx);
         paint_press_feedback(ctx, &tc);
-        if self.accepts_file_drop() {
+        if self.can_pick_files() {
             paint_drop_target(ctx, &tc);
         }
     }
@@ -4950,7 +4937,7 @@ fn paint_drop_target(ctx: &egui::Context, tc: &Tc) {
     let card = egui::Rect::from_center_size(target.center(), label.size() + egui::vec2(48.0, 28.0));
     painter.rect(
         card,
-        tc.corner(12),
+        tc.corner(tc.theme.card_radius()),
         tc.surface,
         Stroke::new(1.0, tc.primary),
         egui::StrokeKind::Inside,
@@ -5174,29 +5161,27 @@ mod tests {
         assert_eq!(restored.save_directory, app.save_directory);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    #[derive(Debug)]
-    struct TestDrop(std::path::PathBuf);
-
-    #[cfg(not(target_arch = "wasm32"))]
-    impl egui::DroppedFile for TestDrop {
-        fn path(&self) -> &std::path::Path {
-            &self.0
-        }
-
-        fn bytes(&self) -> Result<Vec<u8>, String> {
-            std::fs::read(&self.0).map_err(|e| e.to_string())
-        }
-    }
-
     /// A dropped file queues exactly like a picked one; a dropped folder is refused by name.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn local_test_dropped_files_queue_like_picks() {
-        let dir = std::env::temp_dir().join(format!("oxfer-drop-{}", std::process::id()));
-        let folder = dir.join("photos");
-        std::fs::create_dir_all(&folder).unwrap();
-        let file = dir.join("notes.txt");
+        #[derive(Debug)]
+        struct TestDrop(std::path::PathBuf);
+
+        impl egui::DroppedFile for TestDrop {
+            fn path(&self) -> &std::path::Path {
+                &self.0
+            }
+
+            fn bytes(&self) -> Result<Vec<u8>, String> {
+                std::fs::read(&self.0).map_err(|e| e.to_string())
+            }
+        }
+
+        let dir = crate::tests::TestDir::new("drop");
+        let folder = dir.0.join("photos");
+        std::fs::create_dir(&folder).unwrap();
+        let file = dir.0.join("notes.txt");
         std::fs::write(&file, b"hello").unwrap();
         let drops = || egui::RawInput {
             dropped_files: vec![
@@ -5218,27 +5203,18 @@ mod tests {
             assert!(matches!(&picks[0].origin, FileOrigin::Path(p) if *p == file));
         }
         let error = app.node_error.lock().unwrap().clone().unwrap();
-        assert!(error.contains("photos is a folder"), "{error}");
+        assert!(
+            error.contains("photos") && error.contains(file_io::FOLDER_REFUSED),
+            "{error}"
+        );
 
         // Receive has no picker, so it takes no drops either.
-        let mut app = P2PTransfer {
-            mode: Mode::Receive(Box::new(ReceiveState {
-                input: String::new(),
-                params: FragmentParams::default(),
-                handle: None,
-                error: None,
-                opening: false,
-                startup: Arc::default(),
-                save_pending: Arc::new(AtomicBool::new(false)),
-            })),
-            ..P2PTransfer::default()
-        };
+        let mut app = P2PTransfer::default();
+        app.set_receive(FragmentParams::default(), None, None, None, false);
         ctx.run_ui(drops(), |ui| app.accept_dropped_files(ui.ctx()))
             .drop_without_applying_deltas();
         assert!(app.pending_picks.lock().unwrap().is_empty());
         assert!(app.node_error.lock().unwrap().is_none());
-
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
