@@ -13,8 +13,8 @@ const CHROME = {
         dark: { header: "#0a1a0c", background: "#030a04" },
     },
     spacex: {
-        light: { header: "#ffffff", background: "#ebebed" },
-        dark: { header: "#15181c", background: "#050507" },
+        light: { header: "#ffffff", background: "#f0f0f5" },
+        dark: { header: "#111111", background: "#000000" },
     },
 };
 
