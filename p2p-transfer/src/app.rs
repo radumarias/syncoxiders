@@ -77,6 +77,10 @@ enum Theme {
     /// A vector CRT: one green phosphor on black, wireframe outlines, monospace type. Light
     /// mode is the same machine's green-bar line-printer paper.
     Phosphor,
+    /// A launch webcast: black, white, and graphite with a thin cyan telemetry accent, hard
+    /// rectangular controls, and a still starfield behind the cards. Light mode is the same
+    /// kit in a white cleanroom.
+    SpaceX,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -87,13 +91,14 @@ const CONTROL_EDGE_INSET: f32 = 16.0;
 
 impl Theme {
     /// Menu order.
-    const ALL: [Self; 3] = [Self::Rusty, Self::Clean, Self::Phosphor];
+    const ALL: [Self; 4] = [Self::Rusty, Self::Clean, Self::Phosphor, Self::SpaceX];
 
     const fn label(self) -> &'static str {
         match self {
             Self::Rusty => "Rusty",
             Self::Clean => "Clean",
             Self::Phosphor => "Phosphor",
+            Self::SpaceX => "SpaceX",
         }
     }
 
@@ -103,6 +108,7 @@ impl Theme {
             Self::Rusty => 10,
             Self::Clean => 18,
             Self::Phosphor => 2,
+            Self::SpaceX => 0,
         }
     }
 
@@ -112,6 +118,7 @@ impl Theme {
             Self::Rusty => 16,
             Self::Clean => 20,
             Self::Phosphor => 4,
+            Self::SpaceX => 0,
         }
     }
 
@@ -119,6 +126,8 @@ impl Theme {
     const fn corner_cap(self) -> Option<u8> {
         match self {
             Self::Phosphor => Some(4),
+            // Every frame is a hard rectangle, like the outlined buttons on a launch page.
+            Self::SpaceX => Some(0),
             Self::Rusty | Self::Clean => None,
         }
     }
@@ -134,6 +143,7 @@ impl Theme {
             Self::Rusty => "rusty",
             Self::Clean => "clean",
             Self::Phosphor => "phosphor",
+            Self::SpaceX => "spacex",
         }
     }
 
@@ -154,6 +164,8 @@ enum Backdrop {
     VectorFloor,
     /// Alternating bands of line-printer paper.
     GreenBar,
+    /// A still night sky: faint stars of varying brightness, fixed to the screen.
+    Starfield,
 }
 
 #[derive(Clone, Copy)]
@@ -324,6 +336,50 @@ impl Tc {
         }
     }
 
+    const fn spacex_dark() -> Self {
+        Self {
+            theme: Theme::SpaceX,
+            bg: Color32::from_rgb(5, 5, 7),               // #050507
+            surface_lowest: Color32::from_rgb(0, 0, 0),   // #000000
+            surface_low: Color32::from_rgb(15, 17, 20),   // #0f1114
+            surface: Color32::from_rgb(21, 24, 28),       // #15181c
+            surface_high: Color32::from_rgb(36, 40, 48),  // #242830
+            primary: Color32::from_rgb(244, 246, 248),    // #f4f6f8
+            on_primary: Color32::from_rgb(10, 10, 10),    // #0a0a0a
+            secondary: Color32::from_rgb(92, 200, 255),   // #5cc8ff
+            on_surface: Color32::from_rgb(242, 242, 242), // #f2f2f2
+            on_surface_var: Color32::from_rgb(169, 173, 179), // #a9adb3
+            outline: Color32::from_rgb(139, 144, 150),    // #8b9096
+            outline_var: Color32::from_rgb(42, 46, 52),   // #2a2e34
+            error: Color32::from_rgb(255, 107, 107),      // #ff6b6b
+            glow: egui::Shadow::NONE,
+            logo_tint: Color32::WHITE,
+            backdrop: Backdrop::Starfield,
+        }
+    }
+
+    const fn spacex_light() -> Self {
+        Self {
+            theme: Theme::SpaceX,
+            bg: Color32::from_rgb(235, 235, 237), // #ebebed
+            surface_lowest: Color32::from_rgb(244, 244, 245), // #f4f4f5
+            surface_low: Color32::from_rgb(255, 255, 255), // #ffffff
+            surface: Color32::from_rgb(255, 255, 255), // #ffffff
+            surface_high: Color32::from_rgb(226, 227, 230), // #e2e3e6
+            primary: Color32::from_rgb(10, 10, 10), // #0a0a0a
+            on_primary: Color32::from_rgb(255, 255, 255), // #ffffff
+            secondary: Color32::from_rgb(10, 108, 148), // #0a6c94
+            on_surface: Color32::from_rgb(13, 13, 13), // #0d0d0d
+            on_surface_var: Color32::from_rgb(85, 89, 95), // #55595f
+            outline: Color32::from_rgb(58, 62, 68), // #3a3e44
+            outline_var: Color32::from_rgb(212, 214, 218), // #d4d6da
+            error: Color32::from_rgb(192, 57, 43), // #c0392b
+            glow: egui::Shadow::NONE,
+            logo_tint: Color32::WHITE,
+            backdrop: Backdrop::Plain,
+        }
+    }
+
     fn of(theme: Theme, dark: bool) -> Self {
         match (theme, dark) {
             (Theme::Rusty, true) => Self::rusty_dark(),
@@ -332,10 +388,13 @@ impl Tc {
             (Theme::Clean, false) => Self::clean_light(),
             (Theme::Phosphor, true) => Self::phosphor_dark(),
             (Theme::Phosphor, false) => Self::phosphor_light(),
+            (Theme::SpaceX, true) => Self::spacex_dark(),
+            (Theme::SpaceX, false) => Self::spacex_light(),
         }
     }
 
-    /// A frame's own rounding, capped so Phosphor draws every outline nearly square.
+    /// A frame's own rounding, capped so Phosphor draws every outline nearly square and
+    /// SpaceX draws it square.
     fn corner(&self, radius: u8) -> CornerRadius {
         CornerRadius::same(
             self.theme
@@ -2296,7 +2355,43 @@ fn paint_backdrop(ui: &Ui, tc: &Tc) {
                 top += 2.0 * BAND;
             }
         }
+        Backdrop::Starfield => {
+            // Stars live on a fixed tile repeated across the panel, so resizing the window
+            // reveals more sky instead of moving the stars already on it. Positions and
+            // brightness come from a hash of the star's index, the same every frame.
+            const TILE: f32 = 512.0;
+            const STARS_PER_TILE: u32 = 56;
+            let columns = (rect.width() / TILE).ceil() as i32;
+            let rows = (rect.height() / TILE).ceil() as i32;
+            for tile_y in 0..rows {
+                for tile_x in 0..columns {
+                    let origin = rect.min + egui::vec2(tile_x as f32 * TILE, tile_y as f32 * TILE);
+                    for index in 0..STARS_PER_TILE {
+                        let [x, y, brightness, size] = star_lanes(index);
+                        let center = origin + egui::vec2(x * TILE, y * TILE);
+                        if !rect.contains(center) {
+                            continue;
+                        }
+                        // Mostly faint, a few bright, like a sky seen past floodlights.
+                        let alpha = 0.25 + 0.75 * brightness * brightness;
+                        let radius = 0.6 + 0.9 * size;
+                        painter.circle_filled(center, radius, tc.outline.gamma_multiply(alpha));
+                    }
+                }
+            }
+        }
     }
+}
+
+/// Four independent unit values for one star: x, y, brightness, and size. A splitmix64
+/// step of the index, so neighbours in index share nothing on screen.
+fn star_lanes(index: u32) -> [f32; 4] {
+    let mut z = u64::from(index).wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^= z >> 31;
+    let lane = |shift: u32| ((z >> shift) & 0xffff) as f32 / 65_536.0;
+    [lane(0), lane(16), lane(32), lane(48)]
 }
 
 /// A card: the one container every panel below is built from.
@@ -5075,6 +5170,7 @@ mod tests {
         assert_eq!(Theme::from_storage_value("rusty"), Some(Theme::Rusty));
         assert_eq!(Theme::from_storage_value("clean"), Some(Theme::Clean));
         assert_eq!(Theme::from_storage_value("phosphor"), Some(Theme::Phosphor));
+        assert_eq!(Theme::from_storage_value("spacex"), Some(Theme::SpaceX));
         assert_eq!(Theme::from_storage_value("unknown"), None);
         for theme in Theme::ALL {
             let encoded = postcard::to_stdvec(&theme).unwrap();
@@ -5089,6 +5185,51 @@ mod tests {
                     assert_ne!(a.bg, b.bg);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn local_test_spacex_is_square_proportional_and_starry_only_at_night() {
+        for dark in [false, true] {
+            let tc = Tc::of(Theme::SpaceX, dark);
+            assert_eq!(Theme::SpaceX.control_radius(), 0);
+            assert_eq!(Theme::SpaceX.card_radius(), 0);
+            assert_eq!(tc.corner(20), CornerRadius::ZERO);
+            assert_eq!(tc.corner(10), CornerRadius::ZERO);
+            assert_eq!(tc.glow, egui::Shadow::NONE);
+            assert!(!Theme::SpaceX.monospace());
+            assert_eq!(
+                tc.backdrop,
+                if dark {
+                    Backdrop::Starfield
+                } else {
+                    Backdrop::Plain
+                }
+            );
+        }
+        // Light mode is the inverse of dark: a black button on white, not white on black.
+        assert_eq!(
+            Tc::of(Theme::SpaceX, false).primary,
+            Color32::from_rgb(10, 10, 10)
+        );
+        assert_eq!(
+            Tc::of(Theme::SpaceX, true).primary,
+            Color32::from_rgb(244, 246, 248)
+        );
+
+        // Stars stay inside their tile, never repeat a position, and never move.
+        let mut seen = std::collections::HashSet::new();
+        for index in 0..56 {
+            let lanes = star_lanes(index);
+            assert_eq!(lanes, star_lanes(index));
+            assert!(
+                lanes.iter().all(|lane| (0.0..1.0).contains(lane)),
+                "{lanes:?}"
+            );
+            assert!(
+                seen.insert((lanes[0].to_bits(), lanes[1].to_bits())),
+                "star {index} overlaps another"
+            );
         }
     }
 

@@ -134,6 +134,7 @@
     <button type="button" id="load-clean">Start from Clean</button>
     <button type="button" id="load-rusty">Start from Rusty</button>
     <button type="button" id="load-phosphor">Start from Phosphor</button>
+    <button type="button" id="load-spacex">Start from SpaceX</button>
     <label class="file-btn">Upload palette image<input id="palette-image" type="file" accept="image/*" hidden></label>
     <label class="file-btn">Import JSON<input id="import" type="file" accept=".json,application/json" hidden></label>
     <button type="button" class="primary" id="export-json">Export JSON</button>
@@ -246,6 +247,24 @@ const PHOSPHOR = {
   // Every other rounded frame (file rows, icon tiles, the link box) is capped at 4, so
   // outline buttons and pills are too.
   control_radius: 2, card_radius: 4, outline_button_radius: 4, pill_radius: 4, corner_cap: 4,
+};
+// The app also paints a still starfield behind SpaceX's cards in dark mode; the lab previews
+// its colors and radii only.
+const SPACEX = {
+  light: {
+    bg: "#ebebed", surface_lowest: "#f4f4f5", surface_low: "#ffffff", surface: "#ffffff",
+    surface_high: "#e2e3e6", primary: "#0a0a0a", on_primary: "#ffffff", secondary: "#0a6c94",
+    on_surface: "#0d0d0d", on_surface_var: "#55595f", outline: "#3a3e44", outline_var: "#d4d6da",
+    error: "#c0392b",
+  },
+  dark: {
+    bg: "#050507", surface_lowest: "#000000", surface_low: "#0f1114", surface: "#15181c",
+    surface_high: "#242830", primary: "#f4f6f8", on_primary: "#0a0a0a", secondary: "#5cc8ff",
+    on_surface: "#f2f2f2", on_surface_var: "#a9adb3", outline: "#8b9096", outline_var: "#2a2e34",
+    error: "#ff6b6b",
+  },
+  // Hard rectangles everywhere, like the outlined buttons on a launch page.
+  control_radius: 0, card_radius: 0, outline_button_radius: 0, pill_radius: 0, corner_cap: 0,
 };
 
 // Shape fields share one name in presets, lab state, and exported bundles.
@@ -753,6 +772,7 @@ document.getElementById("prev-compact").onclick = () => { state.compact = true; 
 document.getElementById("load-clean").onclick = () => applyPreset(CLEAN, "");
 document.getElementById("load-rusty").onclick = () => applyPreset(RUSTY, "Rusty");
 document.getElementById("load-phosphor").onclick = () => applyPreset(PHOSPHOR, "Phosphor");
+document.getElementById("load-spacex").onclick = () => applyPreset(SPACEX, "SpaceX");
 document.getElementById("export-json").onclick = () => {
   const json = JSON.stringify(bundle(), null, 2);
   download(`oxfer-theme-${slug()}.json`, new Blob([json], { type: "application/json" }));

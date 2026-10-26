@@ -28,6 +28,8 @@ test("every theme choice updates browser chrome in light and dark mode", () => {
         ["clean", true, "#23263a", "#151724"],
         ["phosphor", false, "#dcecd2", "#f1f7ec"],
         ["phosphor", true, "#0a1a0c", "#030a04"],
+        ["spacex", false, "#ffffff", "#ebebed"],
+        ["spacex", true, "#15181c", "#050507"],
         // A value from a newer build falls back to the default theme, not a broken page.
         ["unknown", true, "#23263a", "#151724"],
     ]) {

@@ -27,7 +27,7 @@
 <body>
 <h1>Oxfer theme brief</h1>
 <p><strong>Live lab:</strong> designers should use <a href="/theme.html">/theme.html</a> (color pickers, preview, JSON/zip export). This page is the static spec behind it.</p>
-<p>Hand this to a designer proposing a new in-app theme. A theme is a named palette (like today’s <strong>Clean</strong>, <strong>Rusty</strong>, and <strong>Phosphor</strong>) with a <strong>light</strong> and <strong>dark</strong> mode. Clean is the default.</p>
+<p>Hand this to a designer proposing a new in-app theme. A theme is a named palette (like today’s <strong>Clean</strong>, <strong>Rusty</strong>, <strong>Phosphor</strong>, and <strong>SpaceX</strong>) with a <strong>light</strong> and <strong>dark</strong> mode. Clean is the default.</p>
 
 <div class="note">
   <strong>What to return:</strong> a theme name, the 13 tokens below filled in for both light and dark, a corner-radius choice, browser chrome colors, and one mock of the home screen plus one of the send/receive header. Keep token <em>names</em> — the app maps UI to these slots, not to raw hex.
@@ -37,7 +37,7 @@
 <ul>
   <li><strong>Oxfer</strong> — peer-to-peer file transfer. No cloud. Browser and desktop, same UI.</li>
   <li>Rendered in <strong>egui</strong> (immediate-mode), not CSS. Themes are color + radius tokens, not stylesheets.</li>
-  <li>Users pick a theme (Clean / Rusty / Phosphor / proposed) and independently toggle light/dark.</li>
+  <li>Users pick a theme (Clean / Rusty / Phosphor / SpaceX / proposed) and independently toggle light/dark.</li>
   <li>Live app: <a href="https://oxfer.app">oxfer.app</a></li>
 </ul>
 
@@ -192,14 +192,60 @@
   </div>
 </div>
 
+<h2>Existing alternate — SpaceX</h2>
+<p>A launch webcast: black, white, and graphite, with a thin cyan telemetry accent as <code>secondary</code>. Light mode is the same kit in a white cleanroom, with the primary button inverted to black on white. Same 13 tokens, plus two theme-level traits:</p>
+<ul>
+  <li><strong>Hard rectangles</strong> — controls, cards, outline buttons, pills, and icon tiles all have radius 0, like the outlined buttons on a launch page.</li>
+  <li><strong>Backdrop (dark only)</strong> — a still starfield in <code>outline</code> at varying opacity, fixed to the screen on a 512-point tile so resizing reveals more sky instead of moving stars. Cards stay opaque, so it shows only in gutters and gaps. Light mode is plain.</li>
+</ul>
+<p>Type stays proportional and there is no glow: the look comes from contrast and shape, not effects.</p>
+<div class="pair">
+  <div class="card">
+    <h3>SpaceX light (cleanroom)</h3>
+    <table>
+      <tr><td>bg</td><td><span class="swatch" style="background:#ebebed"></span><span class="hex">#ebebed</span></td></tr>
+      <tr><td>surface_lowest</td><td><span class="swatch" style="background:#f4f4f5"></span><span class="hex">#f4f4f5</span></td></tr>
+      <tr><td>surface_low</td><td><span class="swatch" style="background:#ffffff"></span><span class="hex">#ffffff</span></td></tr>
+      <tr><td>surface</td><td><span class="swatch" style="background:#ffffff"></span><span class="hex">#ffffff</span></td></tr>
+      <tr><td>surface_high</td><td><span class="swatch" style="background:#e2e3e6"></span><span class="hex">#e2e3e6</span></td></tr>
+      <tr><td>primary</td><td><span class="swatch" style="background:#0a0a0a"></span><span class="hex">#0a0a0a</span></td></tr>
+      <tr><td>on_primary</td><td><span class="swatch" style="background:#ffffff"></span><span class="hex">#ffffff</span></td></tr>
+      <tr><td>secondary</td><td><span class="swatch" style="background:#0a6c94"></span><span class="hex">#0a6c94</span></td></tr>
+      <tr><td>on_surface</td><td><span class="swatch" style="background:#0d0d0d"></span><span class="hex">#0d0d0d</span></td></tr>
+      <tr><td>on_surface_var</td><td><span class="swatch" style="background:#55595f"></span><span class="hex">#55595f</span></td></tr>
+      <tr><td>outline</td><td><span class="swatch" style="background:#3a3e44"></span><span class="hex">#3a3e44</span></td></tr>
+      <tr><td>outline_var</td><td><span class="swatch" style="background:#d4d6da"></span><span class="hex">#d4d6da</span></td></tr>
+      <tr><td>error</td><td><span class="swatch" style="background:#c0392b"></span><span class="hex">#c0392b</span></td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3>SpaceX dark (launch night)</h3>
+    <table>
+      <tr><td>bg</td><td><span class="swatch" style="background:#050507"></span><span class="hex">#050507</span></td></tr>
+      <tr><td>surface_lowest</td><td><span class="swatch" style="background:#000000"></span><span class="hex">#000000</span></td></tr>
+      <tr><td>surface_low</td><td><span class="swatch" style="background:#0f1114"></span><span class="hex">#0f1114</span></td></tr>
+      <tr><td>surface</td><td><span class="swatch" style="background:#15181c"></span><span class="hex">#15181c</span></td></tr>
+      <tr><td>surface_high</td><td><span class="swatch" style="background:#242830"></span><span class="hex">#242830</span></td></tr>
+      <tr><td>primary</td><td><span class="swatch" style="background:#f4f6f8"></span><span class="hex">#f4f6f8</span></td></tr>
+      <tr><td>on_primary</td><td><span class="swatch" style="background:#0a0a0a"></span><span class="hex">#0a0a0a</span></td></tr>
+      <tr><td>secondary</td><td><span class="swatch" style="background:#5cc8ff"></span><span class="hex">#5cc8ff</span></td></tr>
+      <tr><td>on_surface</td><td><span class="swatch" style="background:#f2f2f2"></span><span class="hex">#f2f2f2</span></td></tr>
+      <tr><td>on_surface_var</td><td><span class="swatch" style="background:#a9adb3"></span><span class="hex">#a9adb3</span></td></tr>
+      <tr><td>outline</td><td><span class="swatch" style="background:#8b9096"></span><span class="hex">#8b9096</span></td></tr>
+      <tr><td>outline_var</td><td><span class="swatch" style="background:#2a2e34"></span><span class="hex">#2a2e34</span></td></tr>
+      <tr><td>error</td><td><span class="swatch" style="background:#ff6b6b"></span><span class="hex">#ff6b6b</span></td></tr>
+    </table>
+  </div>
+</div>
+
 <h2>Shape, type, space (shared unless you propose changing them)</h2>
 <table>
-  <tr><th>Token</th><th>Clean</th><th>Rusty</th><th>Phosphor</th></tr>
-  <tr><td>Control / primary button radius</td><td>18</td><td>10</td><td>2</td></tr>
-  <tr><td>Card radius</td><td>20</td><td>16</td><td>4</td></tr>
-  <tr><td>Outline button radius</td><td>10</td><td>10</td><td>4</td></tr>
-  <tr><td>Pill radius</td><td>20</td><td>20</td><td>4</td></tr>
-  <tr><td>Favicon / mark radius</td><td colspan="3">22% of square (224 / 1024)</td></tr>
+  <tr><th>Token</th><th>Clean</th><th>Rusty</th><th>Phosphor</th><th>SpaceX</th></tr>
+  <tr><td>Control / primary button radius</td><td>18</td><td>10</td><td>2</td><td>0</td></tr>
+  <tr><td>Card radius</td><td>20</td><td>16</td><td>4</td><td>0</td></tr>
+  <tr><td>Outline button radius</td><td>10</td><td>10</td><td>4</td><td>0</td></tr>
+  <tr><td>Pill radius</td><td>20</td><td>20</td><td>4</td><td>0</td></tr>
+  <tr><td>Favicon / mark radius</td><td colspan="4">22% of square (224 / 1024)</td></tr>
 </table>
 <table>
   <tr><th>Measure</th><th>Value</th></tr>
@@ -263,8 +309,8 @@
   <tr><td>outline</td><td></td></tr>
   <tr><td>outline_var</td><td></td></tr>
   <tr><td>error</td><td></td></tr>
-  <tr><td>Control radius (Clean=18, Rusty=10, Phosphor=2)</td><td></td></tr>
-  <tr><td>Card radius (Clean=20, Rusty=16, Phosphor=4)</td><td></td></tr>
+  <tr><td>Control radius (Clean=18, Rusty=10, Phosphor=2, SpaceX=0)</td><td></td></tr>
+  <tr><td>Card radius (Clean=20, Rusty=16, Phosphor=4, SpaceX=0)</td><td></td></tr>
   <tr><td>theme-color (header)</td><td>usually = surface</td></tr>
   <tr><td>Loading spinner / label</td><td></td></tr>
 </table>

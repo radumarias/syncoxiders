@@ -12,6 +12,10 @@ const CHROME = {
         light: { header: "#dcecd2", background: "#f1f7ec" },
         dark: { header: "#0a1a0c", background: "#030a04" },
     },
+    spacex: {
+        light: { header: "#ffffff", background: "#ebebed" },
+        dark: { header: "#15181c", background: "#050507" },
+    },
 };
 
 export function setBrowserTheme(theme, dark) {
