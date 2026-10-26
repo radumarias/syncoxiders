@@ -77,6 +77,10 @@ enum Theme {
     /// A vector CRT: one green phosphor on black, wireframe outlines, monospace type. Light
     /// mode is the same machine's green-bar line-printer paper.
     Phosphor,
+    /// After spacex.com and x.ai: pure black, off-white, and greys with no accent hue,
+    /// 4-point corners, tracked capitals on buttons, and a still starfield behind the
+    /// cards. Light mode is the same kit in a white cleanroom.
+    SpaceX,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -87,13 +91,14 @@ const CONTROL_EDGE_INSET: f32 = 16.0;
 
 impl Theme {
     /// Menu order.
-    const ALL: [Self; 3] = [Self::Rusty, Self::Clean, Self::Phosphor];
+    const ALL: [Self; 4] = [Self::Rusty, Self::Clean, Self::Phosphor, Self::SpaceX];
 
     const fn label(self) -> &'static str {
         match self {
             Self::Rusty => "Rusty",
             Self::Clean => "Clean",
             Self::Phosphor => "Phosphor",
+            Self::SpaceX => "SpaceX",
         }
     }
 
@@ -103,6 +108,7 @@ impl Theme {
             Self::Rusty => 10,
             Self::Clean => 18,
             Self::Phosphor => 2,
+            Self::SpaceX => 4,
         }
     }
 
@@ -112,6 +118,7 @@ impl Theme {
             Self::Rusty => 16,
             Self::Clean => 20,
             Self::Phosphor => 4,
+            Self::SpaceX => 8,
         }
     }
 
@@ -119,6 +126,8 @@ impl Theme {
     const fn corner_cap(self) -> Option<u8> {
         match self {
             Self::Phosphor => Some(4),
+            // The 4-point corner of a launch page's outlined buttons, on every frame.
+            Self::SpaceX => Some(4),
             Self::Rusty | Self::Clean => None,
         }
     }
@@ -128,12 +137,30 @@ impl Theme {
         matches!(self, Self::Phosphor)
     }
 
+    /// Set button and menu labels in tracked capitals, like a launch page's navigation.
+    const fn tracked_caps(self) -> bool {
+        matches!(self, Self::SpaceX)
+    }
+
+    /// Below this width the header folds its controls into one menu. Monospace and
+    /// tracked capitals both need more room than proportional sentence case.
+    const fn compact_header_width(self) -> f32 {
+        if self.monospace() {
+            760.0
+        } else if self.tracked_caps() {
+            740.0
+        } else {
+            680.0
+        }
+    }
+
     #[cfg(any(test, target_arch = "wasm32"))]
     const fn storage_value(self) -> &'static str {
         match self {
             Self::Rusty => "rusty",
             Self::Clean => "clean",
             Self::Phosphor => "phosphor",
+            Self::SpaceX => "spacex",
         }
     }
 
@@ -154,6 +181,8 @@ enum Backdrop {
     VectorFloor,
     /// Alternating bands of line-printer paper.
     GreenBar,
+    /// A still night sky: faint stars of varying brightness, fixed to the screen.
+    Starfield,
 }
 
 #[derive(Clone, Copy)]
@@ -324,6 +353,50 @@ impl Tc {
         }
     }
 
+    const fn spacex_dark() -> Self {
+        Self {
+            theme: Theme::SpaceX,
+            bg: Color32::from_rgb(0, 0, 0),               // #000000
+            surface_lowest: Color32::from_rgb(0, 0, 0),   // #000000
+            surface_low: Color32::from_rgb(10, 10, 10),   // #0a0a0a
+            surface: Color32::from_rgb(17, 17, 17),       // #111111
+            surface_high: Color32::from_rgb(31, 31, 31),  // #1f1f1f
+            primary: Color32::from_rgb(255, 255, 255),    // #ffffff
+            on_primary: Color32::from_rgb(10, 10, 10),    // #0a0a0a
+            secondary: Color32::from_rgb(185, 185, 194),  // #b9b9c2
+            on_surface: Color32::from_rgb(240, 240, 250), // #f0f0fa
+            on_surface_var: Color32::from_rgb(143, 143, 153), // #8f8f99
+            outline: Color32::from_rgb(169, 169, 179),    // #a9a9b3
+            outline_var: Color32::from_rgb(35, 35, 38),   // #232326
+            error: Color32::from_rgb(249, 117, 131),      // #f97583
+            glow: egui::Shadow::NONE,
+            logo_tint: Color32::WHITE,
+            backdrop: Backdrop::Starfield,
+        }
+    }
+
+    const fn spacex_light() -> Self {
+        Self {
+            theme: Theme::SpaceX,
+            bg: Color32::from_rgb(240, 240, 245), // #f0f0f5
+            surface_lowest: Color32::from_rgb(245, 245, 248), // #f5f5f8
+            surface_low: Color32::from_rgb(255, 255, 255), // #ffffff
+            surface: Color32::from_rgb(255, 255, 255), // #ffffff
+            surface_high: Color32::from_rgb(228, 228, 234), // #e4e4ea
+            primary: Color32::from_rgb(10, 10, 10), // #0a0a0a
+            on_primary: Color32::from_rgb(255, 255, 255), // #ffffff
+            secondary: Color32::from_rgb(76, 76, 86), // #4c4c56
+            on_surface: Color32::from_rgb(10, 10, 10), // #0a0a0a
+            on_surface_var: Color32::from_rgb(95, 95, 106), // #5f5f6a
+            outline: Color32::from_rgb(74, 74, 84), // #4a4a54
+            outline_var: Color32::from_rgb(217, 217, 223), // #d9d9df
+            error: Color32::from_rgb(200, 50, 62), // #c8323e
+            glow: egui::Shadow::NONE,
+            logo_tint: Color32::WHITE,
+            backdrop: Backdrop::Plain,
+        }
+    }
+
     fn of(theme: Theme, dark: bool) -> Self {
         match (theme, dark) {
             (Theme::Rusty, true) => Self::rusty_dark(),
@@ -332,10 +405,13 @@ impl Tc {
             (Theme::Clean, false) => Self::clean_light(),
             (Theme::Phosphor, true) => Self::phosphor_dark(),
             (Theme::Phosphor, false) => Self::phosphor_light(),
+            (Theme::SpaceX, true) => Self::spacex_dark(),
+            (Theme::SpaceX, false) => Self::spacex_light(),
         }
     }
 
-    /// A frame's own rounding, capped so Phosphor draws every outline nearly square.
+    /// A frame's own rounding, capped so Phosphor and SpaceX draw every outline nearly
+    /// square.
     fn corner(&self, radius: u8) -> CornerRadius {
         CornerRadius::same(
             self.theme
@@ -2296,7 +2372,43 @@ fn paint_backdrop(ui: &Ui, tc: &Tc) {
                 top += 2.0 * BAND;
             }
         }
+        Backdrop::Starfield => {
+            // Stars live on a fixed tile repeated across the panel, so resizing the window
+            // reveals more sky instead of moving the stars already on it. Positions and
+            // brightness come from a hash of the star's index, the same every frame.
+            const TILE: f32 = 512.0;
+            const STARS_PER_TILE: u32 = 56;
+            let columns = (rect.width() / TILE).ceil() as i32;
+            let rows = (rect.height() / TILE).ceil() as i32;
+            for tile_y in 0..rows {
+                for tile_x in 0..columns {
+                    let origin = rect.min + egui::vec2(tile_x as f32 * TILE, tile_y as f32 * TILE);
+                    for index in 0..STARS_PER_TILE {
+                        let [x, y, brightness, size] = star_lanes(index);
+                        let center = origin + egui::vec2(x * TILE, y * TILE);
+                        if !rect.contains(center) {
+                            continue;
+                        }
+                        // Mostly faint, a few bright, like a sky seen past floodlights.
+                        let alpha = 0.25 + 0.75 * brightness * brightness;
+                        let radius = 0.6 + 0.9 * size;
+                        painter.circle_filled(center, radius, tc.outline.gamma_multiply(alpha));
+                    }
+                }
+            }
+        }
     }
+}
+
+/// Four independent unit values for one star: x, y, brightness, and size. A splitmix64
+/// step of the index, so neighbours in index share nothing on screen.
+fn star_lanes(index: u32) -> [f32; 4] {
+    let mut z = u64::from(index).wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^= z >> 31;
+    let lane = |shift: u32| ((z >> shift) & 0xffff) as f32 / 65_536.0;
+    [lane(0), lane(16), lane(32), lane(48)]
 }
 
 /// A card: the one container every panel below is built from.
@@ -2309,12 +2421,36 @@ fn card(tc: &Tc) -> egui::Frame {
         .inner_margin(egui::Margin::same(22))
 }
 
-fn primary_text(label: &str) -> RichText {
-    RichText::new(label).strong().size(15.0)
+/// A button label in the theme's case: sentence case as given, or tracked capitals one
+/// point smaller so the line stays about as wide.
+fn button_label(theme: Theme, label: &str, size: f32) -> RichText {
+    if theme.tracked_caps() {
+        RichText::new(label.to_uppercase())
+            .strong()
+            .size(size - 1.0)
+            .extra_letter_spacing(1.2)
+    } else {
+        RichText::new(label).strong().size(size)
+    }
+}
+
+/// A menu button's label, in the theme's case but egui's own weight and size.
+fn menu_label(theme: Theme, label: &str) -> RichText {
+    if theme.tracked_caps() {
+        RichText::new(label.to_uppercase())
+            .size(13.0)
+            .extra_letter_spacing(1.2)
+    } else {
+        RichText::new(label)
+    }
+}
+
+fn primary_text(theme: Theme, label: &str) -> RichText {
+    button_label(theme, label, 15.0)
 }
 
 fn primary_button(tc: &Tc, label: &str) -> Button<'static> {
-    Button::new(primary_text(label).color(tc.on_primary))
+    Button::new(primary_text(tc.theme, label).color(tc.on_primary))
         .fill(tc.primary)
         .stroke(Stroke::new(1.0, tc.primary))
         .corner_radius(CornerRadius::same(tc.theme.control_radius()))
@@ -2346,12 +2482,12 @@ const fn mode_toggle_label(dark: bool) -> &'static str {
     }
 }
 
-fn outline_text(label: &str) -> RichText {
-    RichText::new(label).strong().size(14.0)
+fn outline_text(theme: Theme, label: &str) -> RichText {
+    button_label(theme, label, 14.0)
 }
 
 fn outline_button(tc: &Tc, label: &str, color: Color32) -> Button<'static> {
-    Button::new(outline_text(label).color(color))
+    Button::new(outline_text(tc.theme, label).color(color))
         .fill(Color32::TRANSPARENT)
         .stroke(Stroke::new(1.0_f32, color))
         .corner_radius(tc.corner(10))
@@ -3096,10 +3232,12 @@ impl P2PTransfer {
                             // and does not shift when the link is copied.
                             let copy_width = fit_width(
                                 ui,
-                                [false, true].map(|copied| primary_text(copy_label(copied))),
+                                [false, true]
+                                    .map(|copied| primary_text(tc.theme, copy_label(copied))),
                                 212.0,
                             );
-                            let stop_width = fit_width(ui, [outline_text("Stop sharing")], 140.0);
+                            let stop_width =
+                                fit_width(ui, [outline_text(tc.theme, "Stop sharing")], 140.0);
                             let row_width = copy_width + stop_width + ui.spacing().item_spacing.x;
                             ui.add_space(((ui.available_width() - row_width) / 2.0).max(0.0));
                             if ui
@@ -3821,7 +3959,7 @@ impl P2PTransfer {
     fn show_header(&mut self, ui: &mut Ui, ctx: &egui::Context, tc: &Tc) {
         // Monospace labels run wider, so the full Send header needs more room before its
         // controls stop crowding the mode pill.
-        let compact = ui.available_width() < if tc.theme.monospace() { 760.0 } else { 680.0 };
+        let compact = ui.available_width() < tc.theme.compact_header_width();
         ui.set_height(64.0);
         ui.horizontal_centered(|ui| {
             {
@@ -3883,7 +4021,9 @@ impl P2PTransfer {
                             [
                                 fit_width(
                                     ui,
-                                    [false, true].map(|dark| outline_text(mode_toggle_label(dark))),
+                                    [false, true].map(|dark| {
+                                        outline_text(tc.theme, mode_toggle_label(dark))
+                                    }),
                                     108.0,
                                 ),
                                 44.0,
@@ -3897,38 +4037,41 @@ impl P2PTransfer {
                     self.last_dark_mode = Some(next_dark);
                 }
                 // On narrow screens the menu also holds the controls that did not fit.
-                ui.menu_button(if compact { "More" } else { "Theme" }, |ui| {
-                    ui.label(RichText::new("Appearance").strong());
-                    let mut picked = false;
-                    for theme in Theme::ALL {
-                        picked |= ui
-                            .selectable_value(&mut self.theme, theme, theme.label())
-                            .clicked();
-                    }
-                    if picked {
-                        #[cfg(target_arch = "wasm32")]
-                        eframe::web::storage::local_storage_set(
-                            BROWSER_THEME_KEY,
-                            self.theme.storage_value(),
-                        );
-                        self.last_theme = None;
-                        ctx.request_repaint();
-                        ui.close();
-                    }
-                    if compact && ui.button(mode_toggle_label(dark)).clicked() {
-                        let next_dark = !dark;
-                        Self::apply_theme(ctx, ui, self.theme, next_dark);
-                        self.last_dark_mode = Some(next_dark);
-                        ui.close();
-                    }
-                    if compact && ui.button("Show build version").clicked() {
-                        self.show_terminal_view = true;
-                        ui.close();
-                    }
-                    if compact {
-                        self.agents_room_button(ui);
-                    }
-                });
+                ui.menu_button(
+                    menu_label(tc.theme, if compact { "More" } else { "Theme" }),
+                    |ui| {
+                        ui.label(RichText::new("Appearance").strong());
+                        let mut picked = false;
+                        for theme in Theme::ALL {
+                            picked |= ui
+                                .selectable_value(&mut self.theme, theme, theme.label())
+                                .clicked();
+                        }
+                        if picked {
+                            #[cfg(target_arch = "wasm32")]
+                            eframe::web::storage::local_storage_set(
+                                BROWSER_THEME_KEY,
+                                self.theme.storage_value(),
+                            );
+                            self.last_theme = None;
+                            ctx.request_repaint();
+                            ui.close();
+                        }
+                        if compact && ui.button(mode_toggle_label(dark)).clicked() {
+                            let next_dark = !dark;
+                            Self::apply_theme(ctx, ui, self.theme, next_dark);
+                            self.last_dark_mode = Some(next_dark);
+                            ui.close();
+                        }
+                        if compact && ui.button("Show build version").clicked() {
+                            self.show_terminal_view = true;
+                            ui.close();
+                        }
+                        if compact {
+                            self.agents_room_button(ui);
+                        }
+                    },
+                );
                 if !compact {
                     self.show_agents_menu(ui);
                 }
@@ -4035,7 +4178,7 @@ impl P2PTransfer {
                 ui.add_space(CONTROL_EDGE_INSET);
                 let diagnostics = ui
                     .add_enabled_ui(!self.is_preparing_share(), |ui| {
-                        let width = fit_width(ui, [outline_text("Diags")], 72.0);
+                        let width = fit_width(ui, [outline_text(tc.theme, "Diags")], 72.0);
                         ui.add_sized([width, 44.0], outline_button(tc, "Diags", tc.outline))
                     })
                     .inner
@@ -4202,7 +4345,7 @@ impl P2PTransfer {
     }
 
     fn show_agents_menu(&mut self, ui: &mut Ui) {
-        ui.menu_button("For agents", |ui| {
+        ui.menu_button(menu_label(self.theme, "For agents"), |ui| {
             ui.set_max_width(340.0);
             ui.label(RichText::new("Let AI agents talk and send files").strong());
             ui.label(
@@ -4296,7 +4439,7 @@ impl P2PTransfer {
                 ui.add_space(6.0);
                 let copy_width = fit_width(
                     ui,
-                    [false, true].map(|copied| primary_text(copy_label(copied))),
+                    [false, true].map(|copied| primary_text(tc.theme, copy_label(copied))),
                     200.0,
                 );
                 if ui
@@ -4448,7 +4591,7 @@ impl P2PTransfer {
                 (false, ChatStatus::Open | ChatStatus::Starting) => "Leave room",
                 _ => "Back to home",
             };
-            let leave_width = fit_width(ui, [outline_text(leave_label)], 140.0);
+            let leave_width = fit_width(ui, [outline_text(tc.theme, leave_label)], 140.0);
             if ui
                 .add_sized(
                     [leave_width, 44.0],
@@ -4602,7 +4745,7 @@ fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
         ui.horizontal_wrapped(|ui| {
             const LABELS: [&str; 2] = ["📋 Copy prompt", "✔ Copied"];
             let label = LABELS[usize::from(copied)];
-            let width = fit_width(ui, LABELS.map(primary_text), 150.0);
+            let width = fit_width(ui, LABELS.map(|label| primary_text(tc.theme, label)), 150.0);
             let button = if state.for_agents {
                 copy_button(tc, label, copied)
             } else {
@@ -5075,6 +5218,7 @@ mod tests {
         assert_eq!(Theme::from_storage_value("rusty"), Some(Theme::Rusty));
         assert_eq!(Theme::from_storage_value("clean"), Some(Theme::Clean));
         assert_eq!(Theme::from_storage_value("phosphor"), Some(Theme::Phosphor));
+        assert_eq!(Theme::from_storage_value("spacex"), Some(Theme::SpaceX));
         assert_eq!(Theme::from_storage_value("unknown"), None);
         for theme in Theme::ALL {
             let encoded = postcard::to_stdvec(&theme).unwrap();
@@ -5089,6 +5233,70 @@ mod tests {
                     assert_ne!(a.bg, b.bg);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn local_test_spacex_is_square_proportional_and_starry_only_at_night() {
+        for dark in [false, true] {
+            let tc = Tc::of(Theme::SpaceX, dark);
+            assert_eq!(Theme::SpaceX.control_radius(), 4);
+            assert_eq!(Theme::SpaceX.card_radius(), 8);
+            assert_eq!(tc.corner(20), CornerRadius::same(4));
+            assert_eq!(tc.corner(2), CornerRadius::same(2));
+            assert_eq!(tc.glow, egui::Shadow::NONE);
+            assert!(!Theme::SpaceX.monospace());
+            // Monochrome like both sites: the accent is a grey, not a hue.
+            let (r, g, b) = (tc.secondary.r(), tc.secondary.g(), tc.secondary.b());
+            assert!(
+                r.abs_diff(g) <= 10 && g.abs_diff(b) <= 10,
+                "{:?}",
+                tc.secondary
+            );
+            assert_eq!(
+                tc.backdrop,
+                if dark {
+                    Backdrop::Starfield
+                } else {
+                    Backdrop::Plain
+                }
+            );
+        }
+        // Light mode is the inverse of dark: a black button on white, not white on black.
+        assert_eq!(
+            Tc::of(Theme::SpaceX, false).primary,
+            Color32::from_rgb(10, 10, 10)
+        );
+        assert_eq!(Tc::of(Theme::SpaceX, true).primary, Color32::WHITE);
+        assert_eq!(Tc::of(Theme::SpaceX, true).bg, Color32::BLACK);
+
+        // Buttons and menus read in tracked capitals here, and only here.
+        assert!(Theme::SpaceX.tracked_caps());
+        assert_eq!(
+            primary_text(Theme::SpaceX, "Send files").text(),
+            "SEND FILES"
+        );
+        assert_eq!(menu_label(Theme::SpaceX, "For agents").text(), "FOR AGENTS");
+        for theme in [Theme::Rusty, Theme::Clean, Theme::Phosphor] {
+            assert!(!theme.tracked_caps());
+            assert_eq!(outline_text(theme, "Stop sharing").text(), "Stop sharing");
+            assert_eq!(menu_label(theme, "Theme").text(), "Theme");
+        }
+        assert!(Theme::SpaceX.compact_header_width() > Theme::Clean.compact_header_width());
+
+        // Stars stay inside their tile, never repeat a position, and never move.
+        let mut seen = std::collections::HashSet::new();
+        for index in 0..56 {
+            let lanes = star_lanes(index);
+            assert_eq!(lanes, star_lanes(index));
+            assert!(
+                lanes.iter().all(|lane| (0.0..1.0).contains(lane)),
+                "{lanes:?}"
+            );
+            assert!(
+                seen.insert((lanes[0].to_bits(), lanes[1].to_bits())),
+                "star {index} overlaps another"
+            );
         }
     }
 

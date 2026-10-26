@@ -27,7 +27,7 @@
 <body>
 <h1>Oxfer theme brief</h1>
 <p><strong>Live lab:</strong> designers should use <a href="/theme.html">/theme.html</a> (color pickers, preview, JSON/zip export). This page is the static spec behind it.</p>
-<p>Hand this to a designer proposing a new in-app theme. A theme is a named palette (like today’s <strong>Clean</strong>, <strong>Rusty</strong>, and <strong>Phosphor</strong>) with a <strong>light</strong> and <strong>dark</strong> mode. Clean is the default.</p>
+<p>Hand this to a designer proposing a new in-app theme. A theme is a named palette (like today’s <strong>Clean</strong>, <strong>Rusty</strong>, <strong>Phosphor</strong>, and <strong>SpaceX</strong>) with a <strong>light</strong> and <strong>dark</strong> mode. Clean is the default.</p>
 
 <div class="note">
   <strong>What to return:</strong> a theme name, the 13 tokens below filled in for both light and dark, a corner-radius choice, browser chrome colors, and one mock of the home screen plus one of the send/receive header. Keep token <em>names</em> — the app maps UI to these slots, not to raw hex.
@@ -37,7 +37,7 @@
 <ul>
   <li><strong>Oxfer</strong> — peer-to-peer file transfer. No cloud. Browser and desktop, same UI.</li>
   <li>Rendered in <strong>egui</strong> (immediate-mode), not CSS. Themes are color + radius tokens, not stylesheets.</li>
-  <li>Users pick a theme (Clean / Rusty / Phosphor / proposed) and independently toggle light/dark.</li>
+  <li>Users pick a theme (Clean / Rusty / Phosphor / SpaceX / proposed) and independently toggle light/dark.</li>
   <li>Live app: <a href="https://oxfer.app">oxfer.app</a></li>
 </ul>
 
@@ -192,14 +192,69 @@
   </div>
 </div>
 
+<h2>Existing alternate — SpaceX</h2>
+<p>After <a href="https://www.spacex.com/">spacex.com</a> and <a href="https://x.ai/">x.ai</a>, read from their computed styles: pure black pages, off-white <code>#f0f0fa</code> text, and greys with no accent hue anywhere in the chrome. The primary button is x.ai’s white fill with near-black text; outline buttons follow spacex.com’s thin light border. Light mode is the same kit in a white cleanroom, with the primary inverted to black on white. Same 13 tokens, plus three theme-level traits:</p>
+<ul>
+  <li><strong>Monochrome</strong> — <code>secondary</code> is a grey (<code>#b9b9c2</code> dark, <code>#4c4c56</code> light), so accent pills, the copied state, and links stay in the black-and-white family. Only <code>error</code> carries a hue, x.ai’s coral.</li>
+  <li><strong>Tracked capitals</strong> — primary, outline, and menu button labels are set in capitals one point smaller with 1.2 points of extra letter spacing, like spacex.com’s navigation and calls to action. Pills and meta are already monospace capitals. The full header needs a wider window before it leaves its compact layout (740 instead of 680).</li>
+  <li><strong>4-point corners</strong> — spacex.com’s button radius on controls, outline buttons, pills, and icon tiles; cards sit between the two sites at 8.</li>
+  <li><strong>Backdrop (dark only)</strong> — a still starfield in <code>outline</code> at varying opacity, fixed to the screen on a 512-point tile so resizing reveals more sky instead of moving stars. Cards stay opaque, so it shows only in gutters and gaps. Light mode is plain.</li>
+</ul>
+<p>Type stays egui’s proportional face and there is no glow: the look comes from contrast, case, and shape, not effects. spacex.com sets D-DIN and x.ai a custom grotesk; bundling a DIN-style face is a possible follow-up.</p>
+<p>Screens from the browser build, dark and light home, the send screen at night, and the compact header:</p>
+<div class="pair">
+  <div class="card"><img src="themes/spacex-dark.png" alt="SpaceX dark: home screen with a white Send files button over a starfield" style="width:100%;height:auto"></div>
+  <div class="card"><img src="themes/spacex-light.png" alt="SpaceX light: home screen with a black Send files button on white" style="width:100%;height:auto"></div>
+  <div class="card"><img src="themes/spacex-send.png" alt="SpaceX dark: send screen with a file chip, link box, and Copy link button" style="width:100%;height:auto"></div>
+  <div class="card"><img src="themes/spacex-compact.png" alt="SpaceX dark at 390 points wide: the header still fits" style="width:100%;height:auto"></div>
+</div>
+<div class="pair">
+  <div class="card">
+    <h3>SpaceX light (cleanroom)</h3>
+    <table>
+      <tr><td>bg</td><td><span class="swatch" style="background:#f0f0f5"></span><span class="hex">#f0f0f5</span></td></tr>
+      <tr><td>surface_lowest</td><td><span class="swatch" style="background:#f5f5f8"></span><span class="hex">#f5f5f8</span></td></tr>
+      <tr><td>surface_low</td><td><span class="swatch" style="background:#ffffff"></span><span class="hex">#ffffff</span></td></tr>
+      <tr><td>surface</td><td><span class="swatch" style="background:#ffffff"></span><span class="hex">#ffffff</span></td></tr>
+      <tr><td>surface_high</td><td><span class="swatch" style="background:#e4e4ea"></span><span class="hex">#e4e4ea</span></td></tr>
+      <tr><td>primary</td><td><span class="swatch" style="background:#0a0a0a"></span><span class="hex">#0a0a0a</span></td></tr>
+      <tr><td>on_primary</td><td><span class="swatch" style="background:#ffffff"></span><span class="hex">#ffffff</span></td></tr>
+      <tr><td>secondary</td><td><span class="swatch" style="background:#4c4c56"></span><span class="hex">#4c4c56</span></td></tr>
+      <tr><td>on_surface</td><td><span class="swatch" style="background:#0a0a0a"></span><span class="hex">#0a0a0a</span></td></tr>
+      <tr><td>on_surface_var</td><td><span class="swatch" style="background:#5f5f6a"></span><span class="hex">#5f5f6a</span></td></tr>
+      <tr><td>outline</td><td><span class="swatch" style="background:#4a4a54"></span><span class="hex">#4a4a54</span></td></tr>
+      <tr><td>outline_var</td><td><span class="swatch" style="background:#d9d9df"></span><span class="hex">#d9d9df</span></td></tr>
+      <tr><td>error</td><td><span class="swatch" style="background:#c8323e"></span><span class="hex">#c8323e</span></td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h3>SpaceX dark (launch night)</h3>
+    <table>
+      <tr><td>bg</td><td><span class="swatch" style="background:#000000"></span><span class="hex">#000000</span></td></tr>
+      <tr><td>surface_lowest</td><td><span class="swatch" style="background:#000000"></span><span class="hex">#000000</span></td></tr>
+      <tr><td>surface_low</td><td><span class="swatch" style="background:#0a0a0a"></span><span class="hex">#0a0a0a</span></td></tr>
+      <tr><td>surface</td><td><span class="swatch" style="background:#111111"></span><span class="hex">#111111</span></td></tr>
+      <tr><td>surface_high</td><td><span class="swatch" style="background:#1f1f1f"></span><span class="hex">#1f1f1f</span></td></tr>
+      <tr><td>primary</td><td><span class="swatch" style="background:#ffffff"></span><span class="hex">#ffffff</span></td></tr>
+      <tr><td>on_primary</td><td><span class="swatch" style="background:#0a0a0a"></span><span class="hex">#0a0a0a</span></td></tr>
+      <tr><td>secondary</td><td><span class="swatch" style="background:#b9b9c2"></span><span class="hex">#b9b9c2</span></td></tr>
+      <tr><td>on_surface</td><td><span class="swatch" style="background:#f0f0fa"></span><span class="hex">#f0f0fa</span></td></tr>
+      <tr><td>on_surface_var</td><td><span class="swatch" style="background:#8f8f99"></span><span class="hex">#8f8f99</span></td></tr>
+      <tr><td>outline</td><td><span class="swatch" style="background:#a9a9b3"></span><span class="hex">#a9a9b3</span></td></tr>
+      <tr><td>outline_var</td><td><span class="swatch" style="background:#232326"></span><span class="hex">#232326</span></td></tr>
+      <tr><td>error</td><td><span class="swatch" style="background:#f97583"></span><span class="hex">#f97583</span></td></tr>
+    </table>
+  </div>
+</div>
+
 <h2>Shape, type, space (shared unless you propose changing them)</h2>
 <table>
-  <tr><th>Token</th><th>Clean</th><th>Rusty</th><th>Phosphor</th></tr>
-  <tr><td>Control / primary button radius</td><td>18</td><td>10</td><td>2</td></tr>
-  <tr><td>Card radius</td><td>20</td><td>16</td><td>4</td></tr>
-  <tr><td>Outline button radius</td><td>10</td><td>10</td><td>4</td></tr>
-  <tr><td>Pill radius</td><td>20</td><td>20</td><td>4</td></tr>
-  <tr><td>Favicon / mark radius</td><td colspan="3">22% of square (224 / 1024)</td></tr>
+  <tr><th>Token</th><th>Clean</th><th>Rusty</th><th>Phosphor</th><th>SpaceX</th></tr>
+  <tr><td>Control / primary button radius</td><td>18</td><td>10</td><td>2</td><td>4</td></tr>
+  <tr><td>Card radius</td><td>20</td><td>16</td><td>4</td><td>8</td></tr>
+  <tr><td>Outline button radius</td><td>10</td><td>10</td><td>4</td><td>4</td></tr>
+  <tr><td>Pill radius</td><td>20</td><td>20</td><td>4</td><td>4</td></tr>
+  <tr><td>Favicon / mark radius</td><td colspan="4">22% of square (224 / 1024)</td></tr>
 </table>
 <table>
   <tr><th>Measure</th><th>Value</th></tr>
@@ -263,8 +318,8 @@
   <tr><td>outline</td><td></td></tr>
   <tr><td>outline_var</td><td></td></tr>
   <tr><td>error</td><td></td></tr>
-  <tr><td>Control radius (Clean=18, Rusty=10, Phosphor=2)</td><td></td></tr>
-  <tr><td>Card radius (Clean=20, Rusty=16, Phosphor=4)</td><td></td></tr>
+  <tr><td>Control radius (Clean=18, Rusty=10, Phosphor=2, SpaceX=4)</td><td></td></tr>
+  <tr><td>Card radius (Clean=20, Rusty=16, Phosphor=4, SpaceX=8)</td><td></td></tr>
   <tr><td>theme-color (header)</td><td>usually = surface</td></tr>
   <tr><td>Loading spinner / label</td><td></td></tr>
 </table>
