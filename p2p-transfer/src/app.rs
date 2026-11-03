@@ -2078,6 +2078,11 @@ fn progress_bar(tc: &Tc, progress: f32, height: f32) -> impl egui::Widget {
             egui::vec2(ui.available_width(), height),
             egui::Sense::hover(),
         );
+        response.widget_info(|| {
+            let mut info = egui::WidgetInfo::new(egui::WidgetType::ProgressIndicator);
+            info.value = Some((f64::from(progress) * 100.0).floor());
+            info
+        });
         let count = ((rect.width() + GAP) / PITCH).floor().max(1.0);
         // Spread the leftover width over the gaps so the last segment ends flush.
         let pitch = (rect.width() + GAP) / count;
@@ -2276,13 +2281,15 @@ fn telltale(
 fn direction_telltale(ui: &mut Ui, tc: &Tc, outgoing: bool) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
     telltale(ui, tc, rect, |painter, center, lit, _| {
-        let sign = if outgoing { -1.0 } else { 1.0 };
+        // The shape points up, for sending; receiving mirrors it to point down.
+        let sign = if outgoing { 1.0 } else { -1.0 };
         let at = |x: f32, y: f32| center + egui::vec2(x, sign * y);
-        painter.add(egui::Shape::convex_polygon(
-            vec![at(0.0, -10.0), at(9.0, -1.0), at(-9.0, -1.0)],
-            lit,
-            Stroke::NONE,
-        ));
+        let mut head = vec![at(0.0, -10.0), at(9.0, -1.0), at(-9.0, -1.0)];
+        if !outgoing {
+            // Mirroring reverses the winding, which the anti-aliased fill depends on.
+            head.reverse();
+        }
+        painter.add(egui::Shape::convex_polygon(head, lit, Stroke::NONE));
         painter.rect_filled(
             egui::Rect::from_two_pos(at(-3.5, -2.0), at(3.5, 10.0)),
             0.0,
