@@ -28,6 +28,9 @@ Untrusted:
 - Other origins and pages in the browser: requests to the service worker's `download/` routes (`assets/sw.js`),
   `postMessage` traffic between the page, the service worker and the OPFS resume worker
   (`assets/download-sinks.js`, `assets/resume-worker.js`, `assets/resume-store.js`).
+- HTTP requests to the Markdown Worker (`worker/index.mjs`, the only server code, run for `/`, `/diags` and
+  their `.md` views): the `Accept` and `User-Agent` headers are attacker controlled. It may only choose between
+  the HTML shell and the two static Markdown sources, and never sees a share link's fragment.
 - Resume state in OPFS and IndexedDB, and native staging files left after a crash: treat them as possibly
   corrupt or stale. They must fail safely, never publish unverified bytes.
 
@@ -56,7 +59,9 @@ Most: `src/protocol.rs`, `src/transfer.rs`, `src/node.rs` (capability, links, au
 and `BlobHash` (the manifest hash that verification compares).
 
 Less: `src/app.rs` (UI state; still in scope where it handles links, capabilities or peer-supplied text),
-`src/diagnostics.rs` and `assets/diagnostics.js` (must not leak capabilities or tickets), `src/logging.rs`
+`src/diagnostics.rs` and `assets/diagnostics.js` (must not leak capabilities or tickets), `worker/index.mjs` and
+`assets/view-toggle.js` (the Human/Machine switch: shows Markdown as text, never as HTML, and never changes the
+URL), `src/logging.rs`
 (the in-app terminal buffer users copy into reports: no capability may reach it), `theme.html`,
 `assets/theme.js`, `assets/favicon.js`, `assets/wake-lock.js`. `EchoNode`/`Echo` in `src/node.rs` and the
 blob and Bao stores in `src/blob_store.rs` are older code that the transfer path does not use.

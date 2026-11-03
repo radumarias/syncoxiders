@@ -51,6 +51,30 @@ async function verifyOnce() {
         assert.equal(digest(remote), digest(local), `${path}: deployed bytes differ from release build`);
         console.log(`${origin.origin}${path}: matches release build and hosting headers`);
     }
+    // The Worker answers agents with the Markdown view (worker/index.mjs).
+    for (const [path, accept, file] of [
+        ["/", "text/markdown", "llms.txt"],
+        ["/index.md", "*/*", "llms.txt"],
+        ["/diags", "text/markdown", "assets/diags.md"],
+        ["/diags.md", "*/*", "assets/diags.md"],
+    ]) {
+        const response = await fetch(new URL(path, origin), {
+            headers: {
+                Accept: accept,
+                "Cache-Control": "no-cache",
+                "User-Agent": "Mozilla/5.0 Oxfer-deployment-check",
+            },
+            signal: AbortSignal.timeout(30_000),
+        });
+        assert.equal(response.status, 200, `${path} as Markdown: HTTP status`);
+        assert.equal(response.headers.get("content-type"), "text/markdown; charset=utf-8", `${path} as Markdown: MIME type`);
+        assert.match(response.headers.get("vary") ?? "", /Accept/, `${path} as Markdown: Vary`);
+        assert.equal(response.headers.get("x-content-type-options"), "nosniff", `${path} as Markdown: nosniff`);
+        const body = await response.text();
+        const local = await readFile(new URL(`./dist/${file}`, import.meta.url), "utf8");
+        assert.ok(body.startsWith("---\ntitle: ") && body.endsWith(`---\n\n${local}`), `${path} as Markdown: body is not ${file}`);
+        console.log(`${origin.origin}${path}: Markdown view matches ${file}`);
+    }
 }
 
 let lastError;

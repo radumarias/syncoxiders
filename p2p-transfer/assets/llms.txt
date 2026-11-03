@@ -1,10 +1,12 @@
 # Oxfer
 
 > Oxfer (https://oxfer.app) sends files directly from one browser to another,
-> encrypted in transit, with no copy on any server. The HTML you fetched is only
-> an app shell: the user interface is a WebAssembly program drawn on a WebGL
-> canvas, so an HTTP client sees "Loading…" and nothing else. There is no HTTP
-> download URL for a shared file and no REST API; a browser is the only client.
+> encrypted in transit, with no copy on any server. The HTML page is only an app
+> shell: the user interface is a WebAssembly program drawn on a WebGL canvas, so
+> an HTTP client that asks for HTML sees "Loading…" and nothing else. Ask for
+> `Accept: text/markdown`, or fetch https://oxfer.app/index.md, to get this text
+> instead. There is no HTTP download URL for a shared file and no REST API; a
+> browser is the only client.
 
 ## Which kind of link do you have?
 

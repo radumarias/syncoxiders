@@ -5,7 +5,10 @@
 // cache-first shell would shadow every later `trunk serve`/`trunk build`
 // forever. See CLAUDE.md and design §4.10.1.
 const cacheName = 'oxfer-v3';
-const shellSuffixes = ['/', '/index.html', '/p2p-transfer.js', '/p2p-transfer_bg.wasm', '/theme.html'];
+// The Markdown views are network-first too, so the Human/Machine switch never shows a
+// stale copy; the Worker sends them with `Vary: Accept, User-Agent`.
+const shellSuffixes = ['/', '/index.html', '/p2p-transfer.js', '/p2p-transfer_bg.wasm', '/theme.html',
+  '/index.md', '/diags.md', '/assets/diags.md', '/llms.txt'];
 
 /* Take over immediately; activate() clears stale caches before this worker
    starts controlling pages. */

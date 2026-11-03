@@ -3,16 +3,31 @@
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { WORKER_FIRST } from "./worker/index.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 
+// The Worker (worker/index.mjs) runs only for WORKER_FIRST paths: Markdown content
+// negotiation for `/` and `/diags`. Everything else is a free static asset request.
 export const workerConfig = {
     name: "oxfer",
     compatibilityDate: "2026-09-29",
     workersDev: true,
     previewUrls: true,
+    env: {
+        ASSETS: { type: "assets" },
+    },
     assets: {
         notFoundHandling: "single-page-application",
+        runWorkerFirst: [...WORKER_FIRST],
+    },
+};
+
+export const workerManifest = {
+    type: "complete",
+    mainModule: "index.mjs",
+    modules: {
+        "index.mjs": { type: "esm" },
     },
 };
 
@@ -25,12 +40,16 @@ export async function packageCfOutput({
 } = {}) {
     const bos = join(outputRoot, "v0");
     const assets = join(bos, "workers/default/assets");
+    const bundle = join(bos, "workers/default/bundle");
     await rm(outputRoot, { recursive: true, force: true });
     await mkdir(assets, { recursive: true });
+    await mkdir(bundle, { recursive: true });
     await cp(dist, assets, { recursive: true });
+    await cp(join(root, "worker/index.mjs"), join(bundle, "index.mjs"));
+    const base = { ...workerConfig, manifest: workerManifest };
     const config = includeDomains
-        ? { ...workerConfig, domains: [...productionDomains] }
-        : { ...workerConfig };
+        ? { ...base, domains: [...productionDomains] }
+        : base;
     await writeFile(
         join(bos, "config.json"),
         `${JSON.stringify({ buildContext: { isPreview: false } })}\n`,
@@ -39,7 +58,7 @@ export async function packageCfOutput({
         join(bos, "workers/default/worker.config.json"),
         `${JSON.stringify(config, null, 4)}\n`,
     );
-    return { assets, config };
+    return { assets, bundle, config };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

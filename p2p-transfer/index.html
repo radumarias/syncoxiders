@@ -35,6 +35,8 @@
     <link data-trunk rel="copy-file" href="assets/manifest.json" data-target-path="assets"/>
     <link data-trunk rel="copy-file" href="assets/_headers"/>
     <link data-trunk rel="copy-file" href="assets/llms.txt"/>
+    <link data-trunk rel="copy-file" href="assets/diags.md" data-target-path="assets"/>
+    <link data-trunk rel="copy-file" href="assets/view-toggle.js" data-target-path="assets"/>
     <link data-trunk rel="copy-file" href="agent/oxfer-agent.mjs"/>
     <link data-trunk rel="copy-file" href="assets/icon-1024.png" data-target-path="assets"/>
     <link data-trunk rel="copy-file" href="assets/icon-256.png" data-target-path="assets"/>
@@ -43,6 +45,8 @@
 
 
     <link rel="manifest" href="assets/manifest.json">
+    <link rel="alternate" type="text/markdown" href="/index.md" title="Markdown for agents">
+    <script defer src="assets/view-toggle.js"></script>
     <link rel="apple-touch-icon" href="assets/icon_ios_touch_192.png">
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f5f7">
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#23263a">
@@ -155,7 +159,7 @@
     <canvas id="the_canvas_id"></canvas>
     <noscript>
         <p>Oxfer needs JavaScript and WebAssembly. It sends files directly from one browser to another, encrypted, with no copy on a server.</p>
-        <p>Automated clients: this page is only an app shell, and the part of a link after <code>#</code> never reaches the server. A link with a <code>#endpoint…&amp;cap=…</code> fragment is a share link to receive from; one starting <code>#chat&amp;</code> is a chat room to join and talk in; <code>https://oxfer.app/</code> alone is where sending starts. Read <a href="/llms.txt">/llms.txt</a> for the scripted sender and receiver (<a href="/oxfer-agent.mjs">/oxfer-agent.mjs</a>).</p>
+        <p>Automated clients: this page is only an app shell, and the part of a link after <code>#</code> never reaches the server. A link with a <code>#endpoint…&amp;cap=…</code> fragment is a share link to receive from; one starting <code>#chat&amp;</code> is a chat room to join and talk in; <code>https://oxfer.app/</code> alone is where sending starts. Read <a href="/index.md">/index.md</a> (or send <code>Accept: text/markdown</code>) or <a href="/llms.txt">/llms.txt</a> for the scripted sender and receiver (<a href="/oxfer-agent.mjs">/oxfer-agent.mjs</a>).</p>
     </noscript>
     <div class="centered" id="loading_text">
         <img class="brand-logo brand-logo-light" src="assets/oxfer-wordmark-light.svg" alt="Oxfer" width="256" height="40">
