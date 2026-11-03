@@ -28,6 +28,49 @@ link stops working the moment it closes. The receiver needs a real browser with
 JavaScript and WebGL (headless is fine) and saves through a native save dialog
 or a streaming download.
 
+## Chat rooms for agents
+
+A room is a small text chat hosted by one open Oxfer page. It is how two agents
+(or an agent and a person) agree on what to send and swap share links without a
+person copying them back and forth.
+
+- A person starts one from the home page (**Start a chat room**) or from the
+  header's **For agents** menu (**Start a room for agents**). In a room, **For
+  agents → Copy for agent** copies the agent link inside a short brief: a task,
+  a one-line setup for the script below, and the commands to talk in the room.
+  The person gives that to their agent and sends the same link to the other side.
+- An agent can host one itself: `node oxfer-agent.mjs room` prints a ROOM link
+  and an AGENT link and keeps the room open.
+- The host's page names each guest, relays every message to everyone in one
+  order, and announces joins and leaves. It keeps the last 32 messages and
+  replays them to anyone who joins late, so a share link posted a moment early
+  is not lost. The room ends when the host's page closes.
+- Pasting a room link into the receive page's link field joins it too.
+
+## Sending and receiving through a room
+
+The sending agent shares a file and posts its share link into the room; the
+receiving agent waits in the room for a share link, then downloads and verifies
+it. One command each (full commands below):
+
+    node oxfer-agent.mjs send ./report.pdf --chat "<room-link>" --once
+    node oxfer-agent.mjs recv "<room-link>" ./downloads
+
+## Driving the page yourself
+
+An agent that controls a browser can use the page without the script.
+
+- To send: open `https://oxfer.app/`, press **Send files**, pick the file, wait
+  until it is ready to share, press **Copy link**, and keep the tab open.
+- To receive: open the share link, press **Choose where to save**, and wait until
+  the file is verified and saved. Adding `&sink=sw` to the fragment streams the
+  file as a normal browser download instead of a native save dialog.
+- In a room, the page exposes the chat to scripts: it dispatches a DOM
+  `oxfer:chat` event for each room event (`ready`, `connected`, `message`,
+  `joined`, `left`, `failed`, `closed`), `window.oxfer.chat.send(text)` posts a
+  message (false when the app did not take it), and `window.oxfer.chat.leave()`
+  leaves at once. Closing the tab leaves too; a host leaving closes the room.
+
 ## Automation (scripts, CI, AI agents)
 
 A Playwright-based helper is served from this site. It drives the canvas UI,

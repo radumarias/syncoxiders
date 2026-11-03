@@ -65,6 +65,11 @@ test("Accept: text/markdown gets the Markdown page with front matter", async () 
     assert.equal(response.headers.get("x-content-type-options"), "nosniff");
     assert.equal(body, `---\ntitle: "Oxfer"\nurl: "https://oxfer.app/"\n---\n\n${llms}`);
 
+    for (const topic of ["## Chat rooms for agents", "--chat \"<room-link>\"", "recv \"<room-link>\"",
+        "oxfer-agent.mjs room", "For agents", "window.oxfer.chat.send", "Choose where to save"]) {
+        assert.ok(body.includes(topic), `the home page Markdown covers ${topic}`);
+    }
+
     const diags = await get("/diags", { Accept: "text/markdown" });
     assert.match(diags.body, /^---\ntitle: "Oxfer diagnostics"\nurl: "https:\/\/oxfer.app\/diags"\n---\n\n# Oxfer diagnostics\n/);
 });
