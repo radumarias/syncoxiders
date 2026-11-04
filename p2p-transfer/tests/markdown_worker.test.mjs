@@ -112,6 +112,10 @@ test("content negotiation follows q-values and ignores wildcards for Markdown", 
     assert.equal(wantsMarkdown(new Headers()), false);
     assert.equal(wantsMarkdown(h("*/*", "Googlebot/2.1")), false, "search crawlers index the HTML");
     assert.equal(wantsMarkdown(h("*/*", "curl/8.9")), false);
+    assert.equal(wantsMarkdown(h("text/markdown;q=0.5, text/html;q=0.1, */*;q=0.9")), true,
+        "the explicit text/html q-value wins over the wildcard");
+    const navigate = new Headers({ accept: CHROME, "user-agent": "Mozilla/5.0 Claude-User/1.0", "sec-fetch-mode": "navigate" });
+    assert.equal(wantsMarkdown(navigate), false, "a browser driven by an agent still gets the app");
 });
 
 test("other paths and methods pass straight to the assets", async () => {

@@ -7,8 +7,9 @@ import { WORKER_FIRST } from "./worker/index.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 
-// The Worker (worker/index.mjs) runs only for WORKER_FIRST paths: Markdown content
-// negotiation for `/` and `/diags`. Everything else is a free static asset request.
+// The Worker (worker/index.mjs) runs first for WORKER_FIRST paths: Markdown content
+// negotiation for `/` and `/diags`. Other requests are free static asset requests,
+// except non-navigation requests that match no asset, which also reach the Worker.
 export const workerConfig = {
     name: "oxfer",
     compatibilityDate: "2026-09-29",

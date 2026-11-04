@@ -50,8 +50,10 @@ identity. Keep it aligned with `package-cf-output.mjs`:
 | Run Worker first | `WORKER_FIRST` in `worker/index.mjs`: `/`, `/diags` and their `.md` views |
 | Bindings | `ASSETS` (the static assets) |
 
-No paid Workers features are required. Static asset requests are free. Only the
-paths above invoke the Worker, so they count against the Workers request
+No paid Workers features are required. Static asset requests are free. The
+paths above invoke the Worker, and so does any non-navigation request that
+matches no asset (with single-page-application handling those reach the Worker,
+which hands them back to the assets), so they count against the Workers request
 quota (100,000 a day on the Free plan); the WASM, scripts, images and every
 other file stay free asset requests. If the account is on the Free plan and the
 home page ever nears that quota, move to Workers Paid or drop `/` and `/diags`
@@ -67,7 +69,7 @@ instead:
 | --- | --- |
 | `GET /index.md`, `GET /diags.md` | Markdown, always |
 | `GET /` or `/diags` with `Accept: text/markdown` ranked at least as high as HTML | Markdown |
-| `GET /` or `/diags` from a self-declared AI agent user agent (`ClaudeBot`, `Claude-User`, `GPTBot`, `ChatGPT-User`, `PerplexityBot`, …) | Markdown, unless it sends `text/markdown;q=0` |
+| `GET /` or `/diags` from a self-declared AI agent user agent (`ClaudeBot`, `Claude-User`, `GPTBot`, `ChatGPT-User`, `PerplexityBot`, …) that is not a browser navigation (`Sec-Fetch-Mode: navigate`) | Markdown, unless it sends `text/markdown;q=0` |
 | Anything else, including browsers and search crawlers | The HTML shell |
 
 The Markdown is front matter (`title`, `url`) plus a source file: `/` uses

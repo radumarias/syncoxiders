@@ -23,6 +23,7 @@
   overscroll-behavior:contain;background:#0b0b0c;color:#e4e4e7;
   font:14px/1.75 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 #oxfer-machine-view[hidden]{display:none}
+#oxfer-machine-view:focus{outline:none}
 #oxfer-machine-view .inner{box-sizing:border-box;max-width:780px;margin:0 auto;
   padding:56px 16px calc(140px + env(safe-area-inset-bottom))}
 #oxfer-machine-view .source{color:#8b8b93;margin:0 0 28px}
@@ -54,6 +55,7 @@
         const view = document.createElement("section");
         view.id = "oxfer-machine-view";
         view.hidden = true;
+        view.tabIndex = -1;
         view.setAttribute("aria-label", "Markdown version of this page");
         const inner = document.createElement("div");
         inner.className = "inner";
@@ -85,9 +87,14 @@
             view.hidden = !asMachine;
             const run = ++generation;
             if (!asMachine) return;
+            // Take keyboard focus off the hidden canvas, so keys scroll the view instead.
+            view.focus({ preventScroll: true });
             const target = viewFor();
             const [path] = target;
             if (loaded === path) return;
+            // Whatever `pre` held is replaced now, so nothing counts as loaded until this
+            // load finishes (a cancelled load must not leave a stale match behind).
+            loaded = null;
             source.textContent = `${location.host}${path}`;
             pre.textContent = "Loading…";
             try {

@@ -2,13 +2,15 @@
 //
 // The HTML at `/` and `/diags` is an app shell whose interface is a WebAssembly
 // program drawn on a canvas, so an agent that fetches it learns nothing. This Worker
-// runs only for the paths in `assets.runWorkerFirst` (see package-cf-output.mjs);
-// every other request is served by the asset layer without invoking it.
+// runs first for the paths in `assets.runWorkerFirst` (see package-cf-output.mjs).
+// Other requests are served by the asset layer; only a non-navigation request that
+// matches no asset also reaches it (single-page-application handling) and is passed
+// straight back to the assets.
 //
 // - `/index.md` and `/diags.md` always return the Markdown version of those pages.
 // - `/` and `/diags` return Markdown when the client asks for it (`Accept: text/markdown`
-//   ranked at least as high as HTML) or identifies as a known AI agent, and the HTML
-//   shell otherwise. Both answers carry `Vary: Accept, User-Agent`.
+//   ranked at least as high as HTML) or identifies as a known AI agent outside a
+//   browser navigation, and the HTML shell otherwise. Both answers carry `Vary: Accept, User-Agent`.
 //
 // The fragment of a share link never reaches the server, so this code cannot see,
 // log or leak a capability: it only ever sees the path.
@@ -58,11 +60,14 @@ export function wantsMarkdown(headers) {
     // Only an explicit text/markdown counts for Markdown; wildcards only count for HTML.
     const markdown = ranges.find(([type]) => type === "text/markdown");
     if (markdown && markdown[1] === 0) return false;
-    if (AGENT_UA.test(headers.get("user-agent") ?? "")) return true;
+    // A browser navigation renders the app, whatever its user agent claims: an agent
+    // that drives a real browser is told (llms.txt) to use the page itself.
+    const navigation = headers.get("sec-fetch-mode") === "navigate";
+    if (!navigation && AGENT_UA.test(headers.get("user-agent") ?? "")) return true;
     if (!markdown) return false;
-    const html = Math.max(0, ...ranges
-        .filter(([type]) => type === "text/html" || type === "text/*" || type === "*/*")
-        .map(([, q]) => q));
+    // HTML's q-value is that of its most specific matching range (RFC 9110 §12.5.1).
+    const qOf = wanted => ranges.find(([type]) => type === wanted)?.[1];
+    const html = qOf("text/html") ?? qOf("text/*") ?? qOf("*/*") ?? 0;
     return markdown[1] >= html;
 }
 
@@ -82,7 +87,12 @@ async function markdownResponse(request, env, page) {
     const canonical = new URL(page.html[0], origin).href;
     // A fresh GET: the browser's validators belong to the page, not to the source file.
     const source = await env.ASSETS.fetch(new URL(page.source, origin));
-    if (!source.ok) return source;
+    if (!source.ok) {
+        const headers = new Headers(source.headers);
+        withVary(headers);
+        const body = request.method === "HEAD" ? null : source.body;
+        return new Response(body, { status: source.status, statusText: source.statusText, headers });
+    }
     const body = request.method === "HEAD" ? null : frontMatter(page, canonical) + await source.text();
     const headers = new Headers(source.headers);
     for (const name of ["content-length", "etag", "last-modified", "content-encoding"]) {
