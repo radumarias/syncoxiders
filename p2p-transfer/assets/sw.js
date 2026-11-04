@@ -6,6 +6,9 @@
 // forever. See CLAUDE.md and design §4.10.1.
 const cacheName = 'oxfer-v3';
 const shellSuffixes = ['/', '/index.html', '/p2p-transfer.js', '/p2p-transfer_bg.wasm', '/theme.html'];
+// The Markdown views (worker/index.mjs) and llms.txt are not cached at all, so the
+// Human/Machine switch never shows a stale copy.
+const uncached = /(\.md|\/llms\.txt)$/;
 
 /* Take over immediately; activate() clears stale caches before this worker
    starts controlling pages. */
@@ -188,6 +191,8 @@ self.addEventListener('fetch', (e) => {
     if (session) e.waitUntil(session.lifetime);
     return;
   }
+
+  if (uncached.test(url.pathname)) return;
 
   if (isShellRequest(e.request, url.pathname)) {
     e.respondWith(

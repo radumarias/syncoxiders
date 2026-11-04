@@ -24,7 +24,11 @@ from the workspace root may select the user's stable toolchain instead.
 - `npx cf deploy --prebuilt` — upload the packaged Worker (`cf` from `package.json`).
 - Pushes to `main` that touch this crate deploy via `.github/workflows/oxfer-web.yml`.
 
-Cloudflare: this crate has no Wrangler config. Use `cf` (`cf --help`,
+Cloudflare: the deploy is static assets plus one small Worker,
+`worker/index.mjs`, that serves Markdown to agents on `/` and `/diags` (see
+"Markdown for agents" in the doc below). Page Markdown comes from
+`assets/llms.txt` and `assets/diags.md`; `assets/view-toggle.js` is the
+Human/Machine switch that shows it. This crate has no Wrangler config. Use `cf` (`cf --help`,
 `cf cli search …`). Do not fall back to Wrangler. `cf deploy` without
 `--prebuilt` is for Vite/Wrangler bundling and is wrong here; Trunk output is
 packaged first. Details: [`docs/cloudflare-workers.md`](docs/cloudflare-workers.md).

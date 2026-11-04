@@ -40,4 +40,6 @@ fi
 test -s dist/index.html
 test -s dist/sw.js
 cmp assets/_headers dist/_headers
+cmp assets/llms.txt dist/llms.txt
+cmp assets/diags.md dist/assets/diags.md
 node package-cf-output.mjs
