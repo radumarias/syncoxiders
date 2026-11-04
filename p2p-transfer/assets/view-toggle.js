@@ -28,16 +28,20 @@
 #oxfer-machine-view .source{color:#8b8b93;margin:0 0 28px}
 #oxfer-machine-view pre{margin:0;font:inherit;white-space:pre-wrap;overflow-wrap:anywhere}`;
 
-    const markdownPath = () =>
-        location.pathname.replace(/\/+$/, "") === "/diags" ? "/diags.md" : "/index.md";
+    // Page → [Markdown view, its source file]. Mirrors PAGES in worker/index.mjs, which a
+    // classic script cannot import; tests/markdown_worker.test.mjs checks they agree.
+    const VIEWS = { "/diags": ["/diags.md", "/assets/diags.md"] };
+    const INDEX = ["/index.md", "/llms.txt"];
+    const viewFor = () => VIEWS[location.pathname.replace(/\/+$/, "")] ?? INDEX;
 
-    async function loadMarkdown(path) {
+    async function loadMarkdown([path, source]) {
         const accept = { headers: { Accept: "text/markdown" }, cache: "no-cache" };
         const response = await fetch(path, accept);
         const type = response.headers.get("content-type") ?? "";
         if (response.ok && type.startsWith("text/markdown")) return response.text();
-        // `trunk serve` has no Worker; show the source files it would have served.
-        const fallback = await fetch(path === "/diags.md" ? "/assets/diags.md" : "/llms.txt", accept);
+        // `trunk serve` has no Worker and answers with the HTML shell: show the source file.
+        response.body?.cancel();
+        const fallback = await fetch(source, accept);
         if (!fallback.ok) throw new Error(`HTTP ${fallback.status}`);
         return fallback.text();
     }
@@ -81,12 +85,13 @@
             view.hidden = !asMachine;
             const run = ++generation;
             if (!asMachine) return;
-            const path = markdownPath();
+            const target = viewFor();
+            const [path] = target;
             if (loaded === path) return;
             source.textContent = `${location.host}${path}`;
             pre.textContent = "Loading…";
             try {
-                const text = await loadMarkdown(path);
+                const text = await loadMarkdown(target);
                 if (run !== generation) return;
                 pre.textContent = text;
                 loaded = path;

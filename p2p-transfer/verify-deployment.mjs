@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { PAGES } from "./worker/index.mjs";
 
 const origin = new URL(process.argv[2]);
 assert.equal(origin.protocol, "https:", "deployment must use HTTPS");
@@ -52,12 +53,10 @@ async function verifyOnce() {
         console.log(`${origin.origin}${path}: matches release build and hosting headers`);
     }
     // The Worker answers agents with the Markdown view (worker/index.mjs).
-    for (const [path, accept, file] of [
-        ["/", "text/markdown", "llms.txt"],
-        ["/index.md", "*/*", "llms.txt"],
-        ["/diags", "text/markdown", "assets/diags.md"],
-        ["/diags.md", "*/*", "assets/diags.md"],
-    ]) {
+    for (const [path, accept, file] of PAGES.flatMap(page => [
+        [page.html[0], "text/markdown", page.source.slice(1)],
+        [page.md, "*/*", page.source.slice(1)],
+    ])) {
         const response = await fetch(new URL(path, origin), {
             headers: {
                 Accept: accept,

@@ -1,4 +1,5 @@
 import { bindings, defineConfig } from "cf/config";
+import { WORKER_FIRST } from "./worker/index.mjs";
 
 // Static assets plus one small Worker (worker/index.mjs) that answers Markdown to
 // agents on `/` and `/diags`. Trunk output and the Worker are packaged into
@@ -16,7 +17,7 @@ export default defineConfig({
         },
         assets: {
             notFoundHandling: "single-page-application",
-            runWorkerFirst: ["/index.md", "/", "/index.html", "/diags.md", "/diags", "/diags/"],
+            runWorkerFirst: [...WORKER_FIRST],
         },
         domains: ["oxfer.app", "www.oxfer.app"],
     },

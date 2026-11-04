@@ -127,7 +127,8 @@ test("the Worker runs only for the negotiated pages", async () => {
     assert.deepEqual(workerConfig.assets.runWorkerFirst, WORKER_FIRST);
     assert.deepEqual([...WORKER_FIRST].sort(), ["/", "/diags", "/diags.md", "/diags/", "/index.html", "/index.md"]);
     const source = await read("../cloudflare.config.ts");
-    assert.match(source, new RegExp(`runWorkerFirst: ${JSON.stringify(WORKER_FIRST).replaceAll(",", ", ").replace(/[[\]/.]/g, "\\$&")}`));
+    assert.match(source, /import \{ WORKER_FIRST \} from "\.\/worker\/index\.mjs"/);
+    assert.match(source, /runWorkerFirst: \[\.\.\.WORKER_FIRST\]/);
 });
 
 test("the shell links the Markdown view and loads the Human/Machine switch", async () => {
@@ -140,4 +141,9 @@ test("the shell links the Markdown view and loads the Human/Machine switch", asy
     assert.match(toggle, /if \(navigator\.webdriver\) return;/, "automation must not see the floating pill");
     assert.doesNotMatch(toggle, /location\.hash\s*=|replaceState|pushState/, "the switch must not touch the URL");
     assert.doesNotMatch(toggle, /innerHTML/, "Markdown is shown as text, never parsed as HTML");
+    for (const page of PAGES) {
+        const pair = `["${page.md}", "${page.source}"]`;
+        const entry = page.md === "/index.md" ? `const INDEX = ${pair};` : `"${page.html[0]}": ${pair}`;
+        assert.ok(toggle.includes(entry), `view-toggle.js maps ${page.html[0]} like PAGES does`);
+    }
 });

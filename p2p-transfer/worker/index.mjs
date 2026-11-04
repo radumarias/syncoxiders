@@ -22,6 +22,12 @@ export const PAGES = [
 /** Paths the Worker must see before the asset layer answers. */
 export const WORKER_FIRST = PAGES.flatMap(page => [page.md, ...page.html]);
 
+/** Path → page, and whether the path is the page's `.md` view. */
+const ROUTES = new Map(PAGES.flatMap(page => [
+    [page.md, { page, direct: true }],
+    ...page.html.map(path => [path, { page, direct: false }]),
+]));
+
 // Self-declared AI crawlers and user-triggered agent fetchers. These cannot run the
 // WebAssembly app, so the shell is never useful to them. Search-engine crawlers are
 // deliberately absent: they index the HTML page.
@@ -60,8 +66,7 @@ export function wantsMarkdown(headers) {
     return markdown[1] >= html;
 }
 
-function frontMatter(page, origin) {
-    const url = new URL(page.html[0], origin).href;
+function frontMatter(page, url) {
     return `---\ntitle: ${JSON.stringify(page.title)}\nurl: ${JSON.stringify(url)}\n---\n\n`;
 }
 
@@ -73,19 +78,20 @@ function withVary(headers) {
 }
 
 async function markdownResponse(request, env, page) {
-    const url = new URL(request.url);
+    const { origin } = new URL(request.url);
+    const canonical = new URL(page.html[0], origin).href;
     // A fresh GET: the browser's validators belong to the page, not to the source file.
-    const source = await env.ASSETS.fetch(new URL(page.source, url.origin));
+    const source = await env.ASSETS.fetch(new URL(page.source, origin));
     if (!source.ok) return source;
-    const body = frontMatter(page, url.origin) + await source.text();
+    const body = request.method === "HEAD" ? null : frontMatter(page, canonical) + await source.text();
     const headers = new Headers(source.headers);
     for (const name of ["content-length", "etag", "last-modified", "content-encoding"]) {
         headers.delete(name);
     }
     headers.set("Content-Type", "text/markdown; charset=utf-8");
-    headers.set("Link", `<${new URL(page.html[0], url.origin).href}>; rel="canonical"`);
+    headers.set("Link", `<${canonical}>; rel="canonical"`);
     withVary(headers);
-    return new Response(request.method === "HEAD" ? null : body, { status: 200, headers });
+    return new Response(body, { status: 200, headers });
 }
 
 export default {
@@ -94,14 +100,13 @@ export default {
         if (request.method !== "GET" && request.method !== "HEAD") {
             return env.ASSETS.fetch(request);
         }
-        const direct = PAGES.find(page => page.md === pathname);
-        if (direct) return markdownResponse(request, env, direct);
-        const page = PAGES.find(p => p.html.includes(pathname));
-        if (page && wantsMarkdown(request.headers)) {
-            return markdownResponse(request, env, page);
+        const route = ROUTES.get(pathname);
+        if (route && (route.direct || wantsMarkdown(request.headers))) {
+            return markdownResponse(request, env, route.page);
         }
         const response = await env.ASSETS.fetch(request);
-        if (!page) return response;
+        if (!route) return response;
+        const { page } = route;
         const headers = new Headers(response.headers);
         withVary(headers);
         headers.append("Link", `<${page.md}>; rel="alternate"; type="text/markdown"`);

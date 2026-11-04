@@ -47,11 +47,11 @@ identity. Keep it aligned with `package-cf-output.mjs`:
 | Preview URLs | enabled |
 | Not-found handling | `single-page-application` (`/diags` serves `index.html`) |
 | Server entrypoint | `worker/index.mjs`, packaged as `bundle/index.mjs` |
-| Run Worker first | `/`, `/index.html`, `/index.md`, `/diags`, `/diags/`, `/diags.md` |
+| Run Worker first | `WORKER_FIRST` in `worker/index.mjs`: `/`, `/diags` and their `.md` views |
 | Bindings | `ASSETS` (the static assets) |
 
 No paid Workers features are required. Static asset requests are free. Only the
-six paths above invoke the Worker, so they count against the Workers request
+paths above invoke the Worker, so they count against the Workers request
 quota (100,000 a day on the Free plan); the WASM, scripts, images and every
 other file stay free asset requests. If the account is on the Free plan and the
 home page ever nears that quota, move to Workers Paid or drop `/` and `/diags`
