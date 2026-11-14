@@ -142,8 +142,17 @@ npm run verify -- https://oxfer.app/
 Pushes to `main` that touch this crate deploy automatically through
 `.github/workflows/oxfer-web.yml`, which then verifies the workers.dev host,
 `www.oxfer.app` and `oxfer.app`. Setup and secrets are in
-[`docs/cloudflare-workers.md`](docs/cloudflare-workers.md). For another static
-host, upload the `dist/` from `trunk build --release --locked`.
+[`docs/cloudflare-workers.md`](docs/cloudflare-workers.md).
+
+For another static host, upload the `dist/` from `trunk build --release --locked`
+and:
+
+- serve it over HTTPS (localhost is fine for development). Both streaming
+  download sinks need a secure context; without one, downloads fall back to
+  the 256 MiB in-memory route;
+- enable a single-page-application fallback so unknown paths such as `/diags`
+  serve `index.html`, as the Cloudflare package does with
+  `notFoundHandling: "single-page-application"`.
 
 ## In progress
 
