@@ -9,7 +9,8 @@ implemented as a direct `RTCDataChannel`, with offer/answer/ICE travelling over
 iroh's encrypted control stream and the iroh stream retained as fallback.
 
 The parent Cargo workspace has `p2p-transfer` as its default member.
-`README.md` is inherited `eframe_template` material, not project documentation.
+`README.md` is the user-facing overview: features, layout, build, test and deploy.
+Keep it in step when those change.
 
 ## Toolchain and commands
 
