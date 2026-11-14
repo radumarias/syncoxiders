@@ -1,78 +1,156 @@
-# eframe template
+# Oxfer (`p2p-transfer`)
 
-[![dependency status](https://deps.rs/repo/github/emilk/eframe_template/status.svg)](https://deps.rs/repo/github/emilk/eframe_template)
-[![Build Status](https://github.com/emilk/eframe_template/workflows/CI/badge.svg)](https://github.com/emilk/eframe_template/actions?workflow=CI)
+Oxfer sends files directly between two devices, encrypted in transit, with no
+copy on any server. It is one Rust codebase built with
+[`eframe`](https://github.com/emilk/egui/tree/master/crates/eframe)/[`egui`](https://github.com/emilk/egui):
+a native desktop app and a WebAssembly browser app, live at
+<https://oxfer.app>.
 
-This is a template repo for [eframe](https://github.com/emilk/egui/tree/master/crates/eframe), a framework for writing apps using [egui](https://github.com/emilk/egui/).
+The sender picks or drops files and gets a share link. The receiver opens the
+link and saves the files straight from the sender's device. The sender's app or
+tab must stay open until every receiver has finished.
 
-The goal is for this to be the simplest way to get started writing a GUI app in Rust.
+## Features
 
-You can compile your app natively or for the web, and share it using Github Pages.
+- **Peer-to-peer transfer.** Peers find each other through
+  [iroh](https://github.com/n0-computer/iroh) 1.1: the link carries an
+  `EndpointTicket`, and the receiver dials it over iroh's authenticated,
+  TLS 1.3 encrypted QUIC transport.
+- **Direct browser-to-browser path.** Between two browsers, the WebRTC offer,
+  answer and ICE candidates travel over the iroh control stream and the bytes
+  flow over a direct `RTCDataChannel` (DTLS). If ICE fails, or the data channel
+  breaks mid-transfer, the same protocol resumes over the iroh relay, so no
+  TURN server is needed.
+- **Capability links.** The share link holds a bearer capability in the URL
+  fragment, which the browser never sends to a server.
+- **Verified files.** The sender hashes every file with BLAKE3 before sharing;
+  the receiver checks each file against the authenticated manifest and only
+  then sends a `Verified` receipt, which is what marks the transfer complete.
+  Multiple files per share (up to 2,000 in one manifest).
+- **Bounded memory for large files.** The sender reads in slices, and the
+  receiver grants flow-control credit only after its sink has accepted bytes.
+  Browser downloads stream to disk through the File System Access API
+  (Chromium) or a service-worker streaming download; an in-memory fallback is
+  capped at 256 MiB. Native downloads are staged in the destination folder and
+  published only after size and hash checks, never overwriting an existing file.
+- **Reconnect and resume.** The receiver retries transient failures with
+  backoff and keeps acknowledged offsets, hash state and finished files across
+  reconnects. An opt-in resumable browser copy (OPFS) survives a closed tab.
+  See [`docs/resumable-transfers.md`](docs/resumable-transfers.md).
+- **Screen wake lock** while sharing or receiving in the browser.
+- **Drag and drop** of files onto the window, natively and in the browser.
+- **Chat rooms.** `https://oxfer.app/#chat` opens a text room hosted by the
+  open page, on its own ALPN (`oxfer/chat/1`). People and agents can talk and
+  swap share links there; "Copy for agent" copies a link with a short brief.
+- **Scripted sender and receiver** for automation and AI agents:
+  `agent/oxfer-agent.mjs` drives the real app in a Playwright browser, and the
+  site serves it at `/oxfer-agent.mjs` with a summary at `/llms.txt`. See
+  [`docs/agent-transfer.md`](docs/agent-transfer.md).
+- **Diagnostics.** `/diags` (or **Diags** in the bottom bar) runs local
+  checks and a paired peer test and produces a shareable report without
+  secrets. See [`docs/diagnostics.md`](docs/diagnostics.md).
+- **Themes.** Clean (default), Rusty and Phosphor, each with light and dark
+  variants, plus a theme lab at `/theme.html` for editing and exporting
+  palettes.
 
-## Getting started
+## Layout
 
-Start by clicking "Use this template" at https://github.com/emilk/eframe_template/ or follow [these instructions](https://docs.github.com/en/free-pro-team@latest/github/creating-cloning-and-archiving-repositories/creating-a-repository-from-a-template).
+| Path | What it is |
+| --- | --- |
+| `src/app.rs` | UI state machine (home, send, receive, chat, diagnostics). Holds handles and metadata, never file bytes. |
+| `src/node.rs` | iroh node, share-link tickets, capability checks, relay choice, sender protocol handler. |
+| `src/protocol.rs` | Bounded, tagged postcard frames (1 MiB max): handshake, manifest, credit, signalling, chunks, completion. |
+| `src/transfer.rs` | Transport-independent sender and receiver state machines. |
+| `src/webrtc.rs`, `assets/webrtc-channel.js` | Browser data channel: SDP/ICE, backpressure, path stats, fallback. |
+| `src/file_io/` | Source and sink contracts, native staging, browser sources and sinks, OPFS resume. |
+| `src/chat.rs`, `assets/chat-bridge.js` | Chat rooms and the page-script bridge the agent script uses. |
+| `src/diagnostics.rs`, `assets/diagnostics.js` | The diagnostics page. |
+| `assets/sw.js`, `assets/download-sinks.js` | App cache and streaming download responses. |
+| `agent/oxfer-agent.mjs` | Playwright sender, receiver and chat client. |
+| `tests/` | wasm-bindgen browser tests (`webrtc_wasm`, `relay_wasm`, `resume_wasm`) and Node tests for the JS assets and tooling. |
+| `docs/` | Design notes and operating guides. |
 
-Change the name of the crate: Choose a good name for your project, and change the name to it in:
-* `Cargo.toml`
-    * Change the `package.name` from `eframe_template` to `your_crate`.
-    * Change the `package.authors`
-* `main.rs`
-    * Change `eframe_template::TemplateApp` to `your_crate::TemplateApp`
-* `index.html`
-    * Change the `<title>eframe template</title>` to `<title>your_crate</title>`. optional.
-* `assets/sw.js`
-  * Change the `'./eframe_template.js'` to `./your_crate.js` (in `filesToCache` array)
-  * Change the `'./eframe_template_bg.wasm'` to `./your_crate_bg.wasm` (in `filesToCache` array)
+Contributor notes, invariants and architecture details are in
+[`CLAUDE.md`](CLAUDE.md).
 
-Alternatively, you can run `fill_template.sh` which will ask for the needed names and email and perform the above patches for you. This is particularly useful if you clone this repository outside GitHub and hence cannot make use of its
-templating function.
+## Building and running
 
-### Learning about egui
+Run everything from this directory. `rust-toolchain` pins nightly with
+`rustfmt`, `clippy` and the `wasm32-unknown-unknown` target; running Cargo from
+the workspace root may pick a different toolchain. The workspace keeps a single
+`../Cargo.lock`.
 
-`src/app.rs` contains a simple example app. This is just to give some inspiration - most of it can be removed if you like.
+### Native
 
-The official egui docs are at <https://docs.rs/egui>. If you prefer watching a video introduction, check out <https://www.youtube.com/watch?v=NtUkr_z7l84>. For inspiration, check out the [the egui web demo](https://emilk.github.io/egui/index.html) and follow the links in it to its source code.
+```sh
+cargo run --release
+```
 
-### Testing locally
+On Debian or Ubuntu, first install:
 
-`cargo run --release`
+```sh
+sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+```
 
-On Linux you need to first run:
+### Browser
 
-`sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev`
+You need [Trunk](https://trunkrs.dev/) and clang with `llvm-ar`, because every
+wasm32 build compiles ring's C code, which gcc cannot target.
 
-On Fedora Rawhide you need to run:
+```sh
+cargo install --locked trunk
+trunk serve          # http://127.0.0.1:8080, rebuilds on change
+trunk build          # static files in dist/
+```
 
-`dnf install clang clang-devel clang-tools-extra libxkbcommon-devel pkg-config openssl-devel libxcb-devel gtk3-devel atk fontconfig-devel`
+`assets/sw.js` caches the app shell. Open `http://127.0.0.1:8080/#dev` to
+unregister service workers and clear caches; this also disables the
+service-worker download sink, so test that route without `#dev`. The fragment
+flags `sink=fsa`, `sink=sw` and `sink=mem` force a download route.
 
-### Web Locally
+## Testing
 
-You can compile your app to [WASM](https://en.wikipedia.org/wiki/WebAssembly) and publish it as a web page.
+`./check.sh` is the required gate (CI runs the Rust build plus the resume
+worker and Firefox WebRTC and resume tests):
 
-We use [Trunk](https://trunkrs.dev/) to build for web target.
-1. Install the required target with `rustup target add wasm32-unknown-unknown`.
-2. Install Trunk with `cargo install --locked trunk`.
-3. Run `trunk serve` to build and serve on `http://127.0.0.1:8080`. Trunk will rebuild automatically if you edit the project.
-4. Open `http://127.0.0.1:8080/index.html#dev` in a browser. See the warning below.
+- `cargo check`, `cargo fmt --check` and `cargo clippy -D warnings` on native
+  and `wasm32-unknown-unknown`;
+- `cargo test` (unit, loopback endpoint and doc tests);
+- Node tests for the resume worker, diagnostics, WebRTC stats, wake lock,
+  themes, theme lab, favicon, Cloudflare packaging and the agent CLI;
+- real Firefox tests through `wasm-pack test --headless --firefox` for WebRTC,
+  the relay and OPFS resume;
+- `trunk build`, then checks that the built assets match the sources.
 
-> `assets/sw.js` script will try to cache our app, and loads the cached version when it cannot connect to server allowing your app to work offline (like PWA).
-> appending `#dev` to `index.html` will skip this caching, allowing us to load the latest builds during development.
+It needs Node.js 22+, Firefox, `wasm-pack`, Trunk and clang. For a single test,
+use `cargo test <substring>`. `local_test_*` tests are offline and
+deterministic; `online_test_*` tests may use the public relay. The WebRTC
+browser test needs a default network route (not Internet access).
 
-### Web Deploy
+## Deploying
 
-For production deployment of this browser app, follow the
-[Cloudflare Workers setup](docs/cloudflare-workers.md). From this directory:
-`npm ci && npm run build && npm run deploy` (`cf deploy --prebuilt`).
+The browser app is an assets-only Cloudflare Worker, deployed with the `cf`
+CLI (there is no Wrangler config):
 
-For other static hosts, run `trunk build --release --locked` from this directory
-and upload `dist`. The repository's Jekyll GitHub Pages workflow deploys the
-project website, not this browser app.
+```sh
+npm ci
+npm run build        # build-web.sh: release Trunk build, then package for cf
+npm run deploy       # cf deploy --prebuilt
+npm run verify -- https://oxfer.app/
+```
 
-You can test the template app at <https://emilk.github.io/eframe_template/>.
+Pushes to `main` that touch this crate deploy automatically through
+`.github/workflows/oxfer-web.yml`, which then verifies the workers.dev host,
+`www.oxfer.app` and `oxfer.app`. Setup and secrets are in
+[`docs/cloudflare-workers.md`](docs/cloudflare-workers.md). For another static
+host, upload the `dist/` from `trunk build --release --locked`.
 
-## Updating egui
+## In progress
 
-As of 2023, egui is in active development with frequent releases with breaking changes. [eframe_template](https://github.com/emilk/eframe_template/) will be updated in lock-step to always use the latest version of egui.
+A Dioxus-based web UI and shared sessions are being built on the
+`feature/mobile-web` branch and are not yet on `main`.
 
-When updating `egui` and `eframe` it is recommended you do so one version at the time, and read about the changes in [the egui changelog](https://github.com/emilk/egui/blob/master/CHANGELOG.md) and [eframe changelog](https://github.com/emilk/egui/blob/master/crates/eframe/CHANGELOG.md).
+## License
+
+MIT OR Apache-2.0, see [`LICENSE-MIT`](LICENSE-MIT) and
+[`LICENSE-APACHE`](LICENSE-APACHE).
