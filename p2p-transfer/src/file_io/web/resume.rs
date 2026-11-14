@@ -268,13 +268,13 @@ impl Drop for PersistentSink {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredTransfer {
     pub id: String,
     pub files: Vec<StoredFile>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredFile {
     pub name: String,
     pub size: u64,

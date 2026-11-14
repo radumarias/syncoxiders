@@ -62,9 +62,21 @@ routes stream bounded chunks and are required for larger downloads.
 
 ## Architecture
 
-- `src/app.rs` — UI state machine. It owns handles and metadata, never file
-  bytes. Picking a sender file starts a bounded hashing preparation phase.
-  Receiver Save creates sinks before sending `ReceiveCommand::Save`.
+- `src/sessions/` — the UI-agnostic session core (#66). `Oxfer` owns every
+  handle and task between gestures and the engine: `SendSession` (pick → hash →
+  bind → link → peers), `ReceiveSession` (link → bind → Save → verify),
+  `ChatSession`, and on wasm `LocalCopies`, `DiagnosticsSession` and URL intake
+  (`location.rs`). UIs call `tick()`, render `snapshot()` (plain `Clone +
+  PartialEq` view models, links wrapped in redacting `BearerLink`), and
+  `dispatch(Intent)`; `Notifier` wakes them, and `Snapshot::live` asks for
+  ~10 Hz polling while engine progress moves. Browser/OS services sit behind
+  the `Platform` trait (`NativePlatform`, `WebPlatform`, `TestPlatform`);
+  user-facing wording lives in `sessions::text`. New session logic goes here,
+  never in a UI adapter.
+- `src/app.rs` — the egui adapter (feature `egui-ui`, on by default): theme,
+  layout, rendering and view state only (copied flags, focus, open panels,
+  native file dialogs). It holds no transfer, retry or session logic.
+  `--no-default-features` builds the engine plus `sessions` without egui.
 - `src/node.rs` — iroh `Node`, endpoint ticket links, capability authorization,
   relay selection, and the sender-side protocol handler.
 - `src/protocol.rs` — bounded tagged postcard frames: handshake, manifest,
@@ -83,8 +95,9 @@ routes stream bounded chunks and are required for larger downloads.
   download responses with bounded demand/ack flow.
 - `src/chat.rs` — chat rooms on their own ALPN (`oxfer/chat/1`): a host endpoint that
   checks the link capability, names guests and relays messages; `ChatHandle` is the
-  app's handle for both roles. `assets/chat-bridge.js` exposes the open room to page
-  scripts (`oxfer:chat` DOM events, `window.oxfer.chat.send`) for the agent script.
+  session's handle for both roles. `assets/chat-bridge.js` exposes the open room to page
+  scripts (`oxfer:chat` DOM events, `window.oxfer.chat.send`) for the agent script;
+  `sessions::chat` installs it.
 - `src/webrtc.rs` and `assets/webrtc-channel.js` — browser data-channel
   implementation: SDP/ICE, bounded inbound queue, `bufferedAmount`
   backpressure, path stats, close/failure signalling, and relay fallback.

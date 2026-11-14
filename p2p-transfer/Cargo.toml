@@ -17,9 +17,21 @@ exclude.workspace = true
 all-features = true
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
+[features]
+default = ["egui-ui"]
+# The egui app (native desktop, and the web build until the Dioxus cut-over, #67).
+# Without it the crate is the UI-agnostic engine plus `sessions`, which the Dioxus web
+# crate (`web/`) builds on.
+egui-ui = ["dep:egui", "dep:eframe", "dep:image", "dep:rfd"]
+
+[[bin]]
+name = "p2p-transfer"
+path = "src/main.rs"
+required-features = ["egui-ui"]
+
 [dependencies]
-egui = "0.36.1"
-eframe = { version = "0.36.1", default-features = false, features = [
+egui = { version = "0.36.1", optional = true }
+eframe = { version = "0.36.1", optional = true, default-features = false, features = [
     "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
     "glow",          # Use the glow rendering backend. Alternative: "wgpu".
@@ -27,8 +39,8 @@ eframe = { version = "0.36.1", default-features = false, features = [
     "wayland",       # To support Linux (and CI)
     "x11",           # To support older Linux distributions (restores one of the default features)
 ] }
-image = { version = "0.25.10", default-features = false, features = ["png"] }
-log = "0.4.34"
+image = { version = "0.25.10", optional = true, default-features = false, features = ["png"] }
+log = { version = "0.4.34", features = ["std"] }
 url = "2.5.8"
 
 # You only need serde if you want app persistence:
@@ -55,7 +67,7 @@ tokio = { version = "1.53", features = [
     "io-util",
     "fs",
 ] }
-rfd = "0.17.2"
+rfd = { version = "0.17.2", optional = true }
 env_logger = "0.11.11"
 # Bao tree for BitTorrent-like verified streaming (merkle tree)
 bao-tree = "0.16.1"
@@ -86,6 +98,7 @@ web-sys = { version = "0.3.104", features = [
     "VisualViewport",
     "MediaQueryList",
     "Document",
+    "VisibilityState",
     "Element",
     "HtmlElement",
     "HtmlInputElement",

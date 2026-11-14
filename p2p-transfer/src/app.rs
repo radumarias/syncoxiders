@@ -1,42 +1,29 @@
-//! The egui layer: mode, flows and rendering.
+//! The egui adapter: theme, layout and rendering over the session core.
 //!
-//! This module owns no bytes and no protocol. It holds handles (`SharedFiles`, `Node`,
-//! `TransferHandle`), turns user gestures into engine commands, and renders whatever the
-//! engine publishes on its progress watch.
+//! This module holds no transfer, retry or session logic. Each frame it ticks
+//! [`crate::sessions::Oxfer`], renders the [`Snapshot`] it publishes, and turns gestures
+//! into [`Intent`]s. What it does own is view state: the theme, which panels are open,
+//! "Copied" flags, text-box focus, and the native file and folder dialogs.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use eframe::egui;
 use egui::{Button, Color32, CornerRadius, RichText, Stroke, Ui};
-use n0_future::task::{self, AbortOnDropHandle};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, watch};
 
-use crate::chat::{ChatCommand, ChatEvent, ChatHandle};
-use crate::file_io::{self, FileOrigin, FileSnapshot, SharedFile, SharedFiles};
 use crate::logging;
+use crate::sessions::text::{self, format_size, LINK_WARNING};
 #[cfg(target_arch = "wasm32")]
-use crate::node::DiagnosticNode;
-use crate::node::{FragmentParams, Node, RelayChoice};
-use crate::protocol::FileMeta;
-use crate::transfer::{
-    Path as TransferPath, Phase, ReceiveCommand, ReceiveOptions, TransferHandle, TransferProgress,
+use crate::sessions::CopiesIntent;
+#[cfg(target_arch = "wasm32")]
+use crate::sessions::DiagnosticsIntent;
+use crate::sessions::{
+    chat::agent_prompt, Activity, ChatIntent, ChatRole, ChatSnapshot, ChatStatus, Intent,
+    LinkState, Oxfer, ReceiveIntent, SaveTarget, SendIntent, Snapshot,
 };
 #[cfg(target_arch = "wasm32")]
-use iroh_tickets::endpoint::EndpointTicket;
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(module = "/assets/wake-lock.js")]
-extern "C" {
-    #[wasm_bindgen(js_name = setTransferWakeLock)]
-    fn set_transfer_wake_lock(active: bool);
-    #[wasm_bindgen(js_name = retryTransferWakeLock)]
-    fn retry_transfer_wake_lock();
-    #[wasm_bindgen(js_name = transferWakeLockStatus)]
-    fn transfer_wake_lock_status() -> String;
-}
+use crate::sessions::{PickedFile, WakeLock};
+use crate::transfer::Phase;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(module = "/assets/theme.js")]
@@ -44,27 +31,6 @@ extern "C" {
     #[wasm_bindgen(js_name = setBrowserTheme)]
     fn set_browser_theme(theme: &str, dark: bool);
 }
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(module = "/assets/chat-bridge.js")]
-extern "C" {
-    #[wasm_bindgen(js_name = installChatSender)]
-    fn install_chat_sender(send: &wasm_bindgen::JsValue, leave: &wasm_bindgen::JsValue);
-    #[wasm_bindgen(js_name = removeChatSender)]
-    fn remove_chat_sender();
-    #[wasm_bindgen(js_name = emitChatEvent)]
-    fn emit_chat_event(json: &str);
-}
-
-/// Shown next to a link, because the link *is* the credential (design §2.6).
-const LINK_WARNING: &str =
-    "Anyone with this link can download your files while you're sharing. Send it only to people you trust.";
-/// What a receiver is told when the link carries no `cap` (design §2.6, §4.8.2).
-const MISSING_CAP: &str = "this link is missing its access code; ask the sender for the full link";
-/// Both sentences of design §2.6 for a capability the sender rejected.
-const CAP_REJECTED: &str =
-    "this link is not valid for these files. Ask the sender for a fresh link — the old one stops \
-     working when they restart sharing.";
 
 // ── File-messenger theme — shared colors for desktop and browser ────────────
 
@@ -345,135 +311,7 @@ impl Tc {
     }
 }
 
-// ── App state ────────────────────────────────────────────────────────────────
-
-/// One file this node received and saved, as the UI lists it.
-#[derive(Clone, Debug)]
-pub struct ReceivedFile {
-    pub name: String,
-    pub size: u64,
-    pub location: String,
-    pub when: String,
-    pub path: TransferPath,
-    /// Newly received bytes per second in this session; absent for an empty/already saved file.
-    pub average_bytes_per_sec: Option<f64>,
-}
-
-/// A picked file waiting for `logic()` to turn it into a [`PrepareHandle`].
-///
-/// The wasm file picker completes in a JS callback that cannot hold `&mut self`, so both
-/// targets hand picks over through this queue and one code path drains it.
-struct PendingPick {
-    name: String,
-    origin: FileOrigin,
-    snapshot: FileSnapshot,
-}
-
-/// Hashing one picked file. The link is withheld until every one of these is gone
-/// (design §4.8.2, plan amendment 14), so a receiver never sees a non-final hash.
-struct PrepareHandle {
-    name: String,
-    progress: watch::Receiver<f32>,
-    /// Abort-on-drop is right here: hashing owns nothing that needs cleanup.
-    _task: AbortOnDropHandle<()>,
-}
-
-impl PrepareHandle {
-    /// The hashing task drops its `watch::Sender` when it ends, whatever the outcome.
-    fn finished(&self) -> bool {
-        self.progress.has_changed().is_err()
-    }
-}
-
-type ReceiveStartup = Arc<Mutex<Option<Result<TransferHandle, String>>>>;
-
-/// Everything one receive needs.
-///
-/// Boxed inside [`Mode`] because a parsed `FragmentParams` (which carries an
-/// `EndpointTicket`) makes this variant ~230 bytes against ~24 for the next largest, and
-/// every `Mode` value — including `Home` — would otherwise be that wide.
-struct ReceiveState {
-    input: String,
-    params: FragmentParams,
-    handle: Option<TransferHandle>,
-    error: Option<String>,
-    opening: bool,
-    startup: ReceiveStartup,
-    save_pending: Arc<AtomicBool>,
-}
-
-/// One destination selection per receive session. Errors and dismissal allow a retry;
-/// a submitted Save remains pending until the engine leaves AwaitingSave.
-struct SaveAttempt {
-    pending: Arc<AtomicBool>,
-    submitted: bool,
-}
-
-impl SaveAttempt {
-    fn begin(pending: &Arc<AtomicBool>) -> Option<Self> {
-        if pending.swap(true, Ordering::AcqRel) {
-            return None;
-        }
-        Some(Self {
-            pending: pending.clone(),
-            submitted: false,
-        })
-    }
-
-    fn submitted(mut self) {
-        self.submitted = true;
-    }
-}
-
-impl Drop for SaveAttempt {
-    fn drop(&mut self) {
-        if !self.submitted {
-            self.pending.store(false, Ordering::Release);
-        }
-    }
-}
-
-/// What the app is doing. One value replaces the six booleans the pre-migration app used.
-#[derive(Default)]
-enum Mode {
-    #[default]
-    Home,
-    #[cfg(target_arch = "wasm32")]
-    Diagnostics,
-    Send {
-        preparing: Vec<PrepareHandle>,
-    },
-    Receive(Box<ReceiveState>),
-    Chat(Box<ChatState>),
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Default)]
-struct DiagnosticPeer {
-    node: Option<Arc<DiagnosticNode>>,
-    target: Option<EndpointTicket>,
-    link: Option<String>,
-    session: Option<String>,
-    outcome: Option<String>,
-    busy: bool,
-    generation: u64,
-}
-
-// ── Chat rooms ───────────────────────────────────────────────────────────────
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ChatRole {
-    Host,
-    Guest,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ChatStatus {
-    Starting,
-    Open,
-    Failed(String),
-    Closed,
-}
+// ── View state ───────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Copied {
@@ -481,267 +319,38 @@ enum Copied {
     AgentLink,
 }
 
-/// A hosted room's links: the one for people, and the same link marked for agents.
-#[derive(Clone)]
-struct RoomLinks {
-    link: String,
-    agent: String,
-}
-
-/// Transcript lines kept on screen; older ones scroll off for good.
-const CHAT_TRANSCRIPT: usize = 500;
-
-struct ChatLine {
-    /// `None` for a room notice (someone joined, the room closed).
-    from: Option<String>,
-    text: String,
-}
-
-/// One open room, hosted here or joined from a link. Dropping it leaves the room.
-struct ChatState {
-    role: ChatRole,
-    you: Option<String>,
-    /// Host only, once the room is dialable.
-    links: Option<RoomLinks>,
+/// Per-room view state; reset whenever the core reports a different room.
+#[derive(Default)]
+struct ChatView {
+    room: u64,
+    input: String,
     /// Which link was copied last, for the button label.
     copied: Option<Copied>,
-    members: Vec<String>,
-    lines: VecDeque<ChatLine>,
-    input: String,
-    status: ChatStatus,
-    handle: Option<ChatHandle>,
-    /// Created from the "For agents" menu or opened from an `&agent` link.
-    for_agents: bool,
     /// The agent prompt card shows the full prompt.
     prompt_open: bool,
     focus_input: bool,
     /// Keyboard inset when the input was last scrolled into view; the keyboard sliding
     /// up must bring the input back into view.
     input_seen_inset: f32,
-    #[cfg(target_arch = "wasm32")]
-    bridge: Option<ChatBridge>,
 }
 
-impl ChatState {
-    fn new(role: ChatRole, handle: Option<ChatHandle>, for_agents: bool) -> Self {
-        Self {
-            role,
-            you: None,
-            links: None,
-            copied: None,
-            members: Vec::new(),
-            lines: VecDeque::new(),
-            input: String::new(),
-            status: ChatStatus::Starting,
-            handle,
-            for_agents,
-            prompt_open: false,
-            focus_input: true,
-            input_seen_inset: 0.0,
-            #[cfg(target_arch = "wasm32")]
-            bridge: None,
+impl ChatView {
+    fn sync(&mut self, chat: &ChatSnapshot) {
+        if self.room != chat.id {
+            *self = Self {
+                room: chat.id,
+                focus_input: true,
+                ..Self::default()
+            };
         }
-    }
-
-    /// A session is running; `apply` drops the handle when it fails or closes.
-    fn polling(&self) -> bool {
-        self.handle.is_some()
     }
 
     /// Copy the agent brief for this room's agent link.
-    fn copy_for_agent(&mut self, ctx: &egui::Context) {
-        if let Some(links) = &self.links {
-            ctx.copy_text(agent_prompt(&links.agent));
+    fn copy_for_agent(&mut self, ctx: &egui::Context, chat: &ChatSnapshot) {
+        if let Some(links) = &chat.links {
+            ctx.copy_text(agent_prompt(links.agent.as_str()));
             self.copied = Some(Copied::AgentLink);
         }
-    }
-
-    fn say(&mut self, text: &str) {
-        if let Some(handle) = &self.handle {
-            queue_say(&handle.commands, text);
-        }
-    }
-
-    /// The session is over: drop it, and take `window.oxfer.chat` away with it so a page
-    /// script's `send` throws instead of queueing text nothing will deliver.
-    fn end_session(&mut self) {
-        self.handle = None;
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.bridge = None;
-        }
-    }
-
-    fn note(&mut self, text: impl Into<String>) {
-        self.push_line(None, text.into());
-    }
-
-    fn push_line(&mut self, from: Option<String>, text: String) {
-        if self.lines.len() >= CHAT_TRANSCRIPT {
-            self.lines.pop_front();
-        }
-        self.lines.push_back(ChatLine { from, text });
-    }
-
-    /// Tell page scripts about `event`, then show it.
-    fn dispatch(&mut self, event: ChatEvent) {
-        #[cfg(target_arch = "wasm32")]
-        emit_chat_event(&crate::chat::event_json(&event));
-        self.apply(event);
-    }
-
-    fn apply(&mut self, event: ChatEvent) {
-        match event {
-            ChatEvent::Ready {
-                link,
-                agent_link,
-                you,
-            } => {
-                self.members = vec![you.clone()];
-                self.you = Some(you);
-                self.links = Some(RoomLinks {
-                    link,
-                    agent: agent_link,
-                });
-                self.status = ChatStatus::Open;
-                self.note("Room open. Send the link to the person you want to talk to.");
-            }
-            ChatEvent::Connected { you, mut members } => {
-                // The host's roster omits the newcomer; list it, as the host lists itself.
-                if !members.contains(&you) {
-                    members.push(you.clone());
-                }
-                self.you = Some(you);
-                self.members = members;
-                self.status = ChatStatus::Open;
-                self.note("You're in.");
-            }
-            ChatEvent::Message { from, text, .. } => self.push_line(Some(from), text),
-            ChatEvent::Joined { name } => {
-                if !self.members.contains(&name) {
-                    self.members.push(name.clone());
-                }
-                // An agent talking in turns leaves after each turn and rejoins for the next;
-                // a rejoin with only notices since its leave just takes the leave back.
-                let left = format!("{name} left");
-                let rejoin = self
-                    .lines
-                    .iter()
-                    .rev()
-                    .take_while(|line| line.from.is_none())
-                    .position(|line| line.text == left);
-                match rejoin {
-                    Some(back) => {
-                        self.lines.remove(self.lines.len() - 1 - back);
-                    }
-                    None => self.note(format!("{name} joined")),
-                }
-            }
-            ChatEvent::Left { name } => {
-                self.members.retain(|m| *m != name);
-                self.note(format!("{name} left"));
-            }
-            ChatEvent::Failed(message) => {
-                self.status = ChatStatus::Failed(message);
-                self.end_session();
-            }
-            ChatEvent::Closed => {
-                self.status = ChatStatus::Closed;
-                self.end_session();
-                self.note("The room is closed.");
-            }
-        }
-    }
-}
-
-/// Queue `text` for the room, from the input box or a page script.
-/// Queue `text` for the room; false when it is blank or the queue is full. A full queue
-/// means the session is already 16 messages behind; dropping a line beats blocking the frame.
-fn queue_say(commands: &mpsc::Sender<ChatCommand>, text: &str) -> bool {
-    let text = text.trim();
-    !text.is_empty()
-        && commands
-            .try_send(ChatCommand::Say(text.to_string()))
-            .is_ok()
-}
-
-/// Page-script access to the open room (`assets/chat-bridge.js`): events go out as DOM
-/// events, and `window.oxfer.chat.send` queues text straight onto the session's commands.
-#[cfg(target_arch = "wasm32")]
-struct ChatBridge {
-    _send: wasm_bindgen::closure::Closure<dyn FnMut(String) -> bool>,
-    _leave: wasm_bindgen::closure::Closure<dyn FnMut()>,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl ChatBridge {
-    fn install(handle: &ChatHandle) -> Self {
-        let commands = handle.commands.clone();
-        let send =
-            wasm_bindgen::closure::Closure::new(move |text: String| queue_say(&commands, &text));
-        let leave_token = handle.leave_token();
-        let leave = wasm_bindgen::closure::Closure::new(move || leave_token.cancel());
-        install_chat_sender(send.as_ref(), leave.as_ref());
-        Self {
-            _send: send,
-            _leave: leave,
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl Drop for ChatBridge {
-    fn drop(&mut self) {
-        remove_chat_sender();
-    }
-}
-
-/// Browser-only library of opt-in local copies. Neither this state nor any share link is
-/// serialized by eframe; the storage module owns versioned file checkpoints.
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone, Default)]
-struct LocalCopies {
-    entries: Arc<Mutex<Vec<file_io::web::resume::StoredTransfer>>>,
-    error: Arc<Mutex<Option<String>>>,
-    busy: Arc<AtomicBool>,
-}
-
-#[cfg(target_arch = "wasm32")]
-enum LocalCopyAction {
-    Refresh,
-    Discard(String),
-    Export(String, usize),
-}
-
-#[cfg(target_arch = "wasm32")]
-impl LocalCopies {
-    fn run(&self, action: LocalCopyAction, repaint: egui::Context) {
-        if self.busy.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        let library = self.clone();
-        wasm_bindgen_futures::spawn_local(async move {
-            let result = match action {
-                LocalCopyAction::Refresh => Ok(()),
-                LocalCopyAction::Discard(id) => file_io::web::resume::discard(&id).await,
-                LocalCopyAction::Export(id, index) => {
-                    file_io::web::resume::export(&id, index).await
-                }
-            };
-            let result = match result {
-                Ok(()) => file_io::web::resume::list().await,
-                Err(error) => Err(error),
-            };
-            match result {
-                Ok(entries) => {
-                    *library.entries.lock().unwrap() = entries;
-                    *library.error.lock().unwrap() = None;
-                }
-                Err(error) => *library.error.lock().unwrap() = Some(error.to_string()),
-            }
-            library.busy.store(false, Ordering::Release);
-            repaint.request_repaint();
-        });
     }
 }
 
@@ -777,41 +386,22 @@ pub struct P2PTransfer {
 
     /// Native app setting and browser backup. The browser's immediate theme key wins on reload.
     theme: Theme,
+    /// Every session, handle and task. Never serialized.
     #[serde(skip)]
-    mode: Mode,
-    /// Wake the real UI when browser callbacks or endpoint startup finish.
+    core: Oxfer,
+    /// The core's view model, refreshed after every tick and every dispatch.
     #[serde(skip)]
-    repaint: egui::Context,
-    /// Handles and metadata for everything this node offers — never bytes.
-    #[serde(skip)]
-    shared_files: SharedFiles,
-    /// `Some` while sharing; written by the bind task.
-    #[serde(skip)]
-    node: Arc<Mutex<Option<Arc<Node>>>>,
-    #[serde(skip)]
-    link: Arc<Mutex<Option<String>>>,
-    /// Where every spawned task reports a failure. `logic()` drains it to the panel that is
-    /// showing, so a task never needs to know which mode the app is in.
-    #[serde(skip)]
-    node_error: Arc<Mutex<Option<String>>>,
-    #[serde(skip)]
-    received_files: Arc<Mutex<Vec<ReceivedFile>>>,
-    /// Picks waiting to become `PrepareHandle`s (see [`PendingPick`]).
-    #[serde(skip)]
-    pending_picks: Arc<Mutex<Vec<PendingPick>>>,
-    /// Set the moment a bind task is spawned, not when it finishes: `node` stays `None` for
-    /// the whole bind, so two picks in quick succession would otherwise start two nodes and
-    /// the second would silently replace the first one's link.
-    #[serde(skip)]
-    sharing: Arc<AtomicBool>,
+    snap: Snapshot,
     #[serde(skip)]
     show_terminal_view: bool,
     /// This frame's [`keyboard_inset`], read once in `ui()`.
     #[serde(skip)]
     keyboard_inset: f32,
-    /// Stays visible until sharing stops, so copying has an unmistakable result.
+    /// The share whose link was copied; "Copied" stays until that share stops.
     #[serde(skip)]
-    link_copied: bool,
+    link_copied: Option<u64>,
+    #[serde(skip)]
+    chat_view: ChatView,
     #[serde(skip)]
     header_logos: Option<HeaderLogos>,
     #[serde(skip)]
@@ -824,53 +414,26 @@ pub struct P2PTransfer {
     #[cfg(target_arch = "wasm32")]
     #[serde(skip)]
     hashchange_closure: Option<HashChangeListener>,
-    #[cfg(target_arch = "wasm32")]
-    #[serde(skip)]
-    last_fragment: Option<String>,
-    #[cfg(target_arch = "wasm32")]
-    #[serde(skip)]
-    local_copies: LocalCopies,
-    /// Retaining plaintext on this device is always an explicit choice, never a persisted
-    /// preference silently applied to a later private transfer.
-    #[cfg(target_arch = "wasm32")]
-    #[serde(skip)]
-    keep_local_copy: bool,
+    /// The local copy whose Delete is waiting for confirmation.
     #[cfg(target_arch = "wasm32")]
     #[serde(skip)]
     confirm_discard: Option<String>,
-    /// Set only when the user selected a specific partial copy to resume.
-    #[cfg(target_arch = "wasm32")]
-    #[serde(skip)]
-    resume_target: Option<String>,
-    #[cfg(target_arch = "wasm32")]
-    #[serde(skip)]
-    diagnostics_report: Arc<Mutex<Option<String>>>,
-    #[cfg(target_arch = "wasm32")]
-    #[serde(skip)]
-    diagnostics_running: Arc<AtomicBool>,
-    #[cfg(target_arch = "wasm32")]
-    #[serde(skip)]
-    diagnostic_peer: Arc<Mutex<DiagnosticPeer>>,
 }
 
 impl Default for P2PTransfer {
     fn default() -> Self {
+        let core = Oxfer::default();
+        let snap = core.snapshot();
         Self {
             #[cfg(not(target_arch = "wasm32"))]
             save_directory: None,
             theme: Theme::default(),
+            core,
+            snap,
             keyboard_inset: 0.0,
-            mode: Mode::Home,
-            repaint: egui::Context::default(),
-            shared_files: Arc::new(Mutex::new(Vec::new())),
-            node: Arc::new(Mutex::new(None)),
-            link: Arc::new(Mutex::new(None)),
-            node_error: Arc::new(Mutex::new(None)),
-            received_files: Arc::new(Mutex::new(Vec::new())),
-            pending_picks: Arc::new(Mutex::new(Vec::new())),
-            sharing: Arc::new(AtomicBool::new(false)),
             show_terminal_view: false,
-            link_copied: false,
+            link_copied: None,
+            chat_view: ChatView::default(),
             header_logos: None,
             last_dark_mode: None,
             last_theme: None,
@@ -879,21 +442,7 @@ impl Default for P2PTransfer {
             #[cfg(target_arch = "wasm32")]
             hashchange_closure: None,
             #[cfg(target_arch = "wasm32")]
-            last_fragment: None,
-            #[cfg(target_arch = "wasm32")]
-            local_copies: LocalCopies::default(),
-            #[cfg(target_arch = "wasm32")]
-            keep_local_copy: false,
-            #[cfg(target_arch = "wasm32")]
             confirm_discard: None,
-            #[cfg(target_arch = "wasm32")]
-            resume_target: None,
-            #[cfg(target_arch = "wasm32")]
-            diagnostics_report: Arc::new(Mutex::new(None)),
-            #[cfg(target_arch = "wasm32")]
-            diagnostics_running: Arc::new(AtomicBool::new(false)),
-            #[cfg(target_arch = "wasm32")]
-            diagnostic_peer: Arc::new(Mutex::new(DiagnosticPeer::default())),
         }
     }
 }
@@ -915,18 +464,24 @@ impl Drop for HashChangeListener {
     }
 }
 
-// ── Flows ────────────────────────────────────────────────────────────────────
+// ── Adapter ──────────────────────────────────────────────────────────────────
 
 impl P2PTransfer {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         #[cfg(target_arch = "wasm32")]
         cc.egui_ctx
             .options_mut(|options| options.sync_window_theme = false);
-        let mut app: Self = cc
+        let app: Self = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, eframe::APP_KEY))
             .unwrap_or_default();
-        app.repaint = cc.egui_ctx.clone();
+        // Background tasks repaint on demand instead of the UI polling idle.
+        let repaint = cc.egui_ctx.clone();
+        app.core
+            .notifier()
+            .set_wake(Arc::new(move || repaint.request_repaint()));
+        #[cfg(target_arch = "wasm32")]
+        let mut app = app;
         #[cfg(target_arch = "wasm32")]
         {
             use wasm_bindgen::JsCast as _;
@@ -957,18 +512,20 @@ impl P2PTransfer {
                     .add_event_listener_with_callback("popstate", closure.as_ref().unchecked_ref());
                 app.hashchange_closure = Some(HashChangeListener(closure));
             }
-            app.local_copies
-                .run(LocalCopyAction::Refresh, cc.egui_ctx.clone());
+            app.core.dispatch(Intent::Copies(CopiesIntent::Refresh));
         }
         app
     }
 
-    /// Record a failure for whichever panel is showing.
-    fn report(slot: &Arc<Mutex<Option<String>>>, message: String) {
-        log::error!("{message}");
-        if let Ok(mut slot) = slot.lock() {
-            *slot = Some(message);
-        }
+    /// Hand an intent to the core and refresh the snapshot, so the rest of this frame
+    /// draws the new state.
+    fn dispatch(&mut self, intent: Intent) {
+        self.core.dispatch(intent);
+        self.snap = self.core.snapshot();
+    }
+
+    fn link_copied(&self) -> bool {
+        self.link_copied == Some(self.snap.send.share_id)
     }
 
     // ── Pick ─────────────────────────────────────────────────────────────
@@ -978,31 +535,7 @@ impl P2PTransfer {
         let Some(path) = rfd::FileDialog::new().pick_file() else {
             return;
         };
-        self.queue_path(path);
-    }
-
-    /// Queue a file from the picker or a drop: both reach hashing through this one path.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn queue_path(&mut self, path: std::path::PathBuf) {
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        // The snapshot is taken *before* hashing, so `open_source` can tell later whether the
-        // bytes still match the hash the manifest advertises.
-        match file_io::snapshot_path(&path) {
-            Ok(snapshot) => {
-                if let Ok(mut picks) = self.pending_picks.lock() {
-                    picks.push(PendingPick {
-                        name,
-                        origin: FileOrigin::Path(path),
-                        snapshot,
-                    });
-                }
-            }
-            Err(e) => Self::report(&self.node_error, format!("could not read {name}: {e}")),
-        }
+        self.core.picks().push_path(path);
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -1019,17 +552,14 @@ impl P2PTransfer {
         {
             Some(input) => input,
             None => {
-                Self::report(
-                    &self.node_error,
-                    "this browser would not open a file picker".to_string(),
-                );
+                self.core
+                    .report("this browser would not open a file picker".to_string());
                 return;
             }
         };
         input.set_type("file");
 
-        let picks = self.pending_picks.clone();
-        let repaint = self.repaint.clone();
+        let picks = self.core.picks();
         let closure = wasm_bindgen::closure::Closure::wrap(Box::new(move |event: web_sys::Event| {
             let Some(input) = event
                 .target()
@@ -1042,9 +572,8 @@ impl P2PTransfer {
             };
             // A file-picker change is still a user action on WebKit. Try the
             // first screen wake lock here, before async hashing/binding.
-            set_transfer_wake_lock(true);
-            Self::queue_web_file(&picks, file);
-            repaint.request_repaint();
+            crate::sessions::Platform::set_wake_lock(&crate::sessions::WebPlatform, true);
+            picks.push(PickedFile::from_web_file(file));
         })
             as Box<dyn FnMut(web_sys::Event)>);
 
@@ -1054,34 +583,19 @@ impl P2PTransfer {
         self.file_input_closure = Some(closure);
     }
 
-    /// Queue a browser file from the picker or a drop: both reach hashing through this one path.
-    #[cfg(target_arch = "wasm32")]
-    fn queue_web_file(picks: &Mutex<Vec<PendingPick>>, file: web_sys::File) {
-        // `File` freezes name, size and mtime at pick time, so this snapshot is the
-        // one the browser will still report later.
-        let snapshot = file_io::snapshot_web(&file);
-        let name = file.name();
-        if let Ok(mut picks) = picks.lock() {
-            picks.push(PendingPick {
-                name,
-                origin: FileOrigin::Web(send_wrapper::SendWrapper::new(file)),
-                snapshot,
-            });
-        }
-    }
-
     /// Queue files dropped on the window, as if each had been picked.
     fn accept_dropped_files(&mut self, ctx: &egui::Context) {
-        if !self.can_pick_files() {
+        if !self.core.can_pick_files() {
             return;
         }
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         if dropped.is_empty() {
             return;
         }
+        let picks = self.core.picks();
         #[cfg(not(target_arch = "wasm32"))]
         for file in dropped {
-            self.queue_path(file.path().to_path_buf());
+            picks.push_path(file.path().to_path_buf());
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -1090,797 +604,42 @@ impl P2PTransfer {
                 .iter()
                 .filter_map(|file| file.web_file().cloned())
                 .collect();
-            if files.is_empty() {
-                return;
+            if !files.is_empty() {
+                picks.push_dropped(files);
             }
-            // No wake lock here: a drop is not a user activation, and `logic` resets the lock
-            // to `needs_wake_lock()` this same frame, before the probes below have queued
-            // anything. The lock follows once hashing starts.
-            let picks = self.pending_picks.clone();
-            let errors = self.node_error.clone();
-            let repaint = self.repaint.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                for file in files {
-                    match file_io::web::probe_readable(&file).await {
-                        Ok(()) => Self::queue_web_file(&picks, file),
-                        Err(e) => {
-                            // The browser's error is a raw DOMException dump; keep it in the log.
-                            log::debug!("probe of {} failed: {e}", file.name());
-                            Self::report(
-                                &errors,
-                                format!(
-                                    "could not read {} ({})",
-                                    file.name(),
-                                    file_io::FOLDER_REFUSED
-                                ),
-                            );
-                        }
-                    }
-                }
-                repaint.request_repaint();
-            });
         }
     }
 
-    /// Whether a picked or dropped file may start or join a share: the header's "Choose File"
-    /// (Home has its own "Send files") and drops both follow this.
-    fn can_pick_files(&self) -> bool {
-        !matches!(self.mode, Mode::Receive(_) | Mode::Chat(_))
-    }
-
-    /// Hash a picked file, then publish it as a `SharedFile`.
-    fn begin_prepare(&mut self, pick: PendingPick) -> PrepareHandle {
-        let (progress_tx, progress_rx) = watch::channel(0.0f32);
-        let files = self.shared_files.clone();
-        let errors = self.node_error.clone();
-        let label = pick.name.clone();
-
-        let task = task::spawn(async move {
-            let PendingPick {
-                name,
-                origin,
-                snapshot,
-            } = pick;
-            let mut source = match file_io::open_source(&origin, &snapshot).await {
-                Ok(source) => source,
-                Err(e) => {
-                    Self::report(&errors, format!("could not open {name}: {e}"));
-                    return;
-                }
-            };
-            let size = file_io::Source::size(&source);
-            match file_io::hash_source(&mut source, &progress_tx).await {
-                Ok(hash) => {
-                    let meta = FileMeta {
-                        name: file_io::sanitize_name(&name),
-                        size,
-                        hash,
-                    };
-                    if let Ok(mut files) = files.lock() {
-                        files.push(SharedFile {
-                            meta,
-                            origin,
-                            snapshot,
-                        });
-                    }
-                    log::info!("ready to share: {name} ({size} bytes)");
-                }
-                Err(e) => Self::report(&errors, format!("could not hash {name}: {e}")),
-            }
-            // Dropping `progress_tx` here is what tells the UI this handle is done.
-        });
-
-        PrepareHandle {
-            name: label,
-            progress: progress_rx,
-            _task: AbortOnDropHandle::new(task),
-        }
-    }
-
-    // ── Share ────────────────────────────────────────────────────────────
-
-    /// The page this app is served from, without private fragments or sender-only
-    /// diagnostic options — the base of a share link.
-    fn base_url() -> String {
-        #[cfg(target_arch = "wasm32")]
-        {
-            web_sys::window()
-                .and_then(|w| w.location().href().ok())
-                .map(|href| Self::share_base_url(&href))
-                .unwrap_or_else(|| "https://oxfer.app/".to_string())
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            "https://oxfer.app/".to_string()
-        }
-    }
-
-    #[cfg(any(test, target_arch = "wasm32"))]
-    fn share_base_url(href: &str) -> String {
-        let without_fragment = href.split('#').next().unwrap_or(href);
-        let Some((path, query)) = without_fragment.split_once('?') else {
-            return without_fragment.to_string();
+    /// Native Save: reuse the remembered folder or ask for one, then hand it to the core.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_click(&mut self) {
+        let dir = match self.save_directory.clone() {
+            Some(dir) => Some(dir),
+            None => rfd::FileDialog::new().pick_folder(),
         };
-        let kept: Vec<&str> = query
-            .split('&')
-            .filter(|part| {
-                !url::form_urlencoded::parse(part.as_bytes()).any(|(key, _)| key == "dcframe")
-            })
-            .collect();
-        if kept.is_empty() {
-            path.to_string()
-        } else {
-            format!("{path}?{}", kept.join("&"))
-        }
-    }
-
-    /// Whether a share link should carry `#dev` — only if this page was opened with it.
-    fn dev_flag(&self) -> bool {
-        #[cfg(target_arch = "wasm32")]
-        {
-            web_sys::window()
-                .and_then(|w| w.location().hash().ok())
-                .map(|hash| Node::parse_fragment(&hash).dev)
-                .unwrap_or(false)
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            false
-        }
-    }
-
-    fn start_sharing(&mut self) {
-        if self.sharing.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        self.link_copied = false;
-        let files = self.shared_files.clone();
-        let node_slot = self.node.clone();
-        let link_slot = self.link.clone();
-        let errors = self.node_error.clone();
-        let sharing = self.sharing.clone();
-        let repaint = self.repaint.clone();
-        let base = Self::base_url();
-        let dev = self.dev_flag();
-
-        task::spawn(async move {
-            let node = match Node::bind(files, RelayChoice::from_env()).await {
-                Ok(node) => Arc::new(node),
-                Err(e) => {
-                    sharing.store(false, Ordering::Release);
-                    Self::report(&errors, e.to_string());
-                    repaint.request_repaint();
-                    return;
-                }
-            };
-            match node.ticket().await {
-                Ok(ticket) => {
-                    let link = Node::link(&base, &ticket, &node.cap(), dev);
-                    if let Ok(mut slot) = link_slot.lock() {
-                        *slot = Some(link);
-                    }
-                }
-                Err(e) => {
-                    sharing.store(false, Ordering::Release);
-                    Self::report(&errors, e.to_string());
-                    repaint.request_repaint();
-                    node.shutdown().await;
-                    return;
-                }
-            }
-            if let Ok(mut slot) = node_slot.lock() {
-                *slot = Some(node);
-            }
-            repaint.request_repaint();
-        });
-    }
-
-    /// Stop serving. The next share draws a fresh key, so the old link stops working.
-    fn stop_sharing(&mut self) {
-        self.sharing.store(false, Ordering::Release);
-        #[cfg(target_arch = "wasm32")]
-        set_transfer_wake_lock(false);
-        self.link_copied = false;
-        let node = self.node.lock().ok().and_then(|mut n| n.take());
-        if let Some(node) = node {
-            task::spawn(async move { node.shutdown().await });
-        }
-        if let Ok(mut link) = self.link.lock() {
-            *link = None;
-        }
-    }
-
-    // ── Receive ──────────────────────────────────────────────────────────
-
-    /// Turn pasted text — a whole link or a bare fragment — into receive parameters.
-    fn start_receive(&mut self, input: &str) {
-        let fragment = input.split_once('#').map(|(_, f)| f).unwrap_or(input);
-        let params = Node::parse_fragment(fragment);
-        if params.chat && params.error.is_none() {
-            self.start_chat_join(&params);
-            return;
-        }
-
-        if let Some(error) = params.error.clone() {
-            self.set_receive(params, Some(input.to_string()), None, Some(error), false);
-            return;
-        }
-        let Some(ticket) = params.ticket.clone() else {
-            self.set_receive(
-                params,
-                Some(input.to_string()),
-                None,
-                Some("this is not a share link".to_string()),
-                false,
-            );
-            return;
+        let Some(dir) = dir else {
+            return; // the user dismissed the folder picker: stay in AwaitingSave
         };
-        // A bare ticket authorizes nothing (design §2.6): refuse before dialling, and say why,
-        // so a truncated link never looks like a connectivity failure.
-        if params.cap.is_none() {
-            self.set_receive(
-                params,
-                Some(input.to_string()),
-                None,
-                Some(MISSING_CAP.to_string()),
-                false,
-            );
-            return;
-        }
-
-        let opts = ReceiveOptions::from_fragment(&params);
-        let relay = RelayChoice::from_env();
-        let repaint = self.repaint.clone();
-        self.set_receive(params, Some(input.to_string()), None, None, true);
-        let Mode::Receive(r) = &self.mode else {
-            return;
-        };
-        // Each receive owns its startup result. Leaving, cancelling, or opening another
-        // link drops this slot, so a late completion cannot replace the new session.
-        let slot = Arc::downgrade(&r.startup);
-
-        task::spawn(async move {
-            // A receiver binds its own node on demand; `run_receiver` shuts it down again on
-            // every exit path, so a cancelled receive leaks nothing.
-            let result = match Node::bind(Arc::new(Mutex::new(Vec::new())), relay).await {
-                Ok(node) if slot.strong_count() == 0 => {
-                    node.shutdown().await;
-                    return;
-                }
-                Ok(node) => Ok(TransferHandle::start_receive(Arc::new(node), ticket, opts)),
-                Err(e) => Err(e.to_string()),
-            };
-            if let Some(slot) = slot.upgrade() {
-                if let Ok(mut slot) = slot.lock() {
-                    *slot = Some(result);
-                }
-            }
-            repaint.request_repaint();
-        });
+        self.save_directory = Some(dir.clone());
+        self.dispatch(Intent::Receive(ReceiveIntent::Save(SaveTarget::Directory(
+            dir,
+        ))));
     }
 
-    /// Enter (or update) receive mode, keeping whatever the user typed.
-    fn set_receive(
-        &mut self,
-        params: FragmentParams,
-        input: Option<String>,
-        handle: Option<TransferHandle>,
-        error: Option<String>,
-        opening: bool,
+    /// Browser Save: dispatched inside the click, so the picker keeps the gesture.
+    #[cfg(target_arch = "wasm32")]
+    fn save_click(&mut self) {
+        self.dispatch(Intent::Receive(ReceiveIntent::Save(SaveTarget::Browser)));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn show_transfer_attention(
+        ui: &mut Ui,
+        tc: &Tc,
+        sender: bool,
+        awaiting_save: bool,
+        wake_lock: WakeLock,
     ) {
-        let input = input.unwrap_or_else(|| match &self.mode {
-            Mode::Receive(r) => r.input.clone(),
-            _ => String::new(),
-        });
-        self.mode = Mode::Receive(Box::new(ReceiveState {
-            input,
-            params,
-            handle,
-            error,
-            opening,
-            startup: Arc::default(),
-            save_pending: Arc::new(AtomicBool::new(false)),
-        }));
-    }
-
-    /// Build one sink per manifest entry and hand them to the session.
-    ///
-    /// Invoke the browser picker promptly after the Save gesture, without preceding
-    /// asynchronous work. Transient activation is browser-controlled, not an await count.
-    fn save_click(&mut self, manifest: Vec<FileMeta>) {
-        let Mode::Receive(r) = &mut self.mode else {
-            return;
-        };
-        let Some(handle) = &r.handle else { return };
-        if !matches!(handle.latest().phase, Phase::AwaitingSave { .. }) {
-            return;
-        }
-        let Some(attempt) = SaveAttempt::begin(&r.save_pending) else {
-            return;
-        };
-        #[cfg(target_arch = "wasm32")]
-        retry_transfer_wake_lock();
-        r.error = None;
-        let commands = handle.commands.clone();
-        let errors = self.node_error.clone();
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let dir = match self.save_directory.clone() {
-                Some(dir) => Some(dir),
-                None => rfd::FileDialog::new().pick_folder(),
-            };
-            let Some(dir) = dir else {
-                return; // the user dismissed the folder picker: stay in AwaitingSave
-            };
-            self.save_directory = Some(dir.clone());
-
-            let mut sinks = Vec::with_capacity(manifest.len());
-            for meta in &manifest {
-                match file_io::FsSink::create(&dir, &file_io::sanitize_name(&meta.name)) {
-                    Ok(sink) => sinks.push(file_io::AnySink::Fs(sink)),
-                    Err(e) => {
-                        Self::report(&errors, format!("could not create {}: {e}", meta.name));
-                        return;
-                    }
-                }
-            }
-            if commands.try_send(ReceiveCommand::Save(sinks)).is_err() {
-                Self::report(&errors, "the transfer is no longer running".to_string());
-            } else {
-                attempt.submitted();
-            }
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            if self.keep_local_copy {
-                if let Some(expected) = &self.resume_target {
-                    match file_io::web::resume::manifest_id(&manifest) {
-                        Ok(id) if &id == expected => {}
-                        Ok(_) => {
-                            Self::report(
-                                &errors,
-                                "this link offers different files than the selected local copy; \
-                                 ask the sender for the same files, names and ordering"
-                                    .to_string(),
-                            );
-                            return;
-                        }
-                        Err(error) => {
-                            Self::report(&errors, error.to_string());
-                            return;
-                        }
-                    }
-                }
-            }
-            let pref = r.params.sink_pref;
-            let cancel = handle.cancel.clone();
-            let keep_local_copy = self.keep_local_copy;
-            let repaint = self.repaint.clone();
-            let library = self.local_copies.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                if cancel.is_cancelled() {
-                    return;
-                }
-                if keep_local_copy {
-                    // Persistent copies are keyed by the complete manifest, not the link.
-                    // Reopening a fresh sender link can therefore resume the same bytes
-                    // without storing a bearer capability on this device.
-                    match file_io::web::resume::prepare(&manifest).await {
-                        Ok(files) => {
-                            let permit = tokio::select! {
-                                biased;
-                                _ = cancel.cancelled() => None,
-                                result = commands.reserve() => result.ok(),
-                            };
-                            if let Some(permit) = permit.filter(|_| !cancel.is_cancelled()) {
-                                permit.send(ReceiveCommand::Resume(files));
-                                attempt.submitted();
-                            } else {
-                                for file in files {
-                                    file_io::Sink::abort(file.sink).await;
-                                }
-                            }
-                        }
-                        Err(_) if cancel.is_cancelled() => {}
-                        Err(error) => Self::report(&errors, error.to_string()),
-                    }
-                    library.run(LocalCopyAction::Refresh, repaint.clone());
-                    repaint.request_repaint();
-                    return;
-                }
-                // Keep awaiting the picker even if the receive is cancelled: a native dialog
-                // cannot be closed by dropping its Promise, and returned sinks need cleanup.
-                match file_io::web::pick_sinks(&manifest, pref).await {
-                    Ok(sinks) => {
-                        let permit = tokio::select! {
-                            biased;
-                            _ = cancel.cancelled() => None,
-                            result = commands.reserve() => result.ok(),
-                        };
-                        if let Some(permit) = permit.filter(|_| !cancel.is_cancelled()) {
-                            permit.send(ReceiveCommand::Save(sinks));
-                            attempt.submitted();
-                            return;
-                        }
-                        for sink in sinks {
-                            file_io::Sink::abort(sink).await;
-                        }
-                        if !cancel.is_cancelled() {
-                            Self::report(&errors, "the transfer is no longer running".to_string());
-                        }
-                    }
-                    // Dismissing a picker is not an error: stay in AwaitingSave so Save can be
-                    // clicked again.
-                    Err(file_io::SinkError::Cancelled) => {}
-                    Err(_) if cancel.is_cancelled() => {}
-                    Err(e) => Self::report(&errors, e.to_string()),
-                }
-            });
-        }
-    }
-
-    /// Accept each new URL fragment, including navigation within the already-open page.
-    ///
-    /// A fragment never reaches a server, but it does stay on the machine — URL bar, history,
-    /// session restore, a pasted screenshot. The ticket and the capability are removed
-    /// immediately; the QA flags stay so a reload keeps them (design §4.7.1).
-    #[cfg(target_arch = "wasm32")]
-    fn check_fragment_change(&mut self) {
-        let Some(window) = web_sys::window() else {
-            return;
-        };
-        let Ok(hash) = window.location().hash() else {
-            return;
-        };
-        let path = window.location().pathname().unwrap_or_default();
-        let route = format!("{path}{hash}");
-        if self.last_fragment.as_ref() == Some(&route) {
-            return;
-        }
-        self.last_fragment = Some(route);
-        if path.trim_end_matches('/') == "/diags" && hash.is_empty() {
-            if !matches!(self.mode, Mode::Diagnostics) {
-                self.reset_peer_diagnostics();
-                self.mode = Mode::Diagnostics;
-                self.run_diagnostics();
-            }
-            return;
-        }
-        if path != "/diags" && hash.is_empty() && matches!(self.mode, Mode::Diagnostics) {
-            self.stop_peer_diagnostics();
-            self.mode = Mode::Home;
-            return;
-        }
-        self.check_fragment(&hash);
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn diagnostics_url() -> Option<String> {
-        Some(format!(
-            "{}/diags",
-            web_sys::window()?.location().origin().ok()?
-        ))
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn open_diagnostics(&mut self) {
-        if matches!(self.mode, Mode::Diagnostics) || self.is_preparing_share() {
-            return;
-        }
-        if let (Some(window), Some(url)) = (web_sys::window(), Self::diagnostics_url()) {
-            if let Ok(history) = window.history() {
-                let _ = history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&url));
-            }
-            self.last_fragment = None;
-        }
-        self.reset_peer_diagnostics();
-        self.mode = Mode::Diagnostics;
-        self.run_diagnostics();
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn check_fragment(&mut self, hash: &str) {
-        use crate::node::SinkPref;
-        use wasm_bindgen::JsValue;
-
-        let Some(window) = web_sys::window() else {
-            return;
-        };
-        if let Some(raw) = hash.strip_prefix("#diagnostics=") {
-            // Remove the ephemeral peer ticket from browser history immediately.
-            if let Ok(history) = window.history() {
-                let href = window.location().href().unwrap_or_default();
-                let base = href.split('#').next().unwrap_or(&href);
-                let scrubbed = if window.location().pathname().ok().as_deref() == Some("/diags") {
-                    base.to_string()
-                } else {
-                    format!("{base}#diagnostics")
-                };
-                let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&scrubbed));
-            }
-            self.last_fragment = Some(format!(
-                "{}{}",
-                window.location().pathname().unwrap_or_default(),
-                window.location().hash().unwrap_or_default()
-            ));
-            self.reset_peer_diagnostics();
-            let mut peer = self.diagnostic_peer.lock().unwrap();
-            match raw.parse::<EndpointTicket>() {
-                Ok(ticket) => {
-                    peer.session = Some(DiagnosticNode::session_id(&ticket));
-                    peer.target = Some(ticket);
-                }
-                Err(_) => peer.outcome = Some("Invalid diagnostics link".into()),
-            }
-            drop(peer);
-            self.mode = Mode::Diagnostics;
-            self.run_diagnostics();
-            return;
-        }
-        if hash == "#diagnostics" {
-            self.reset_peer_diagnostics();
-            self.mode = Mode::Diagnostics;
-            self.run_diagnostics();
-            return;
-        }
-        if window.location().pathname().ok().as_deref() == Some("/diags") {
-            // A transfer fragment on the diagnostics path is neither a peer
-            // diagnostic ticket nor a valid diagnostics URL. Discard it rather
-            // than starting a receive which the path router would cancel.
-            if let Ok(history) = window.history() {
-                let _ = history.replace_state_with_url(&JsValue::NULL, "", Some("/diags"));
-            }
-            self.last_fragment = Some("/diags".into());
-            self.reset_peer_diagnostics();
-            self.diagnostic_peer.lock().unwrap().outcome =
-                Some("This page runs diagnostics only; open file links on the home page".into());
-            self.mode = Mode::Diagnostics;
-            self.run_diagnostics();
-            return;
-        }
-        let params = Node::parse_fragment(hash);
-        if params.chat && params.ticket.is_none() && params.cap.is_none() && params.error.is_none()
-        {
-            // `#chat` (optionally `#chat&agent`) with no ticket: open a new room here. The
-            // URL is kept as is, and `check_fragment_change` already recorded it.
-            self.start_chat_host(params.agent);
-            return;
-        }
-        if params.ticket.is_none() && params.cap.is_none() && params.error.is_none() {
-            return;
-        }
-        let mut keep: Vec<String> = Vec::new();
-        if params.dev {
-            keep.push("dev".to_string());
-        }
-        if params.force_relay {
-            keep.push("relay".to_string());
-        }
-        match params.sink_pref {
-            SinkPref::Auto => {}
-            SinkPref::Fsa => keep.push("sink=fsa".to_string()),
-            SinkPref::Sw => keep.push("sink=sw".to_string()),
-            SinkPref::Mem => keep.push("sink=mem".to_string()),
-        }
-        if let Some(n) = params.kill_dc_after {
-            keep.push(format!("killdc={n}"));
-        }
-        if let Some(bytes) = params.window {
-            keep.push(format!("win={}", bytes / (1024 * 1024)));
-        }
-
-        let href = window.location().href().unwrap_or_default();
-        let base = href.split('#').next().unwrap_or(&href).to_string();
-        let scrubbed = if keep.is_empty() {
-            base
-        } else {
-            format!("{base}#{}", keep.join("&"))
-        };
-        if let Ok(history) = window.history() {
-            let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&scrubbed));
-        }
-        // replaceState does not fire hashchange. Remember the scrubbed value now so opening
-        // the same original link again is still treated as a new navigation.
-        self.last_fragment = Some(format!(
-            "{}{}",
-            window.location().pathname().unwrap_or_default(),
-            window.location().hash().unwrap_or_default()
-        ));
-
-        self.reset_peer_diagnostics();
-        self.start_receive(&href);
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn run_diagnostics(&mut self) {
-        if self.diagnostics_running.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        *self.diagnostics_report.lock().unwrap() = None;
-        let report = self.diagnostics_report.clone();
-        let running = self.diagnostics_running.clone();
-        let repaint = self.repaint.clone();
-        wasm_bindgen_futures::spawn_local(async move {
-            *report.lock().unwrap() = Some(crate::diagnostics::collect().await);
-            running.store(false, Ordering::Release);
-            repaint.request_repaint();
-        });
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn run_peer_diagnostics(&mut self) {
-        let (target, generation) = {
-            let mut peer = self.diagnostic_peer.lock().unwrap();
-            if peer.busy || peer.node.is_some() {
-                return;
-            }
-            peer.busy = true;
-            peer.outcome = None;
-            (peer.target.clone(), peer.generation)
-        };
-        let state = self.diagnostic_peer.clone();
-        let repaint = self.repaint.clone();
-        wasm_bindgen_futures::spawn_local(async move {
-            let outcome = match DiagnosticNode::bind(RelayChoice::from_env()).await {
-                Ok(node) => {
-                    if let Some(ticket) = target {
-                        let outcome = if node.probe(&ticket).await.is_ok() {
-                            "Peer ping succeeded (iroh dial, stream and reply)".to_string()
-                        } else {
-                            "Peer ping failed or timed out (see terminal for network warnings)"
-                                .to_string()
-                        };
-                        node.shutdown().await;
-                        outcome
-                    } else {
-                        match node.ticket().await {
-                            Ok(ticket) => {
-                                let base = P2PTransfer::diagnostics_url().unwrap_or_default();
-                                let link = format!("{base}#diagnostics={ticket}");
-                                let node = Arc::new(node);
-                                let stale = {
-                                    let mut peer = state.lock().unwrap();
-                                    if peer.generation == generation {
-                                        peer.session = Some(DiagnosticNode::session_id(&ticket));
-                                        peer.link = Some(link);
-                                        peer.node = Some(node.clone());
-                                        false
-                                    } else {
-                                        true
-                                    }
-                                };
-                                if stale {
-                                    node.shutdown().await;
-                                    return;
-                                }
-                                "Listening for a diagnostic peer; keep this tab open".to_string()
-                            }
-                            Err(_) => {
-                                node.shutdown().await;
-                                "Could not register diagnostic endpoint with relay".to_string()
-                            }
-                        }
-                    }
-                }
-                Err(_) => "Could not start diagnostic endpoint".to_string(),
-            };
-            let mut peer = state.lock().unwrap();
-            if peer.generation == generation {
-                peer.outcome = Some(outcome);
-                peer.busy = false;
-            }
-            repaint.request_repaint();
-        });
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn stop_peer_diagnostics(&mut self) {
-        let mut peer = self.diagnostic_peer.lock().unwrap();
-        peer.generation = peer.generation.wrapping_add(1);
-        peer.busy = false;
-        if let Some(node) = peer.node.take() {
-            wasm_bindgen_futures::spawn_local(async move { node.shutdown().await });
-        }
-        peer.link = None;
-        peer.outcome = Some("Stopped listening for diagnostic peers".into());
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn reset_peer_diagnostics(&mut self) {
-        self.stop_peer_diagnostics();
-        let mut peer = self.diagnostic_peer.lock().unwrap();
-        *peer = DiagnosticPeer {
-            generation: peer.generation,
-            ..DiagnosticPeer::default()
-        };
-    }
-
-    // ── Per-frame bookkeeping (called from `logic`) ───────────────────────
-
-    /// Turn queued picks into hashing tasks, entering Send mode on the first one.
-    fn drain_picks(&mut self) {
-        let picks: Vec<PendingPick> = match self.pending_picks.lock() {
-            Ok(mut picks) if !picks.is_empty() => picks.drain(..).collect(),
-            _ => return,
-        };
-        // A pick can land after the mode changed under it (a dropped file's async probe, or a
-        // link opened while the picker was up); it must not tear down a receive or a room.
-        if !self.can_pick_files() {
-            log::debug!(
-                "discarding {} pick(s) that arrived outside Send",
-                picks.len()
-            );
-            return;
-        }
-        for pick in picks {
-            let handle = self.begin_prepare(pick);
-            match &mut self.mode {
-                Mode::Send { preparing } => preparing.push(handle),
-                _ => {
-                    self.mode = Mode::Send {
-                        preparing: vec![handle],
-                    }
-                }
-            }
-        }
-        // Sharing starts as soon as there is something to share; the link stays hidden until
-        // every hash is final (design §4.8.2).
-        self.start_sharing();
-    }
-
-    /// Drop hashing handles whose task has ended.
-    fn prune_preparing(&mut self) {
-        if let Mode::Send { preparing } = &mut self.mode {
-            preparing.retain(|h| !h.finished());
-        }
-    }
-
-    /// Engine watches have no egui callback: poll while starting, serving, or receiving.
-    fn needs_progress_poll(&self) -> bool {
-        self.sharing.load(Ordering::Acquire)
-            || match &self.mode {
-                Mode::Send { preparing } => !preparing.is_empty(),
-                Mode::Receive(r) => r.opening || r.handle.is_some(),
-                // A room wakes the UI itself (`chat_wake`); nothing to poll.
-                Mode::Chat(_) => false,
-                Mode::Home => false,
-                #[cfg(target_arch = "wasm32")]
-                Mode::Diagnostics => false,
-            }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn needs_wake_lock(&self) -> bool {
-        self.sharing.load(Ordering::Acquire)
-            || match &self.mode {
-                Mode::Send { preparing } => !preparing.is_empty(),
-                Mode::Receive(r) => {
-                    let progress = r.handle.as_ref().map(|h| h.latest());
-                    Self::receive_needs_wake_lock(
-                        r.opening,
-                        r.save_pending.load(Ordering::Acquire),
-                        progress.as_ref().map(|p| &p.phase),
-                    )
-                }
-                // A room lives only while its page is awake.
-                Mode::Chat(c) => c.polling(),
-                Mode::Home | Mode::Diagnostics => false,
-            }
-    }
-
-    #[cfg(any(test, target_arch = "wasm32"))]
-    fn receive_needs_wake_lock(opening: bool, save_pending: bool, phase: Option<&Phase>) -> bool {
-        opening
-            || phase.is_some_and(|phase| {
-                !phase.is_terminal()
-                    && (save_pending || !matches!(phase, Phase::AwaitingSave { .. }))
-            })
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn show_transfer_attention(ui: &mut Ui, tc: &Tc, sender: bool, awaiting_save: bool) {
         egui::Frame::new()
             .fill(Color32::from_rgba_unmultiplied(
                 tc.primary.r(),
@@ -1922,12 +681,12 @@ impl P2PTransfer {
                         tc.on_surface_var,
                     )
                 } else {
-                    match transfer_wake_lock_status().as_str() {
-                        "active" => (
+                    match wake_lock {
+                        WakeLock::Active => (
                             "Your browser is helping keep the screen on (uses more battery).",
                             tc.secondary,
                         ),
-                        "requesting" => {
+                        WakeLock::Requesting => {
                             ("Asking your browser to keep the screen on…", tc.outline)
                         }
                         _ => (
@@ -1938,209 +697,6 @@ impl P2PTransfer {
                 };
                 ui.add(egui::Label::new(RichText::new(status).color(color).size(12.0)).wrap());
             });
-    }
-
-    /// Adopt a receive handle built by the on-demand bind task.
-    fn adopt_pending_handle(&mut self) {
-        let Mode::Receive(r) = &mut self.mode else {
-            return;
-        };
-        let pending = r.startup.lock().ok().and_then(|mut h| h.take());
-        if let Some(result) = pending {
-            r.opening = false;
-            match result {
-                Ok(handle) => r.handle = Some(handle),
-                Err(error) => r.error = Some(error),
-            }
-        }
-    }
-
-    /// Move any reported failure into the panel that is showing.
-    fn drain_error(&mut self) {
-        if let Mode::Receive(r) = &mut self.mode {
-            if r.error.is_some() {
-                return;
-            }
-            let taken = self.node_error.lock().ok().and_then(|mut e| e.take());
-            if taken.is_some() {
-                r.opening = false;
-                r.error = taken;
-            }
-        }
-    }
-
-    /// Record a finished receive exactly once, then drop the handle.
-    ///
-    /// The terminal phase arrives on the same watch the panel already reads, so there is no
-    /// second source of truth; dropping the handle afterwards also stops cloning the terminal
-    /// progress value on every later frame.
-    fn poll_receive(&mut self) {
-        let Mode::Receive(r) = &mut self.mode else {
-            return;
-        };
-        let Some(h) = &r.handle else { return };
-        let progress = h.latest();
-        if !progress.phase.is_terminal() {
-            return;
-        }
-        let path = progress.path;
-        match progress.phase {
-            Phase::Complete { saved } => {
-                let when = Self::timestamp();
-                if let Ok(mut files) = self.received_files.lock() {
-                    files.extend(saved.into_iter().enumerate().map(|(index, f)| {
-                        ReceivedFile {
-                            name: f.name,
-                            size: f.size,
-                            location: f.location,
-                            when: when.clone(),
-                            path,
-                            average_bytes_per_sec: progress
-                                .file_average_bytes_per_sec
-                                .get(index)
-                                .copied()
-                                .flatten(),
-                        }
-                    }));
-                }
-                // The URL was scrubbed as soon as it was accepted; after success, do not put the
-                // bearer credential back on screen.
-                r.input.clear();
-            }
-            Phase::Failed => {
-                r.error = Some(
-                    progress
-                        .error
-                        .clone()
-                        .map(|e| Self::humanize(&e))
-                        .unwrap_or_else(|| "the transfer failed".to_string()),
-                );
-            }
-            Phase::Cancelled => r.error = Some("the transfer was cancelled".to_string()),
-            _ => {}
-        }
-        r.handle = None;
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.keep_local_copy = false;
-            self.resume_target = None;
-            self.local_copies
-                .run(LocalCopyAction::Refresh, self.repaint.clone());
-        }
-    }
-
-    /// Turn an engine error string into something a user can act on.
-    fn humanize(error: &str) -> String {
-        if error.contains("access code is missing") {
-            MISSING_CAP.to_string()
-        } else if error.contains("access code") {
-            CAP_REJECTED.to_string()
-        } else {
-            error.to_string()
-        }
-    }
-
-    fn timestamp() -> String {
-        #[cfg(target_arch = "wasm32")]
-        {
-            js_sys::Date::new_0()
-                .to_locale_time_string("en-GB")
-                .as_string()
-                .unwrap_or_default()
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
-                % 86_400;
-            format!(
-                "{:02}:{:02}:{:02} UTC",
-                secs / 3600,
-                (secs % 3600) / 60,
-                secs % 60
-            )
-        }
-    }
-
-    fn format_size(size_bytes: u64) -> String {
-        const KB: f64 = 1024.0;
-        const MB: f64 = KB * 1024.0;
-        const GB: f64 = MB * 1024.0;
-        let size = size_bytes as f64;
-        if size >= GB {
-            format!("{:.2} GB", size / GB)
-        } else if size >= MB {
-            format!("{:.2} MB", size / MB)
-        } else if size >= KB {
-            format!("{:.1} KB", size / KB)
-        } else {
-            format!("{size_bytes} B")
-        }
-    }
-
-    fn transfer_speed(progress: &TransferProgress) -> Option<String> {
-        (matches!(progress.phase, Phase::Transferring)
-            && progress.bytes_per_sec.is_finite()
-            && progress.bytes_per_sec > 0.0)
-            .then(|| format!("{}/s", Self::format_size(progress.bytes_per_sec as u64)))
-    }
-
-    /// The QA flags this receive is running with (design §7.1), or empty for a plain run.
-    fn flag_summary(params: &FragmentParams) -> String {
-        use crate::node::SinkPref;
-        let mut flags: Vec<String> = Vec::new();
-        if params.force_relay {
-            flags.push("relay forced".to_string());
-        }
-        match params.sink_pref {
-            SinkPref::Auto => {}
-            SinkPref::Fsa => flags.push("sink=fsa".to_string()),
-            SinkPref::Sw => flags.push("sink=sw".to_string()),
-            SinkPref::Mem => flags.push("sink=mem".to_string()),
-        }
-        if let Some(n) = params.kill_dc_after {
-            flags.push(format!("killdc={n}"));
-        }
-        if let Some(bytes) = params.window {
-            flags.push(format!("win={} MiB", bytes / (1024 * 1024)));
-        }
-        flags.join(" · ")
-    }
-
-    fn path_badge(phase: &Phase, path: TransferPath) -> &'static str {
-        if matches!(phase, Phase::Reconnecting { .. }) {
-            return "Connecting again";
-        }
-        if matches!(phase, Phase::Signaling) {
-            return "Finding a connection";
-        }
-        Self::transfer_path_text(path)
-    }
-
-    fn transfer_path_text(path: TransferPath) -> &'static str {
-        match path {
-            TransferPath::Direct => "Direct connection",
-            TransferPath::Relayed => "Encrypted via a helper server",
-            TransferPath::Unknown => "Connecting",
-        }
-    }
-
-    fn phase_text(phase: &Phase) -> &'static str {
-        match phase {
-            Phase::Connecting => "Connecting…",
-            Phase::Reconnecting { .. } => "Connecting again…",
-            Phase::Handshake => "Checking the link…",
-            Phase::AwaitingSave { .. } => "Ready: choose where to save",
-            Phase::Signaling => "Finding a connection…",
-            Phase::Transferring => "Transfer in progress…",
-            Phase::Switching => "Trying another connection…",
-            Phase::Verifying => "Checking the file…",
-            Phase::Complete { .. } => "Transfer complete and checked",
-            Phase::Failed => "Failed",
-            Phase::Cancelled => "Cancelled",
-        }
     }
 
     fn apply_theme(ctx: &egui::Context, ui: &mut Ui, theme: Theme, dark: bool) {
@@ -2669,26 +1225,12 @@ fn show_how_it_works(ui: &mut Ui, tc: &Tc) {
 
 impl P2PTransfer {
     fn is_preparing_share(&self) -> bool {
-        matches!(&self.mode, Mode::Send { preparing } if !preparing.is_empty())
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn open_new_receive_link(&mut self) {
-        if self.is_preparing_share() {
-            return;
-        }
-        self.set_receive(
-            FragmentParams::default(),
-            Some(String::new()),
-            None,
-            None,
-            false,
-        );
+        self.snap.preparing
     }
 
     /// Home and diagnostics do not revoke a share. Preserve its status and return path.
     fn show_active_share_overview(&mut self, ui: &mut Ui, tc: &Tc) {
-        if !self.sharing.load(Ordering::Acquire) {
+        if !self.snap.send.sharing {
             return;
         }
         let mut return_to_share = false;
@@ -2700,31 +1242,14 @@ impl P2PTransfer {
                     .strong(),
             );
             #[cfg(target_arch = "wasm32")]
-            Self::show_transfer_attention(ui, tc, true, false);
+            Self::show_transfer_attention(ui, tc, true, false, self.snap.wake_lock);
             return_to_share = ui.add(primary_button(tc, "Return to sharing")).clicked();
         });
         if return_to_share {
-            self.return_to_sharing();
+            self.dispatch(Intent::ReturnToSharing);
         }
         self.show_peers(ui);
         ui.add_space(12.0);
-    }
-
-    fn return_to_sharing(&mut self) {
-        #[cfg(target_arch = "wasm32")]
-        if matches!(self.mode, Mode::Diagnostics) {
-            if let Some(window) = web_sys::window() {
-                if let Ok(history) = window.history() {
-                    let _ =
-                        history.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/"));
-                }
-            }
-            self.last_fragment = None;
-            self.stop_peer_diagnostics();
-        }
-        self.mode = Mode::Send {
-            preparing: Vec::new(),
-        };
     }
 
     fn show_home(&mut self, ui: &mut Ui) {
@@ -2808,7 +1333,7 @@ impl P2PTransfer {
                     )
                     .clicked()
                 {
-                    self.start_chat_host(false);
+                    self.dispatch(Intent::HostChat { for_agents: false });
                 }
                 ui.add_space(12.0);
                 ui.add(
@@ -2860,110 +1385,83 @@ impl P2PTransfer {
     fn show_diagnostics(&mut self, ui: &mut Ui) {
         let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         self.show_active_share_overview(ui, &tc);
-        let link = Self::diagnostics_url().unwrap_or_default();
-        let report = self.diagnostics_report.lock().unwrap().clone();
-        let cancelled_websockets = logging::terminal_buffer()
-            .lock()
-            .map(|logs| {
-                logs.iter()
-                    .filter(|line| line.contains("WsMeta::connect future was dropped"))
-                    .count()
-            })
-            .unwrap_or(0);
-        let (target, peer_link, session, outcome, busy, completed) = {
-            let peer = self.diagnostic_peer.lock().unwrap();
-            (
-                peer.target.is_some(),
-                peer.link.clone(),
-                peer.session.clone(),
-                peer.outcome.clone(),
-                peer.busy,
-                peer.node.as_ref().map(|node| node.completed_probes()),
-            )
+        let Some(diag) = self.snap.diagnostics.clone() else {
+            return;
         };
+        let mut intent = None;
         card(&tc).show(ui, |ui| {
             ui.heading("Network diagnostics");
             ui.label("Use the peer test on both devices, then copy each report. Compare their session IDs and timestamps.");
             ui.add_space(8.0);
-            if let Some(session) = &session {
+            if let Some(session) = &diag.session {
                 ui.label(format!("Session ID: {session}"));
             }
-            if target {
-                if ui.add_enabled(!busy, Button::new("Test peer connection")).clicked() {
-                    self.run_peer_diagnostics();
+            if diag.has_target {
+                if ui.add_enabled(!diag.busy, Button::new("Test peer connection")).clicked() {
+                    intent = Some(DiagnosticsIntent::StartPeerTest);
                 }
-            } else if peer_link.is_none()
-                && completed.is_none()
-                && ui.add_enabled(!busy, Button::new("Start peer test")).clicked()
+            } else if diag.peer_link.is_none()
+                && diag.completed.is_none()
+                && ui.add_enabled(!diag.busy, Button::new("Start peer test")).clicked()
             {
-                self.run_peer_diagnostics();
+                intent = Some(DiagnosticsIntent::StartPeerTest);
             }
-            if let Some(peer_link) = &peer_link {
+            if let Some(peer_link) = &diag.peer_link {
                 ui.label("Keep this page open and send this test-only link to the other device. It cannot download files.");
                 if ui.button("Copy peer test link").clicked() {
                     ui.ctx().copy_text(peer_link.clone());
                 }
                 ui.add(egui::Label::new(RichText::new(peer_link).monospace().size(12.0)).wrap());
                 if ui.button("Stop peer test").clicked() {
-                    self.stop_peer_diagnostics();
+                    intent = Some(DiagnosticsIntent::StopPeerTest);
                 }
             }
-            if busy {
+            if diag.busy {
                 ui.spinner();
                 ui.label("Starting or dialling the diagnostic peer…");
             }
-            if let Some(outcome) = &outcome {
+            if let Some(outcome) = &diag.outcome {
                 ui.label(outcome);
             }
-            if let Some(completed) = completed {
+            if let Some(completed) = diag.completed {
                 ui.label(format!("Successful incoming peer pings: {completed}"));
             }
             ui.add_space(10.0);
             ui.label("For local checks only, share this link. It contains no peer address or file access code.");
-            if ui.button("Copy local checks link").clicked() && !link.is_empty() {
-                ui.ctx().copy_text(link.clone());
+            if ui.button("Copy local checks link").clicked() && !diag.local_link.is_empty() {
+                ui.ctx().copy_text(diag.local_link.clone());
             }
-            ui.add(egui::Label::new(RichText::new(&link).monospace().size(12.0)).wrap());
+            ui.add(egui::Label::new(RichText::new(&diag.local_link).monospace().size(12.0)).wrap());
             ui.add_space(12.0);
-            if self.diagnostics_running.load(Ordering::Acquire) {
+            if diag.running {
                 ui.spinner();
                 ui.label("Testing relay WebSockets and iroh registration (up to 60 seconds if the default fails)…");
             } else if ui.button("Run checks again").clicked() {
-                self.run_diagnostics();
+                intent = Some(DiagnosticsIntent::RunChecks);
             }
-            if let Some(report) = report {
+            if let Some(full) = diag.full_report() {
                 ui.add_space(12.0);
                 ui.label("Review before sharing: the report contains your browser version, time, relay checks and peer test result. It does not include tickets or files.");
-                let peer_report = format!(
-                    "\nSession ID: {}\nPeer test: {}\nSuccessful incoming pings: {}\nCancelled relay WebSocket attempts logged: {}",
-                    session.as_deref().unwrap_or("none"),
-                    outcome.as_deref().unwrap_or("not run"),
-                    completed.unwrap_or(0),
-                    cancelled_websockets,
-                );
                 if ui.button("Copy report").clicked() {
-                    ui.ctx().copy_text(format!("{report}{peer_report}"));
+                    ui.ctx().copy_text(full.clone());
                 }
-                for line in format!("{report}{peer_report}").lines() {
+                for line in full.lines() {
                     ui.add(egui::Label::new(RichText::new(line).monospace().size(12.0)).wrap());
                 }
             }
         });
+        if let Some(intent) = intent {
+            self.dispatch(Intent::Diagnostics(intent));
+        }
     }
 
     fn show_send(&mut self, ui: &mut Ui) {
         let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let compact = compact(ui);
-        let preparing_names: Vec<(String, f32)> = match &self.mode {
-            Mode::Send { preparing } => preparing
-                .iter()
-                .map(|h| (h.name.clone(), *h.progress.borrow()))
-                .collect(),
-            _ => Vec::new(),
-        };
-        let ready = self.shared_files.lock().map(|f| f.len()).unwrap_or(0);
-        let link = self.link.lock().ok().and_then(|l| l.clone());
-        let node_error = self.node_error.lock().ok().and_then(|e| e.clone());
+        let send = self.snap.send.clone();
+        let link_copied = self.link_copied();
+        let mut copied = false;
+        let mut stop = false;
         let mut retry_share = false;
 
         card(&tc).show(ui, |ui| {
@@ -2989,19 +1487,21 @@ impl P2PTransfer {
             ui.add_space(10.0);
 
             #[cfg(target_arch = "wasm32")]
-            if self.sharing.load(Ordering::Acquire) || link.is_some() || !preparing_names.is_empty()
+            if send.sharing
+                || matches!(send.link, LinkState::Ready(_))
+                || !send.preparing.is_empty()
             {
-                Self::show_transfer_attention(ui, &tc, true, false);
+                Self::show_transfer_attention(ui, &tc, true, false, self.snap.wake_lock);
                 ui.add_space(10.0);
             }
 
-            if let Ok(files) = self.shared_files.lock() {
-                for f in files.iter() {
+            {
+                for f in &send.files {
                     if tc.theme == Theme::Rusty {
                         let file_row = |ui: &mut Ui| {
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(&f.meta.name)
+                                    RichText::new(&f.name)
                                         .color(tc.on_surface)
                                         .size(15.0)
                                         .strong(),
@@ -3009,7 +1509,7 @@ impl P2PTransfer {
                                 .wrap(),
                             );
                             ui.label(
-                                RichText::new(Self::format_size(f.meta.size))
+                                RichText::new(format_size(f.size))
                                     .color(tc.outline)
                                     .monospace()
                                     .size(12.0),
@@ -3021,32 +1521,31 @@ impl P2PTransfer {
                             ui.horizontal_wrapped(file_row);
                         }
                     } else {
-                        file_attachment(
-                            ui,
-                            &tc,
-                            &f.meta.name,
-                            &Self::format_size(f.meta.size),
-                            true,
-                        );
+                        file_attachment(ui, &tc, &f.name, &format_size(f.size), true);
                         ui.add_space(6.0);
                     }
                 }
             }
 
             // The prepare phase (plan amendment 14): no link while any hash is provisional.
-            for (name, pct) in &preparing_names {
+            for preparing in &send.preparing {
                 ui.add_space(6.0);
                 ui.label(
-                    RichText::new(format!("Preparing {name}… {:.0} %", pct * 100.0))
-                        .color(tc.on_surface_var)
-                        .size(14.0),
+                    RichText::new(format!(
+                        "Preparing {}… {:.0} %",
+                        preparing.name,
+                        preparing.progress * 100.0
+                    ))
+                    .color(tc.on_surface_var)
+                    .size(14.0),
                 );
-                ui.add(progress_bar(&tc, *pct, 10.0));
+                ui.add(progress_bar(&tc, preparing.progress, 10.0));
             }
 
             ui.add_space(14.0);
-            match (&link, preparing_names.is_empty()) {
-                (Some(link), true) => {
+            match &send.link {
+                LinkState::Ready(link) => {
+                    let link = link.as_str();
                     ui.label(RichText::new("Send this link").color(tc.outline).size(12.0));
                     ui.add_space(4.0);
                     egui::Frame::new()
@@ -3072,14 +1571,12 @@ impl P2PTransfer {
                         if ui
                             .add_sized(
                                 [width, 48.0],
-                                copy_button(&tc, copy_label(self.link_copied), self.link_copied),
+                                copy_button(&tc, copy_label(link_copied), link_copied),
                             )
                             .clicked()
                         {
-                            #[cfg(target_arch = "wasm32")]
-                            retry_transfer_wake_lock();
-                            ui.ctx().copy_text(link.clone());
-                            self.link_copied = true;
+                            ui.ctx().copy_text(link.to_string());
+                            copied = true;
                         }
                         if ui
                             .add_sized(
@@ -3088,7 +1585,7 @@ impl P2PTransfer {
                             )
                             .clicked()
                         {
-                            self.stop_sharing();
+                            stop = true;
                         }
                     } else {
                         ui.horizontal(|ui| {
@@ -3105,18 +1602,12 @@ impl P2PTransfer {
                             if ui
                                 .add_sized(
                                     [copy_width, 48.0],
-                                    copy_button(
-                                        &tc,
-                                        copy_label(self.link_copied),
-                                        self.link_copied,
-                                    ),
+                                    copy_button(&tc, copy_label(link_copied), link_copied),
                                 )
                                 .clicked()
                             {
-                                #[cfg(target_arch = "wasm32")]
-                                retry_transfer_wake_lock();
-                                ui.ctx().copy_text(link.clone());
-                                self.link_copied = true;
+                                ui.ctx().copy_text(link.to_string());
+                                copied = true;
                             }
                             if ui
                                 .add_sized(
@@ -3125,11 +1616,11 @@ impl P2PTransfer {
                                 )
                                 .clicked()
                             {
-                                self.stop_sharing();
+                                stop = true;
                             }
                         });
                     }
-                    if self.link_copied {
+                    if link_copied || copied {
                         ui.horizontal_wrapped(|ui| {
                             pill(ui, &tc, "COPIED", true);
                             ui.label(
@@ -3160,14 +1651,14 @@ impl P2PTransfer {
                             );
                         });
                 }
-                (_, false) => {
+                LinkState::Preparing => {
                     ui.label(
                         RichText::new("Getting your link ready…")
                             .color(tc.outline)
                             .size(12.0),
                     );
                 }
-                (None, true) if ready > 0 && self.sharing.load(Ordering::Acquire) => {
+                LinkState::Binding => {
                     ui.label(
                         RichText::new("Getting your link ready…")
                             .color(tc.outline)
@@ -3175,7 +1666,7 @@ impl P2PTransfer {
                     );
                     ui.add(egui::Spinner::new().size(20.0).color(tc.secondary));
                 }
-                (None, true) if ready > 0 => {
+                LinkState::Failed => {
                     retry_share = if compact {
                         let width = ui.available_width();
                         ui.add_sized(
@@ -3188,20 +1679,25 @@ impl P2PTransfer {
                             .clicked()
                     };
                 }
-                _ => {}
+                LinkState::Idle => {}
             }
 
-            if let Some(err) = &node_error {
+            if let Some(err) = &send.error {
                 ui.add_space(8.0);
                 ui.label(RichText::new(err).color(tc.error).size(12.0));
             }
         });
 
+        if copied {
+            // Copying is a gesture: WebKit grants a wake lock only inside one.
+            self.core.platform().retry_wake_lock();
+            self.link_copied = Some(send.share_id);
+        }
+        if stop {
+            self.dispatch(Intent::Send(SendIntent::StopSharing));
+        }
         if retry_share {
-            if let Ok(mut error) = self.node_error.lock() {
-                *error = None;
-            }
-            self.start_sharing();
+            self.dispatch(Intent::Send(SendIntent::RetrySharing));
         }
         self.show_peers(ui);
     }
@@ -3209,12 +1705,7 @@ impl P2PTransfer {
     /// Per-peer progress for whatever this node is currently serving.
     fn show_peers(&mut self, ui: &mut Ui) {
         let tc = Tc::of(self.theme, ui.visuals().dark_mode);
-        let peers = self
-            .node
-            .lock()
-            .ok()
-            .and_then(|n| n.as_ref().map(|n| n.peers()))
-            .unwrap_or_default();
+        let peers = self.snap.send.peers.clone();
         if peers.is_empty() {
             return;
         }
@@ -3227,14 +1718,14 @@ impl P2PTransfer {
                     .strong(),
             );
             #[cfg(target_arch = "wasm32")]
-            if peers.iter().any(|(_, p)| !p.phase.is_terminal()) {
+            if self.snap.send.serving() {
                 ui.add_space(8.0);
-                Self::show_transfer_attention(ui, &tc, true, false);
+                Self::show_transfer_attention(ui, &tc, true, false, self.snap.wake_lock);
             }
-            for (id, p) in peers {
+            for peer in peers {
                 ui.add_space(8.0);
-                let short = id.to_string();
-                let short = short.get(..12).unwrap_or(&short).to_string();
+                let short = text::short_id(&peer.id).to_string();
+                let p = peer.progress;
                 let peer_row = |ui: &mut Ui| {
                     ui.label(
                         RichText::new(&short)
@@ -3243,16 +1734,16 @@ impl P2PTransfer {
                             .size(12.0),
                     );
                     ui.label(
-                        RichText::new(Self::phase_text(&p.phase))
+                        RichText::new(text::phase_text(&p.phase))
                             .color(tc.outline)
                             .size(12.0),
                     );
                     ui.label(
-                        RichText::new(Self::path_badge(&p.phase, p.path))
+                        RichText::new(text::path_badge(&p.phase, p.path))
                             .color(tc.secondary)
                             .size(12.0),
                     );
-                    if let Some(speed) = Self::transfer_speed(&p) {
+                    if let Some(speed) = text::transfer_speed(&p) {
                         ui.label(RichText::new(speed).color(tc.outline).size(12.0));
                     }
                 };
@@ -3276,8 +1767,8 @@ impl P2PTransfer {
                         ui.label(
                             RichText::new(format!(
                                 "{} / {}",
-                                Self::format_size(p.bytes_done),
-                                Self::format_size(p.bytes_total)
+                                format_size(p.bytes_done),
+                                format_size(p.bytes_total)
                             ))
                             .color(tc.outline)
                             .monospace()
@@ -3304,26 +1795,20 @@ impl P2PTransfer {
     fn show_receive(&mut self, ui: &mut Ui) {
         let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let compact = compact(ui);
-        let progress = match &self.mode {
-            Mode::Receive(r) => r.handle.as_ref().map(|h| h.latest()),
-            _ => None,
+        let Some(receive) = self.snap.receive.clone() else {
+            return;
         };
-        let error = match &self.mode {
-            Mode::Receive(r) => r.error.clone(),
-            _ => None,
-        };
-        let flags = match &self.mode {
-            Mode::Receive(r) => Self::flag_summary(&r.params),
-            _ => String::new(),
-        };
-        let save_pending = match &self.mode {
-            Mode::Receive(r) => r.save_pending.load(Ordering::Acquire),
-            _ => false,
-        };
-        let opening = matches!(&self.mode, Mode::Receive(r) if r.opening);
+        let progress = receive.progress.clone();
+        let error = receive.error.clone();
+        let flags = receive.flags.clone();
+        let save_pending = receive.save_pending;
+        let opening = receive.opening;
+        #[cfg(target_arch = "wasm32")]
+        let mut keep_local_copy = receive.keep_local_copy;
+        let mut input = receive.input.as_str().to_string();
 
         let mut submit = false;
-        let mut save_manifest: Option<Vec<FileMeta>> = None;
+        let mut save = false;
         let mut cancel = false;
 
         card(&tc).show(ui, |ui| {
@@ -3354,7 +1839,7 @@ impl P2PTransfer {
                     progress.as_ref().map(|p| &p.phase),
                     Some(Phase::AwaitingSave { .. })
                 ) && !save_pending;
-                Self::show_transfer_attention(ui, &tc, false, awaiting_save);
+                Self::show_transfer_attention(ui, &tc, false, awaiting_save, self.snap.wake_lock);
                 ui.add_space(10.0);
             }
 
@@ -3394,19 +1879,17 @@ impl P2PTransfer {
                     .wrap(),
                 );
                 ui.add_space(6.0);
-                if let Mode::Receive(r) = &mut self.mode {
-                    inset(&tc, egui::Margin::same(12)).show(ui, |ui| {
-                            ui.add_sized(
-                                [ui.available_width(), 48.0],
-                                egui::TextEdit::singleline(&mut r.input)
-                                    .hint_text("Paste a link here")
-                                    .frame(egui::Frame::new())
-                                    .font(egui::FontId::monospace(14.0))
-                                    .text_color(tc.on_surface)
-                                    .desired_width(f32::INFINITY),
-                            );
-                        });
-                }
+                inset(&tc, egui::Margin::same(12)).show(ui, |ui| {
+                    ui.add_sized(
+                        [ui.available_width(), 48.0],
+                        egui::TextEdit::singleline(&mut input)
+                            .hint_text("Paste a link here")
+                            .frame(egui::Frame::new())
+                            .font(egui::FontId::monospace(14.0))
+                            .text_color(tc.on_surface)
+                            .desired_width(f32::INFINITY),
+                    );
+                });
                 ui.add_space(10.0);
                 submit = if compact {
                     let width = ui.available_width();
@@ -3421,13 +1904,13 @@ impl P2PTransfer {
             if let Some(p) = &progress {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(
-                        RichText::new(Self::phase_text(&p.phase))
+                        RichText::new(text::phase_text(&p.phase))
                             .color(tc.on_surface)
                             .size(15.0)
                             .strong(),
                     );
-                    pill(ui, &tc, Self::path_badge(&p.phase, p.path), true);
-                    if let Some(speed) = Self::transfer_speed(p) {
+                    pill(ui, &tc, text::path_badge(&p.phase, p.path), true);
+                    if let Some(speed) = text::transfer_speed(p) {
                         ui.label(RichText::new(speed).color(tc.outline).size(12.0));
                     }
                 });
@@ -3460,7 +1943,7 @@ impl P2PTransfer {
                                     .wrap(),
                                 );
                                 ui.label(
-                                    RichText::new(Self::format_size(meta.size))
+                                    RichText::new(format_size(meta.size))
                                         .color(tc.outline)
                                         .monospace()
                                         .size(12.0),
@@ -3476,7 +1959,7 @@ impl P2PTransfer {
                                 ui,
                                 &tc,
                                 &meta.name,
-                                &Self::format_size(meta.size),
+                                &format_size(meta.size),
                                 false,
                             );
                             ui.add_space(6.0);
@@ -3487,10 +1970,10 @@ impl P2PTransfer {
                     #[cfg(target_arch = "wasm32")]
                     ui.add_enabled_ui(!save_pending, |ui| {
                         ui.checkbox(
-                            &mut self.keep_local_copy,
+                            &mut keep_local_copy,
                             "Keep a copy here so I can continue later",
                         );
-                        if self.keep_local_copy {
+                        if keep_local_copy {
                             ui.label(
                                 RichText::new(
                                     "This copy is stored in your browser, not in Downloads yet. \
@@ -3504,14 +1987,14 @@ impl P2PTransfer {
                         }
                     });
                     #[cfg(target_arch = "wasm32")]
-                    let save_label = if self.keep_local_copy {
+                    let save_label = if keep_local_copy {
                         "Save a copy in this browser"
                     } else {
                         "Choose where to save"
                     };
                     #[cfg(not(target_arch = "wasm32"))]
                     let save_label = "Choose where to save";
-                    let save = if compact {
+                    let save_clicked = if compact {
                         let width = ui.available_width();
                         ui.add_enabled_ui(!save_pending, |ui| {
                             ui.add_sized(
@@ -3528,12 +2011,12 @@ impl P2PTransfer {
                         )
                         .clicked()
                     };
-                    if save {
-                        save_manifest = Some(manifest.clone());
+                    if save_clicked {
+                        save = true;
                     }
                     if save_pending {
                         #[cfg(target_arch = "wasm32")]
-                        let preparing = if self.keep_local_copy {
+                        let preparing = if keep_local_copy {
                             "Checking your saved copy…"
                         } else {
                             "Opening your save location…"
@@ -3553,8 +2036,8 @@ impl P2PTransfer {
                     ui.label(
                         RichText::new(format!(
                             "{} of {}",
-                            Self::format_size(p.bytes_done),
-                            Self::format_size(p.bytes_total)
+                            format_size(p.bytes_done),
+                            format_size(p.bytes_total)
                         ))
                         .color(tc.outline)
                         .size(12.0),
@@ -3583,44 +2066,35 @@ impl P2PTransfer {
             }
         });
 
-        if submit {
-            let input = match &self.mode {
-                Mode::Receive(r) => r.input.clone(),
-                _ => String::new(),
-            };
-            self.start_receive(&input);
+        if input != receive.input.as_str() {
+            self.dispatch(Intent::Receive(ReceiveIntent::SetInput(input)));
         }
-        if let Some(manifest) = save_manifest {
-            self.save_click(manifest);
+        #[cfg(target_arch = "wasm32")]
+        if keep_local_copy != receive.keep_local_copy {
+            self.dispatch(Intent::Receive(ReceiveIntent::SetKeepLocalCopy(
+                keep_local_copy,
+            )));
+        }
+        if submit {
+            self.dispatch(Intent::Receive(ReceiveIntent::OpenInput));
+        }
+        if save {
+            self.save_click();
         }
         if cancel {
-            if let Mode::Receive(r) = &mut self.mode {
-                // Dropping the handle cancels the session, which then aborts its sinks,
-                // closes the connection and shuts its node down on its own.
-                r.opening = false;
-                r.startup = Arc::default();
-                r.handle = None;
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                self.keep_local_copy = false;
-                self.resume_target = None;
-                self.local_copies
-                    .run(LocalCopyAction::Refresh, self.repaint.clone());
-            }
+            self.dispatch(Intent::Receive(ReceiveIntent::Cancel));
         }
     }
 
     #[cfg(target_arch = "wasm32")]
     fn show_local_copies(&mut self, ui: &mut Ui) {
-        let entries = self.local_copies.entries.lock().unwrap().clone();
-        let error = self.local_copies.error.lock().unwrap().clone();
+        let copies = self.snap.copies.clone();
+        let (entries, error, busy) = (copies.entries, copies.error, copies.busy);
         if entries.is_empty() && error.is_none() {
             return;
         }
         let tc = Tc::of(self.theme, ui.visuals().dark_mode);
-        let busy = self.local_copies.busy.load(Ordering::Acquire);
-        let receiving = matches!(&self.mode, Mode::Receive(r) if r.opening || r.handle.is_some());
+        let receiving = self.snap.receive.as_ref().is_some_and(|r| r.active());
         let mut action = None;
         let mut resume = None;
         ui.add_space(12.0);
@@ -3636,7 +2110,7 @@ impl P2PTransfer {
                     .add_enabled(!busy, outline_button(&tc, "Refresh", tc.outline))
                     .clicked()
                 {
-                    action = Some(LocalCopyAction::Refresh);
+                    action = Some(CopiesIntent::Refresh);
                 }
                 if busy {
                     ui.spinner();
@@ -3659,8 +2133,8 @@ impl P2PTransfer {
                         ui.label(RichText::new(&file.name).strong());
                         ui.label(format!(
                             "{} / {}",
-                            Self::format_size(file.written),
-                            Self::format_size(file.size),
+                            format_size(file.written),
+                            format_size(file.size),
                         ));
                         if file.verified {
                             pill(ui, &tc, "READY TO SAVE", true);
@@ -3671,7 +2145,7 @@ impl P2PTransfer {
                                 )
                                 .clicked()
                             {
-                                action = Some(LocalCopyAction::Export(entry.id.clone(), index));
+                                action = Some(CopiesIntent::Export(entry.id.clone(), index));
                             }
                         } else {
                             pill(ui, &tc, "UNFINISHED", false);
@@ -3693,7 +2167,7 @@ impl P2PTransfer {
                                 .add(outline_button(&tc, "Delete permanently", tc.error))
                                 .clicked()
                             {
-                                action = Some(LocalCopyAction::Discard(entry.id.clone()));
+                                action = Some(CopiesIntent::Discard(entry.id.clone()));
                                 self.confirm_discard = None;
                             }
                             if ui.add(outline_button(&tc, "Keep", tc.outline)).clicked() {
@@ -3713,27 +2187,17 @@ impl P2PTransfer {
             }
         });
         if let Some(id) = resume {
-            self.set_receive(
-                FragmentParams::default(),
-                Some(String::new()),
-                None,
-                None,
-                false,
-            );
-            self.keep_local_copy = true;
-            self.resume_target = Some(id);
+            self.dispatch(Intent::ResumeLocalCopy(id));
         }
         if let Some(action) = action {
-            self.local_copies.run(action, self.repaint.clone());
+            self.dispatch(Intent::Copies(action));
         }
     }
 
     fn show_received_files(&mut self, ui: &mut Ui) {
         let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let compact = compact(ui);
-        let Ok(files) = self.received_files.lock() else {
-            return;
-        };
+        let files = &self.snap.received;
         if files.is_empty() {
             return;
         }
@@ -3759,7 +2223,7 @@ impl P2PTransfer {
                             .wrap(),
                         );
                         ui.label(
-                            RichText::new(Self::format_size(f.size))
+                            RichText::new(format_size(f.size))
                                 .color(tc.outline)
                                 .monospace()
                                 .size(12.0),
@@ -3776,7 +2240,7 @@ impl P2PTransfer {
                         ui,
                         &tc,
                         &f.name,
-                        &format!("{} · {}", Self::format_size(f.size), f.when),
+                        &format!("{} · {}", format_size(f.size), f.when),
                         false,
                     );
                 }
@@ -3786,18 +2250,14 @@ impl P2PTransfer {
                         .size(11.0),
                 );
                 if let Some(rate) = f.average_bytes_per_sec {
-                    let speed = if rate < 1.0 {
-                        format!("{rate:.2} B/s")
-                    } else {
-                        format!("{}/s", Self::format_size(rate as u64))
-                    };
+                    let speed = text::format_rate(rate);
                     ui.label(
                         RichText::new(format!("Avg download (this session): {speed}"))
                             .color(tc.on_surface_var)
                             .size(12.0),
                     );
                 }
-                pill(ui, &tc, Self::transfer_path_text(f.path), true);
+                pill(ui, &tc, text::transfer_path_text(f.path), true);
             }
         });
     }
@@ -3858,19 +2318,20 @@ impl P2PTransfer {
             {
                 self.show_terminal_view = true;
             }
-            let at_home = matches!(self.mode, Mode::Home);
-            let label = match self.mode {
-                Mode::Home if self.sharing.load(Ordering::Acquire) => "SHARING",
-                Mode::Home => "READY",
+            let activity = self.snap.activity;
+            let at_home = activity == Activity::Home;
+            let label = match activity {
+                Activity::Home if self.snap.send.sharing => "SHARING",
+                Activity::Home => "READY",
                 #[cfg(target_arch = "wasm32")]
-                Mode::Diagnostics => "DIAG",
-                Mode::Send { .. } => "TX",
-                Mode::Receive(_) => "RX",
-                Mode::Chat(_) => "CHAT",
+                Activity::Diagnostics => "DIAG",
+                Activity::Send => "TX",
+                Activity::Receive => "RX",
+                Activity::Chat => "CHAT",
             };
             if !compact {
                 ui.add_space(8.0);
-                pill(ui, tc, label, matches!(self.mode, Mode::Receive(_)));
+                pill(ui, tc, label, activity == Activity::Receive);
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3934,14 +2395,14 @@ impl P2PTransfer {
                 }
                 if !compact
                     && !at_home
-                    && self.can_pick_files()
+                    && self.snap.can_pick_files
                     && ui.add(primary_button(tc, "Choose File")).clicked()
                 {
                     self.pick_file();
                 }
                 let preparing = self.is_preparing_share();
                 if !at_home {
-                    // Dropping Mode::Send also drops in-flight hashing tasks. Do not let Home
+                    // The core refuses Home while a file is hashing; say why the button is off.
                     // silently abort file preparation while the endpoint remains live.
                     let home = ui
                         .add_enabled_ui(!preparing, |ui| {
@@ -3953,28 +2414,7 @@ impl P2PTransfer {
                         .inner
                         .on_disabled_hover_text("Wait for files to finish preparing");
                     if home.clicked() {
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            if matches!(self.mode, Mode::Diagnostics) {
-                                if let Some(window) = web_sys::window() {
-                                    if let Ok(history) = window.history() {
-                                        let _ = history.push_state_with_url(
-                                            &wasm_bindgen::JsValue::NULL,
-                                            "",
-                                            Some("/"),
-                                        );
-                                    }
-                                    self.last_fragment = None;
-                                }
-                            }
-                            self.stop_peer_diagnostics();
-                        }
-                        self.mode = Mode::Home;
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            self.keep_local_copy = false;
-                            self.resume_target = None;
-                        }
+                        self.dispatch(Intent::GoHome);
                     }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
@@ -3985,7 +2425,7 @@ impl P2PTransfer {
                             .on_disabled_hover_text("Wait for files to finish preparing")
                             .clicked()
                         {
-                            self.open_new_receive_link();
+                            self.dispatch(Intent::OpenReceive);
                             ui.close();
                         }
                         if ui.button("Quit").clicked() {
@@ -4041,7 +2481,7 @@ impl P2PTransfer {
                     .inner
                     .on_disabled_hover_text("Wait for files to finish preparing");
                 if diagnostics.clicked() {
-                    self.open_diagnostics();
+                    self.dispatch(Intent::OpenDiagnostics);
                 }
                 if !compact && !self.show_terminal_view {
                     ui.add_space(12.0);
@@ -4115,92 +2555,9 @@ impl P2PTransfer {
 
 // ── eframe glue ──────────────────────────────────────────────────────────────
 
-// ── Chat rooms: flows and rendering ─────────────────────────────────────────
+// ── Chat rooms ───────────────────────────────────────────────────────────────
 
 impl P2PTransfer {
-    /// Open a room here. Idempotent while this page already hosts one.
-    fn start_chat_host(&mut self, for_agents: bool) {
-        if let Mode::Chat(state) = &mut self.mode {
-            if state.role == ChatRole::Host && state.polling() {
-                state.for_agents |= for_agents;
-                return;
-            }
-        }
-        if self.is_preparing_share() {
-            return;
-        }
-        let handle = ChatHandle::host(
-            RelayChoice::from_env(),
-            String::new(),
-            Self::base_url(),
-            self.chat_wake(),
-        );
-        self.enter_chat(ChatRole::Host, Some(handle), for_agents, None);
-    }
-
-    /// Join the room a parsed link points at.
-    fn start_chat_join(&mut self, params: &FragmentParams) {
-        let (Some(ticket), Some(cap)) = (params.ticket.clone(), params.cap) else {
-            self.enter_chat(
-                ChatRole::Guest,
-                None,
-                params.agent,
-                Some(MISSING_CAP.to_string()),
-            );
-            return;
-        };
-        let name = params.name.clone().unwrap_or_default();
-        let handle = ChatHandle::join(RelayChoice::from_env(), ticket, cap, name, self.chat_wake());
-        self.enter_chat(ChatRole::Guest, Some(handle), params.agent, None);
-    }
-
-    /// Sessions wake the UI per event, so an idle room costs no frames.
-    fn chat_wake(&self) -> crate::chat::Wake {
-        let repaint = self.repaint.clone();
-        Arc::new(move || repaint.request_repaint())
-    }
-
-    fn enter_chat(
-        &mut self,
-        role: ChatRole,
-        handle: Option<ChatHandle>,
-        for_agents: bool,
-        error: Option<String>,
-    ) {
-        #[cfg(target_arch = "wasm32")]
-        self.reset_peer_diagnostics();
-        // Leave the current room first: dropping an old `ChatBridge` removes the page-script
-        // sender, which would undo a bridge installed before the old state is gone.
-        self.mode = Mode::Home;
-        let mut state = ChatState::new(role, handle, for_agents);
-        if let Some(error) = error {
-            // No session will report this, so report it here.
-            state.dispatch(ChatEvent::Failed(error));
-        }
-        // Only a running session can send; without one `window.oxfer.chat` stays absent, so
-        // a script's `send` throws instead of vanishing.
-        #[cfg(target_arch = "wasm32")]
-        {
-            state.bridge = state.handle.as_ref().map(ChatBridge::install);
-        }
-        self.mode = Mode::Chat(Box::new(state));
-    }
-
-    /// Per frame: apply what the session reported.
-    fn poll_chat(&mut self) {
-        let Mode::Chat(state) = &mut self.mode else {
-            return;
-        };
-        let events = state
-            .handle
-            .as_mut()
-            .map(ChatHandle::drain)
-            .unwrap_or_default();
-        for event in events {
-            state.dispatch(event);
-        }
-    }
-
     fn show_agents_menu(&mut self, ui: &mut Ui) {
         ui.menu_button("For agents", |ui| {
             ui.set_max_width(340.0);
@@ -4211,10 +2568,10 @@ impl P2PTransfer {
                  to join this room, talk, and send files through it.",
             );
             ui.add_space(6.0);
-            match &mut self.mode {
-                Mode::Chat(state) if state.links.is_some() => {
+            match &self.snap.chat {
+                Some(chat) if chat.links.is_some() => {
                     if ui.button("Copy for agent").clicked() {
-                        state.copy_for_agent(ui.ctx());
+                        self.chat_view.copy_for_agent(ui.ctx(), chat);
                         ui.close();
                     }
                 }
@@ -4230,12 +2587,16 @@ impl P2PTransfer {
                 // Like "Choose File", never offered over a running receive: opening a room
                 // replaces the mode and would drop the download.
                 !self.is_preparing_share()
-                    && !matches!(&self.mode, Mode::Receive(r) if r.handle.is_some()),
+                    && !self
+                        .snap
+                        .receive
+                        .as_ref()
+                        .is_some_and(|r| r.progress.is_some()),
                 Button::new("Start a room for agents"),
             )
             .clicked()
         {
-            self.start_chat_host(true);
+            self.dispatch(Intent::HostChat { for_agents: true });
             ui.close();
         }
     }
@@ -4243,19 +2604,22 @@ impl P2PTransfer {
     fn show_chat(&mut self, ui: &mut Ui) {
         let tc = Tc::of(self.theme, ui.visuals().dark_mode);
         let compact = compact(ui);
-        let Mode::Chat(state) = &mut self.mode else {
+        let Some(chat) = self.snap.chat.clone() else {
             return;
         };
+        self.chat_view.sync(&chat);
+        let keyboard_inset = self.keyboard_inset;
+        let state = &mut self.chat_view;
         let mut leave = false;
         let mut submit: Option<String> = None;
-        let host = state.role == ChatRole::Host;
+        let host = chat.role == ChatRole::Host;
         card(&tc).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.heading(RichText::new("Chat room").color(tc.on_surface));
                 pill(ui, &tc, "ENCRYPTED", true);
             });
             ui.add_space(6.0);
-            match &state.status {
+            match &chat.status {
                 ChatStatus::Starting => {
                     ui.horizontal(|ui| {
                         ui.spinner();
@@ -4285,14 +2649,15 @@ impl P2PTransfer {
                 }
             }
 
-            if let Some(RoomLinks { link, .. }) = state.links.clone() {
+            if let Some(links) = &chat.links {
+                let link = links.link.as_str();
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new("Send this link to the person you want to talk to.")
                         .color(tc.on_surface)
                         .strong(),
                 );
-                link_box(ui, &tc, &link);
+                link_box(ui, &tc, link);
                 ui.add_space(6.0);
                 let copy_width = fit_width(
                     ui,
@@ -4306,7 +2671,7 @@ impl P2PTransfer {
                     })
                     .clicked()
                 {
-                    ui.ctx().copy_text(link.clone());
+                    ui.ctx().copy_text(link.to_string());
                     state.copied = Some(Copied::Link);
                 }
                 ui.label(
@@ -4318,11 +2683,11 @@ impl P2PTransfer {
                     .size(12.0),
                 );
                 ui.add_space(12.0);
-                show_agent_prompt(ui, &tc, state);
+                show_agent_prompt(ui, &tc, &chat, state);
             }
 
             ui.add_space(12.0);
-            if !state.members.is_empty() {
+            if !chat.members.is_empty() {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                     ui.label(
@@ -4330,8 +2695,8 @@ impl P2PTransfer {
                             .color(tc.on_surface_var)
                             .size(13.0),
                     );
-                    for member in &state.members {
-                        member_chip(ui, &tc, member, state.you.as_deref() == Some(member));
+                    for member in &chat.members {
+                        member_chip(ui, &tc, member, chat.you.as_deref() == Some(member));
                     }
                 });
             }
@@ -4344,12 +2709,12 @@ impl P2PTransfer {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 8.0;
-                        if state.lines.is_empty() {
+                        if chat.lines.is_empty() {
                             ui.label(RichText::new("No messages yet.").color(tc.on_surface_var));
                         }
-                        let you = state.you.as_deref();
+                        let you = chat.you.as_deref();
                         let style = ui.style().clone();
-                        for line in &state.lines {
+                        for line in &chat.lines {
                             match &line.from {
                                 None => {
                                     ui.label(
@@ -4397,7 +2762,7 @@ impl P2PTransfer {
                     });
             });
             ui.add_space(8.0);
-            let open = matches!(state.status, ChatStatus::Open);
+            let open = chat.open();
             ui.horizontal(|ui| {
                 let send_width = 84.0;
                 let input_width =
@@ -4422,7 +2787,7 @@ impl P2PTransfer {
                     response.request_focus();
                     state.focus_input = false;
                 }
-                let inset = self.keyboard_inset;
+                let inset = keyboard_inset;
                 if response.has_focus()
                     && (response.gained_focus() || inset != state.input_seen_inset)
                 {
@@ -4443,11 +2808,7 @@ impl P2PTransfer {
                 }
             });
             ui.add_space(10.0);
-            let leave_label = match (host, &state.status) {
-                (true, ChatStatus::Open | ChatStatus::Starting) => "Close room",
-                (false, ChatStatus::Open | ChatStatus::Starting) => "Leave room",
-                _ => "Back to home",
-            };
+            let leave_label = chat.leave_label();
             let leave_width = fit_width(ui, [outline_text(leave_label)], 140.0);
             if ui
                 .add_sized(
@@ -4460,59 +2821,12 @@ impl P2PTransfer {
             }
         });
         if let Some(text) = submit {
-            state.say(&text);
+            self.dispatch(Intent::Chat(ChatIntent::Say(text)));
         }
         if leave {
-            self.mode = Mode::Home;
+            self.dispatch(Intent::GoHome);
         }
     }
-}
-
-/// What "Copy for agent" puts on the clipboard: the agent link inside a short brief.
-///
-/// A bare link with a `cap=` token reads to a careful agent like a secret pasted by
-/// mistake, so it asks what to do instead of opening it. The brief says the link is meant
-/// for it, gives it a task, and shows a foreground command that needs no checkout: a
-/// long-lived background process fed through a pipe is what permission checks refuse.
-fn agent_prompt(link: &str) -> String {
-    // The script and llms.txt sit next to the app page, so resolve them against it (a
-    // sub-path deployment keeps working). Everything that reaches a shell is single-quoted,
-    // since a path or query can carry shell syntax.
-    let page = url::Url::parse(link)
-        .ok()
-        .filter(|url| matches!(url.scheme(), "http" | "https"));
-    let asset = |name: &str| {
-        page.as_ref()
-            .and_then(|page| page.join(name).ok())
-            .map_or_else(|| format!("https://oxfer.app/{name}"), String::from)
-    };
-    let quote = |text: &str| format!("'{}'", text.replace('\'', "'\\''"));
-    let script = quote(&asset("oxfer-agent.mjs"));
-    let llms = asset("llms.txt");
-    let link = quote(link);
-    format!(
-        "Join this Oxfer chat room as my agent: say hello, then do what the people in the \
-         room ask, such as replying or sending and receiving files. Keep listening until the \
-         room closes or I tell you to stop. I'm giving you this link on purpose. It's a \
-         private room invite, so use it only for this.\n\
-         \n\
-         Set up once, in an empty folder (needs Node 22 or later and Google Chrome):\n\
-         \x20 curl -fsSLO {script} && npm init -y >/dev/null && npm i playwright@1.56.1 pngjs@7.0.0\n\
-         \n\
-         If you can run a background command, stay in the room. Start this once in the \
-         background:\n\
-         \x20 node oxfer-agent.mjs chat {link} --name <your name> --dir room\n\
-         Then each turn is a foreground run that prints what is new, posts, and waits for a \
-         reply (exit code 4 if nobody answered in time):\n\
-         \x20 node oxfer-agent.mjs post room --say '<message>' --wait 300\n\
-         Leave with: node oxfer-agent.mjs post room --leave\n\
-         \n\
-         Otherwise talk in turns. Each run joins, posts, waits for a reply, prints the room \
-         and leaves:\n\
-         \x20 node oxfer-agent.mjs chat {link} --name <your name> --say '<message>' --until . --wait 300\n\
-         \n\
-         Files, and everything else: {llms}\n"
-    )
 }
 
 /// Names the transcript and roster draw in, so a speaker is easy to pick out. You are the
@@ -4572,8 +2886,8 @@ fn member_chip(ui: &mut Ui, tc: &Tc, name: &str, you: bool) {
 
 /// The agent brief as a prompt card, the way agent docs present one: what it is, one copy
 /// button, and the full text folded away until someone wants to read it.
-fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
-    let Some(links) = &state.links else {
+fn show_agent_prompt(ui: &mut Ui, tc: &Tc, chat: &ChatSnapshot, state: &mut ChatView) {
+    let Some(links) = &chat.links else {
         return;
     };
     let copied = state.copied == Some(Copied::AgentLink);
@@ -4603,7 +2917,7 @@ fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
             const LABELS: [&str; 2] = ["📋 Copy prompt", "✔ Copied"];
             let label = LABELS[usize::from(copied)];
             let width = fit_width(ui, LABELS.map(primary_text), 150.0);
-            let button = if state.for_agents {
+            let button = if chat.for_agents {
                 copy_button(tc, label, copied)
             } else {
                 outline_button(tc, label, if copied { tc.secondary } else { tc.outline })
@@ -4636,7 +2950,7 @@ fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
                         .show(ui, |ui| {
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(agent_prompt(&links.agent))
+                                    RichText::new(agent_prompt(links.agent.as_str()))
                                         .monospace()
                                         .size(12.0)
                                         .color(tc.on_surface),
@@ -4649,7 +2963,7 @@ fn show_agent_prompt(ui: &mut Ui, tc: &Tc, state: &mut ChatState) {
         }
     });
     if copy {
-        state.copy_for_agent(ui.ctx());
+        state.copy_for_agent(ui.ctx(), chat);
     }
     if toggle {
         state.prompt_open = !state.prompt_open;
@@ -4757,33 +3071,12 @@ impl eframe::App for P2PTransfer {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
-    /// Non-drawing per-frame work. Runs before `ui`, and may show nothing itself.
+    /// Non-drawing per-frame work: feed drops in, tick the core, take its snapshot.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        #[cfg(target_arch = "wasm32")]
-        self.check_fragment_change();
-
         self.accept_dropped_files(ctx);
-        self.drain_picks();
-        self.prune_preparing();
-        self.adopt_pending_handle();
-        self.poll_receive();
-        self.poll_chat();
-        self.drain_error();
-
-        #[cfg(target_arch = "wasm32")]
-        set_transfer_wake_lock(self.needs_wake_lock());
-
-        if self.needs_progress_poll() || {
-            #[cfg(target_arch = "wasm32")]
-            {
-                matches!(self.mode, Mode::Diagnostics)
-                    && self.diagnostic_peer.lock().unwrap().node.is_some()
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                false
-            }
-        } {
+        self.core.tick();
+        self.snap = self.core.snapshot();
+        if self.snap.live {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }
@@ -4889,21 +3182,22 @@ impl eframe::App for P2PTransfer {
                     let content_width = ui.available_width().min(1040.0);
                     ui.vertical_centered(|ui| {
                         ui.set_width(content_width);
-                        match self.mode {
-                            Mode::Home => self.show_home(ui),
+                        let activity = self.snap.activity;
+                        match activity {
+                            Activity::Home => self.show_home(ui),
                             #[cfg(target_arch = "wasm32")]
-                            Mode::Diagnostics => self.show_diagnostics(ui),
-                            Mode::Send { .. } => self.show_send(ui),
-                            Mode::Receive(_) => self.show_receive(ui),
-                            Mode::Chat(_) => self.show_chat(ui),
+                            Activity::Diagnostics => self.show_diagnostics(ui),
+                            Activity::Send => self.show_send(ui),
+                            Activity::Receive => self.show_receive(ui),
+                            Activity::Chat => self.show_chat(ui),
                         }
                         #[cfg(target_arch = "wasm32")]
-                        if !matches!(self.mode, Mode::Diagnostics | Mode::Chat(_)) {
+                        if !matches!(activity, Activity::Diagnostics | Activity::Chat) {
                             self.show_received_files(ui);
                             self.show_local_copies(ui);
                         }
                         #[cfg(not(target_arch = "wasm32"))]
-                        if !matches!(self.mode, Mode::Chat(_)) {
+                        if activity != Activity::Chat {
                             self.show_received_files(ui);
                         }
                     });
@@ -4911,7 +3205,7 @@ impl eframe::App for P2PTransfer {
             });
         keep_text_agent_on_screen(ctx);
         paint_press_feedback(ctx, &tc);
-        if self.can_pick_files() {
+        if self.snap.can_pick_files {
             paint_drop_target(ctx, &tc);
         }
     }
@@ -5013,61 +3307,6 @@ fn paint_press_feedback(ctx: &egui::Context, tc: &Tc) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn local_test_chat_rejoin_takes_back_the_leave_notice() {
-        let mut state = ChatState::new(ChatRole::Host, None, false);
-        let joined = |name: &str| ChatEvent::Joined { name: name.into() };
-        let left = |name: &str| ChatEvent::Left { name: name.into() };
-        state.apply(joined("oz"));
-        state.apply(left("oz"));
-        state.apply(left("bot"));
-        state.apply(joined("oz"));
-        let texts = |state: &ChatState| {
-            state
-                .lines
-                .iter()
-                .map(|l| l.text.clone())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(texts(&state), ["oz joined", "bot left"]);
-        assert_eq!(state.members, ["oz"]);
-
-        // A message after the leave keeps both notices: the gap was visible.
-        state.apply(left("oz"));
-        state.lines.push_back(ChatLine {
-            from: Some("bot".into()),
-            text: "hi".into(),
-        });
-        state.apply(joined("oz"));
-        assert_eq!(texts(&state)[2..], ["oz left", "hi", "oz joined"]);
-    }
-
-    #[test]
-    fn local_test_agent_prompt_points_at_llms_txt_and_keeps_the_link_whole() {
-        let link = "https://chat-oxfer.example.dev/#chat&endpointabc&cap=00ff&agent";
-        let prompt = agent_prompt(link);
-        assert!(prompt.contains("https://chat-oxfer.example.dev/llms.txt"));
-        assert!(prompt.contains(&format!("chat '{link}' --name")));
-        assert!(prompt.contains("curl -fsSLO 'https://chat-oxfer.example.dev/oxfer-agent.mjs'"));
-    }
-
-    #[test]
-    fn local_test_agent_prompt_keeps_shell_syntax_out_of_its_commands() {
-        let link = "https://oxfer.app/it's?q=$(id)#chat&endpointabc&cap=00ff&agent";
-        let prompt = agent_prompt(link);
-        assert!(prompt.contains("curl -fsSLO 'https://oxfer.app/oxfer-agent.mjs' &&"));
-        assert!(prompt.contains("chat 'https://oxfer.app/it'\\''s?q=$(id)#chat"));
-        assert!(!prompt.contains("chat https://"));
-    }
-
-    #[test]
-    fn local_test_agent_prompt_finds_its_files_next_to_a_sub_path_page() {
-        let prompt =
-            agent_prompt("https://example.dev/preview/index.html#chat&endpointabc&cap=00ff");
-        assert!(prompt.contains("curl -fsSLO 'https://example.dev/preview/oxfer-agent.mjs' &&"));
-        assert!(prompt.contains("everything else: https://example.dev/preview/llms.txt"));
-    }
 
     #[test]
     fn local_test_theme_choice_is_independent_of_light_and_dark_mode() {
@@ -5209,52 +3448,38 @@ mod tests {
         let mut app = P2PTransfer::default();
         ctx.run_ui(drops(), |ui| app.accept_dropped_files(ui.ctx()))
             .drop_without_applying_deltas();
-        {
-            let picks = app.pending_picks.lock().unwrap();
-            assert_eq!(picks.len(), 1);
-            assert_eq!(picks[0].name, "notes.txt");
-            assert_eq!(picks[0].snapshot.size, 5);
-            assert!(matches!(&picks[0].origin, FileOrigin::Path(p) if *p == file));
-        }
-        let error = app.node_error.lock().unwrap().clone().unwrap();
+        // The file waits for the next tick; the folder is refused by name.
+        assert_eq!(app.core.picks().len(), 1);
+        let error = app.core.snapshot().send.error.unwrap();
         assert!(
-            error.contains("photos") && error.contains(file_io::FOLDER_REFUSED),
+            error.contains("photos") && error.contains(crate::file_io::FOLDER_REFUSED),
             "{error}"
         );
 
         // Receive has no picker, so it takes no drops either.
         let mut app = P2PTransfer::default();
-        app.set_receive(FragmentParams::default(), None, None, None, false);
+        app.dispatch(Intent::OpenReceive);
         ctx.run_ui(drops(), |ui| app.accept_dropped_files(ui.ctx()))
             .drop_without_applying_deltas();
-        assert!(app.pending_picks.lock().unwrap().is_empty());
-        assert!(app.node_error.lock().unwrap().is_none());
+        assert!(app.core.picks().is_empty());
+        assert!(app.core.snapshot().send.error.is_none());
     }
 
     #[test]
     fn local_test_narrow_header_fits_send_and_receive_modes() {
         let width = 320.0;
         for theme in Theme::ALL {
-            for mode in [
-                Mode::Send {
-                    preparing: Vec::new(),
-                },
-                Mode::Receive(Box::new(ReceiveState {
-                    input: String::new(),
-                    params: FragmentParams::default(),
-                    handle: None,
-                    error: None,
-                    opening: false,
-                    startup: Arc::default(),
-                    save_pending: Arc::new(AtomicBool::new(false)),
-                })),
+            for (intent, activity) in [
+                (Intent::ReturnToSharing, Activity::Send),
+                (Intent::OpenReceive, Activity::Receive),
             ] {
                 let ctx = egui::Context::default();
                 let mut app = P2PTransfer {
                     theme,
-                    mode,
                     ..P2PTransfer::default()
                 };
+                app.dispatch(intent);
+                assert_eq!(app.snap.activity, activity);
                 let mut measured = None;
                 let output = ctx.run_ui(
                     egui::RawInput {
@@ -5345,251 +3570,5 @@ mod tests {
                 || (crate::BUILD_COMMITTED_AT.len() == 25
                     && crate::BUILD_COMMITTED_AT.as_bytes()[10] == b'T')
         );
-    }
-
-    #[test]
-    fn local_test_share_link_excludes_sender_frame_diagnostics() {
-        assert_eq!(
-            P2PTransfer::share_base_url(
-                "https://oxfer.pages.dev/?dcframe=64&theme=dark#ticket&cap=private"
-            ),
-            "https://oxfer.pages.dev/?theme=dark"
-        );
-        assert_eq!(
-            P2PTransfer::share_base_url("https://oxfer.pages.dev/?dcframe=64#private"),
-            "https://oxfer.pages.dev/"
-        );
-        assert_eq!(
-            P2PTransfer::share_base_url(
-                "https://oxfer.pages.dev/?tag=kept&d%63frame=64&other=also-kept#private"
-            ),
-            "https://oxfer.pages.dev/?tag=kept&other=also-kept"
-        );
-        assert_eq!(
-            P2PTransfer::share_base_url("https://oxfer.pages.dev/#private"),
-            "https://oxfer.pages.dev/"
-        );
-    }
-
-    #[test]
-    fn local_test_receiver_wake_lock_requires_active_session_or_save_attempt() {
-        let preview = Phase::AwaitingSave { manifest: vec![] };
-        let done = Phase::Complete { saved: vec![] };
-        assert!(P2PTransfer::receive_needs_wake_lock(true, false, None));
-        assert!(!P2PTransfer::receive_needs_wake_lock(false, true, None));
-        assert!(!P2PTransfer::receive_needs_wake_lock(
-            false,
-            false,
-            Some(&preview)
-        ));
-        assert!(P2PTransfer::receive_needs_wake_lock(
-            false,
-            true,
-            Some(&preview)
-        ));
-        assert!(P2PTransfer::receive_needs_wake_lock(
-            false,
-            true,
-            Some(&Phase::Transferring)
-        ));
-        assert!(!P2PTransfer::receive_needs_wake_lock(
-            false,
-            true,
-            Some(&done)
-        ));
-    }
-
-    #[test]
-    fn local_test_transfer_speed_only_appears_while_transferring() {
-        let mut progress = TransferProgress::connecting();
-        progress.bytes_per_sec = 1_572_864.0;
-        assert_eq!(P2PTransfer::transfer_speed(&progress), None);
-
-        progress.phase = Phase::Transferring;
-        assert_eq!(
-            P2PTransfer::transfer_speed(&progress).as_deref(),
-            Some("1.50 MB/s")
-        );
-        progress.bytes_per_sec = 0.0;
-        assert_eq!(P2PTransfer::transfer_speed(&progress), None);
-        progress.bytes_per_sec = f64::NAN;
-        assert_eq!(P2PTransfer::transfer_speed(&progress), None);
-
-        progress.bytes_per_sec = 1_572_864.0;
-        progress.phase = Phase::Verifying;
-        assert_eq!(P2PTransfer::transfer_speed(&progress), None);
-        progress.phase = Phase::Complete { saved: Vec::new() };
-        assert_eq!(P2PTransfer::transfer_speed(&progress), None);
-    }
-
-    #[test]
-    fn local_test_reconnect_ui_does_not_claim_the_old_path_is_active() {
-        let phase = Phase::Reconnecting {
-            attempt: 2,
-            max_attempts: 5,
-        };
-        assert_eq!(P2PTransfer::phase_text(&phase), "Connecting again…");
-        assert_eq!(
-            P2PTransfer::path_badge(&phase, TransferPath::Direct),
-            "Connecting again",
-        );
-    }
-
-    #[test]
-    fn local_test_connection_labels_explain_paths_without_protocol_names() {
-        assert_eq!(
-            P2PTransfer::transfer_path_text(TransferPath::Direct),
-            "Direct connection",
-        );
-        assert_eq!(
-            P2PTransfer::transfer_path_text(TransferPath::Relayed),
-            "Encrypted via a helper server",
-        );
-        assert_eq!(
-            P2PTransfer::phase_text(&Phase::Signaling),
-            "Finding a connection…",
-        );
-        assert_eq!(
-            P2PTransfer::phase_text(&Phase::Complete { saved: Vec::new() }),
-            "Transfer complete and checked",
-        );
-    }
-
-    #[test]
-    fn local_test_startup_keeps_polling_without_user_input() {
-        let mut app = P2PTransfer::default();
-        assert!(!app.needs_progress_poll());
-
-        // Hashing may already be done while the endpoint is still opening.
-        app.mode = Mode::Send { preparing: vec![] };
-        app.sharing.store(true, Ordering::Release);
-        assert!(app.needs_progress_poll());
-        app.sharing.store(false, Ordering::Release);
-        assert!(!app.needs_progress_poll());
-
-        // The receiver has no TransferHandle until its bind task finishes.
-        app.set_receive(FragmentParams::default(), None, None, None, true);
-        assert!(app.needs_progress_poll());
-    }
-
-    #[test]
-    fn local_test_receive_preserves_the_link_that_was_opened() {
-        let mut app = P2PTransfer::default();
-        let link = "https://oxfer.app/#ticket=invalid";
-        app.start_receive(link);
-        let Mode::Receive(r) = &app.mode else {
-            panic!("expected receive panel");
-        };
-        assert_eq!(r.input, link);
-        assert!(r.error.is_some());
-        assert!(!r.opening);
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn local_test_open_new_receive_link_clears_previous_input() {
-        let mut app = P2PTransfer::default();
-        app.set_receive(
-            FragmentParams::default(),
-            Some("previous private link".into()),
-            None,
-            None,
-            false,
-        );
-        app.open_new_receive_link();
-        let Mode::Receive(r) = &app.mode else {
-            panic!("expected receive panel");
-        };
-        assert!(r.input.is_empty());
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    async fn local_test_open_new_receive_link_keeps_preparing_share() {
-        let mut app = P2PTransfer::default();
-        let (_, progress) = watch::channel(0.0);
-        app.mode = Mode::Send {
-            preparing: vec![PrepareHandle {
-                name: "file".into(),
-                progress,
-                _task: AbortOnDropHandle::new(task::spawn(async {
-                    std::future::pending::<()>().await;
-                })),
-            }],
-        };
-
-        app.open_new_receive_link();
-        assert!(matches!(&app.mode, Mode::Send { preparing } if preparing.len() == 1));
-    }
-
-    #[test]
-    fn local_test_receive_startup_failure_stops_spinner_and_keeps_input() {
-        let mut app = P2PTransfer::default();
-        let input = "a private link".to_string();
-        app.set_receive(
-            FragmentParams::default(),
-            Some(input.clone()),
-            None,
-            None,
-            true,
-        );
-        if let Mode::Receive(r) = &app.mode {
-            *r.startup.lock().unwrap() = Some(Err("endpoint startup timed out".to_string()));
-        }
-        app.adopt_pending_handle();
-        let Mode::Receive(r) = &app.mode else {
-            panic!("expected receive panel");
-        };
-        assert_eq!(r.input, input);
-        assert_eq!(r.error.as_deref(), Some("endpoint startup timed out"));
-        assert!(!app.needs_progress_poll());
-    }
-
-    #[test]
-    fn local_test_old_startup_cannot_replace_a_new_receive() {
-        let mut app = P2PTransfer::default();
-        app.set_receive(FragmentParams::default(), None, None, None, true);
-        let old_slot = match &app.mode {
-            Mode::Receive(r) => Arc::downgrade(&r.startup),
-            _ => unreachable!(),
-        };
-        app.set_receive(FragmentParams::default(), None, None, None, true);
-        assert!(old_slot.upgrade().is_none());
-        app.adopt_pending_handle();
-        assert!(app.needs_progress_poll());
-    }
-
-    #[test]
-    fn local_test_save_attempt_blocks_duplicates_and_allows_retry() {
-        let pending = Arc::new(AtomicBool::new(false));
-        let attempt = SaveAttempt::begin(&pending).unwrap();
-        assert!(pending.load(Ordering::Acquire));
-        assert!(SaveAttempt::begin(&pending).is_none());
-
-        // A picker error or dismissal drops the attempt without submitting a command.
-        drop(attempt);
-        assert!(!pending.load(Ordering::Acquire));
-        assert!(SaveAttempt::begin(&pending).is_some());
-    }
-
-    #[test]
-    fn local_test_submitted_save_stays_blocked_until_phase_changes() {
-        let pending = Arc::new(AtomicBool::new(false));
-        SaveAttempt::begin(&pending).unwrap().submitted();
-        // There can still be a frame showing AwaitingSave before the engine consumes Save.
-        assert!(SaveAttempt::begin(&pending).is_none());
-    }
-
-    #[test]
-    fn local_test_old_save_attempt_cannot_change_new_receive_state() {
-        let old_pending = Arc::new(AtomicBool::new(false));
-        let old_attempt = SaveAttempt::begin(&old_pending).unwrap();
-        let new_pending = Arc::new(AtomicBool::new(false));
-        let new_attempt = SaveAttempt::begin(&new_pending).unwrap();
-
-        drop(old_attempt);
-        assert!(new_pending.load(Ordering::Acquire));
-        drop(new_attempt);
-        assert!(!new_pending.load(Ordering::Acquire));
     }
 }
