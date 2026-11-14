@@ -299,6 +299,11 @@ pub struct Oxfer {
     /// The last `path + hash` [`Oxfer::sync_location`] acted on.
     #[cfg(target_arch = "wasm32")]
     last_route: Option<String>,
+    /// The last fragment [`Oxfer::sync_location`] accepted. A path-only navigation (a UI
+    /// router moving from `/` to `/chat`) carries the fragment along unchanged and must not
+    /// replay it: `#chat` would open a second room.
+    #[cfg(target_arch = "wasm32")]
+    last_hash: Option<String>,
 }
 
 impl Default for Oxfer {
@@ -333,6 +338,8 @@ impl Oxfer {
             manage_history: config.manage_history,
             #[cfg(target_arch = "wasm32")]
             last_route: None,
+            #[cfg(target_arch = "wasm32")]
+            last_hash: None,
             next_id: 0,
             deps,
             active: Active::Home,

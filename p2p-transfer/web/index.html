@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="clean">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title></title>
+    <meta name="description" content="Oxfer sends files directly between two browsers, encrypted, with no cloud copy. A link with a #endpoint…&amp;cap=… fragment is a share link to receive from; one with #chat&amp;… is a chat room to join; the bare origin is where sending starts. Automation: /llms.txt">
+    <link id="favicon" rel="icon" type="image/svg+xml" sizes="any"
+        href="/assets/oxfer-favicon-light.svg"
+        data-light="/assets/oxfer-favicon-light.svg" data-dark="/assets/oxfer-favicon-dark.svg">
+    <script defer src="/assets/favicon.js"></script>
+    <link rel="manifest" href="/assets/manifest.json">
+    <link rel="apple-touch-icon" href="/assets/icon_ios_touch_192.png">
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f5f7">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#23263a">
+    <script>
+        // Apply the saved theme before the wasm loads, so the first paint is not a flash
+        // of the default theme. Keys: p2p_transfer::theme::BROWSER_THEME_KEY and
+        // web/src/appearance.rs BROWSER_MODE_KEY.
+        try {
+            const theme = localStorage.getItem('oxfer.theme.v1');
+            if (theme) document.documentElement.dataset.theme = theme;
+            const mode = localStorage.getItem('oxfer.mode.v1');
+            if (mode) document.documentElement.dataset.mode = mode;
+        } catch (_) { /* storage blocked: defaults apply */ }
+    </script>
+    <style>
+        /* Until the app's generated theme CSS loads. */
+        body { margin: 0; background: #e4e4e4; color: #151724; font-family: system-ui, sans-serif; }
+        @media (prefers-color-scheme: dark) { body { background: #151724; color: #f5f6f8; } }
+        #loading_text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
+        #main:not(:empty) + #loading_text { display: none; }
+    </style>
+</head>
+<body>
+    <noscript>
+        <p>Oxfer needs JavaScript and WebAssembly. It sends files directly from one browser to another, encrypted, with no copy on a server.</p>
+        <p>Automated clients: this page is only an app shell, and the part of a link after <code>#</code> never reaches the server. A link with a <code>#endpoint…&amp;cap=…</code> fragment is a share link to receive from; one starting <code>#chat&amp;</code> is a chat room to join and talk in; <code>https://oxfer.app/</code> alone is where sending starts. Read <a href="/llms.txt">/llms.txt</a> for the scripted sender and receiver (<a href="/oxfer-agent.mjs">/oxfer-agent.mjs</a>).</p>
+    </noscript>
+    <div id="main"></div>
+    <div id="loading_text" role="status">Loading Oxfer…</div>
+    <script>
+        // Capture the full href before the app can scrub the fragment (it removes the
+        // ticket and cap once read, design §4.7.1).
+        const orig = location.href;
+        const flags = location.hash.slice(1).split('&');
+        if ('serviceWorker' in navigator) {
+            if (flags.includes('dev')) {
+                // #dev is a hard reset: unregister every worker and clear every cache.
+                const wasControlled = !!navigator.serviceWorker.controller;
+                Promise.all([
+                    navigator.serviceWorker.getRegistrations()
+                        .then(rs => Promise.all(rs.map(r => r.unregister()))),
+                    caches.keys().then(ks => Promise.all(ks.map(k => caches.delete(k)))),
+                ]).then(() => {
+                    if (wasControlled) {
+                        // Restore the original href and reload in one task, so the
+                        // app's fragment scrub cannot interleave.
+                        history.replaceState(null, '', orig);
+                        location.reload();
+                    }
+                });
+            } else {
+                // Absolute: path routes (/send, /chat…) must not change the worker's URL
+                // or scope. The streaming sink waits for this exact registration.
+                window.p2pServiceWorkerRegistration = navigator.serviceWorker.register('/sw.js', { scope: '/' });
+                window.p2pServiceWorkerRegistration.catch(error => console.warn('Service worker unavailable:', error));
+            }
+        }
+    </script>
+</body>
+</html>

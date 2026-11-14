@@ -1,0 +1,11 @@
+# dx configuration for the Oxfer web UI. Build from p2p-transfer/:
+#   dx build  --platform web -p oxfer-web            (debug, unhashed)
+#   dx bundle --platform web -p oxfer-web --release  (what build-web.sh ships)
+[application]
+name = "oxfer-web"
+
+[web.app]
+title = "Oxfer"
+
+[web.wasm_opt]
+level = "z"

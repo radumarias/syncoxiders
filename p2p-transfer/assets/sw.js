@@ -4,8 +4,14 @@
 // `p2p-transfer_bg.wasm` never changes filename between builds — a
 // cache-first shell would shadow every later `trunk serve`/`trunk build`
 // forever. See CLAUDE.md and design §4.10.1.
-const cacheName = 'oxfer-v3';
+//
+// The Dioxus build (web/, `dx bundle --release`) names its JS and wasm
+// `/assets/<name>-dxh<hash>.<ext>`: a new build is a new URL, so those are
+// cache-first and immutable. `dx build` (debug) serves unhashed `/wasm/…`,
+// which stays network-first like Trunk's names.
+const cacheName = 'oxfer-v4';
 const shellSuffixes = ['/', '/index.html', '/p2p-transfer.js', '/p2p-transfer_bg.wasm', '/theme.html'];
+const hashedAsset = /-dxh[0-9a-f]{8,}\.(?:js|wasm|css)$/;
 
 /* Take over immediately; activate() clears stale caches before this worker
    starts controlling pages. */
@@ -175,7 +181,15 @@ self.addEventListener('message', event => {
 
 function isShellRequest(request, pathname) {
   if (request.mode === 'navigate') return true;
+  if (pathname.startsWith('/wasm/')) return true;
   return shellSuffixes.some((suffix) => pathname.endsWith(suffix));
+}
+
+// Offline, a path route (/send, /chat, …) the browser never fetched has no
+// cache entry of its own; every route is the same single-page shell.
+function cachedShell(request) {
+  return caches.match(request).then((hit) => hit
+    || (request.mode === 'navigate' ? caches.match(new URL('./', self.registration.scope)) : undefined));
 }
 
 self.addEventListener('fetch', (e) => {
@@ -197,7 +211,20 @@ self.addEventListener('fetch', (e) => {
           caches.open(cacheName).then((cache) => cache.put(e.request, copy));
           return response;
         })
-        .catch(() => caches.match(e.request))
+        .catch(() => cachedShell(e.request))
+    );
+    return;
+  }
+
+  if (hashedAsset.test(url.pathname)) {
+    e.respondWith(
+      caches.match(e.request).then((hit) => hit || fetch(e.request).then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(cacheName).then((cache) => cache.put(e.request, copy));
+        }
+        return response;
+      }))
     );
     return;
   }

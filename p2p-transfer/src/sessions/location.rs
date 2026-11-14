@@ -40,6 +40,10 @@ impl Oxfer {
                 return;
             }
         }
+        if self.last_hash.as_ref() == Some(&hash) {
+            return;
+        }
+        self.last_hash = Some(hash.clone());
         self.accept_fragment(&window, &hash);
         self.deps.notifier.notify();
     }
@@ -63,6 +67,7 @@ impl Oxfer {
             let _ = history.push_state_with_url(&JsValue::NULL, "", Some(url));
         }
         self.last_route = None;
+        self.last_hash = None;
     }
 
     fn enter_diagnostics(&mut self, target: Option<EndpointTicket>, outcome: Option<String>) {
@@ -74,11 +79,12 @@ impl Oxfer {
     /// The location as the next [`Oxfer::sync_location`] will see it, so a `replaceState`
     /// (which fires no event) is not mistaken for a new navigation.
     fn remember_location(&mut self, window: &web_sys::Window) {
+        let hash = window.location().hash().unwrap_or_default();
         self.last_route = Some(format!(
-            "{}{}",
+            "{}{hash}",
             window.location().pathname().unwrap_or_default(),
-            window.location().hash().unwrap_or_default()
         ));
+        self.last_hash = Some(hash);
     }
 
     fn accept_fragment(&mut self, window: &web_sys::Window, hash: &str) {
@@ -106,7 +112,12 @@ impl Oxfer {
             self.enter_diagnostics(None, None);
             return;
         }
-        if on_diags_path {
+        let params = Node::parse_fragment(hash);
+        let carries_link = params.ticket.is_some()
+            || params.cap.is_some()
+            || params.chat
+            || params.error.is_some();
+        if on_diags_path && carries_link {
             // A transfer fragment on the diagnostics path is neither a peer diagnostic
             // ticket nor a valid diagnostics URL. Discard it rather than starting a receive
             // which the path router would cancel.
@@ -114,13 +125,13 @@ impl Oxfer {
                 let _ = history.replace_state_with_url(&JsValue::NULL, "", Some("/diags"));
             }
             self.last_route = Some("/diags".into());
+            self.last_hash = Some(String::new());
             self.enter_diagnostics(
                 None,
                 Some("This page runs diagnostics only; open file links on the home page".into()),
             );
             return;
         }
-        let params = Node::parse_fragment(hash);
         if params.chat && params.ticket.is_none() && params.cap.is_none() && params.error.is_none()
         {
             // `#chat` (optionally `#chat&agent`) with no ticket: open a new room here. The
