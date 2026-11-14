@@ -8,6 +8,9 @@ cargo check   --quiet -p p2p-transfer --all-features --lib --target wasm32-unkno
 cargo fmt     -p p2p-transfer -- --check
 cargo clippy  --quiet -p p2p-transfer --all-targets --all-features -- -D warnings -W clippy::all
 cargo clippy  --quiet -p p2p-transfer --all-features --lib --target wasm32-unknown-unknown -- -D warnings -W clippy::all
+# The session core must build without egui: the Dioxus web crate depends on it that way.
+cargo clippy  --quiet -p p2p-transfer --no-default-features --lib -- -D warnings -W clippy::all
+cargo clippy  --quiet -p p2p-transfer --no-default-features --lib --target wasm32-unknown-unknown -- -D warnings -W clippy::all
 cargo test    --quiet -p p2p-transfer --all-targets --all-features
 cargo test    --quiet -p p2p-transfer --doc
 node --test tests/resume_worker.test.mjs
