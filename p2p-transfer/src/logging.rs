@@ -1,7 +1,7 @@
 //! Logging fan-out and the in-app terminal buffer (design §4.9).
 //!
 //! One [`log::Log`] implementation forwards every record to the platform logger
-//! (`env_logger` natively, `eframe::WebLogger` on wasm) **and** pushes the records the user
+//! (`env_logger` natively, the browser console on wasm) **and** pushes the records the user
 //! is meant to see into a ring buffer that `app.rs` renders in the terminal bar. Engine and
 //! node code therefore only ever calls `log::{info, debug, warn, error}` — no `println!`, no
 //! `web_sys::console`.
@@ -44,7 +44,7 @@ pub fn init_logging() {
     };
     #[cfg(target_arch = "wasm32")]
     let (inner, inner_filter): (Box<dyn log::Log + Send + Sync>, log::LevelFilter) = (
-        Box::new(eframe::WebLogger::new(log::LevelFilter::Debug)),
+        Box::new(ConsoleLogger(log::LevelFilter::Debug)),
         log::LevelFilter::Debug,
     );
 
@@ -58,6 +58,35 @@ pub fn init_logging() {
     if log::set_boxed_logger(Box::new(fan_out)).is_ok() {
         log::set_max_level(max_level);
     }
+}
+
+/// The browser console, one method per level so devtools filters work. Independent of any
+/// UI framework, so the egui and Dioxus builds log the same way.
+#[cfg(target_arch = "wasm32")]
+struct ConsoleLogger(log::LevelFilter);
+
+#[cfg(target_arch = "wasm32")]
+impl log::Log for ConsoleLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= self.0
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let line =
+            wasm_bindgen::JsValue::from_str(&format!("[{}] {}", record.target(), record.args()));
+        match record.level() {
+            log::Level::Error => web_sys::console::error_1(&line),
+            log::Level::Warn => web_sys::console::warn_1(&line),
+            log::Level::Info => web_sys::console::info_1(&line),
+            log::Level::Debug => web_sys::console::debug_1(&line),
+            log::Level::Trace => web_sys::console::log_1(&line),
+        }
+    }
+
+    fn flush(&self) {}
 }
 
 struct FanOut {

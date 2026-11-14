@@ -1,0 +1,24 @@
+[package]
+name = "oxfer-web"
+description = "Oxfer's mobile-first web UI: Dioxus over the p2p-transfer session core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+# The UI is browser-only. On native targets the binary is a stub, so `cargo build --all`
+# on the CI matrix still succeeds without compiling Dioxus.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+dioxus = { version = "0.7.10", default-features = false, features = ["web", "macro", "html", "signals", "hooks", "launch", "document"] }
+p2p-transfer = { path = "..", default-features = false }
+wasm-bindgen = "0.2.127"
+wasm-bindgen-futures = "0.4.77"
+js-sys = "0.3.104"
+web-sys = { version = "0.3.104", features = ["Window", "Document", "Element", "HtmlElement", "HtmlInputElement", "File", "FileList", "Location", "History", "Storage", "MediaQueryList", "Event", "EventTarget", "DataTransfer", "DragEvent", "Navigator", "Clipboard", "NodeList", "Node"] }
+log = "0.4.34"
+tokio = { version = "1.53", default-features = false, features = ["sync"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
+futures-util = { version = "0.3.31", default-features = false }
+console_error_panic_hook = "0.1.7"

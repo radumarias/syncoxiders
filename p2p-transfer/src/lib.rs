@@ -1,5 +1,6 @@
 #![warn(clippy::all, rust_2018_idioms)]
 
+#[cfg(feature = "egui-ui")]
 mod app;
 pub mod blob_store;
 pub mod chat;
@@ -9,6 +10,8 @@ pub mod file_io;
 pub mod logging;
 pub mod node;
 pub mod protocol;
+pub mod sessions;
+pub mod theme;
 pub mod transfer;
 #[cfg(target_arch = "wasm32")]
 pub mod webrtc;
@@ -18,6 +21,7 @@ pub mod webrtc;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
+#[cfg(feature = "egui-ui")]
 pub use app::P2PTransfer;
 pub use blob_store::{Blob, BlobCollection, BlobHash, BlobInfo, BlobStore};
 pub use logging::init_logging;

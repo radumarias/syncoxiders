@@ -3,7 +3,9 @@ on:
   push:
     branches: [ main, release ]
   pull_request:
-    branches: [ main, release ]
+    # feature/** too: stacked work such as feature/mobile-web (#76) is checked before it
+    # reaches main.
+    branches: [ main, release, "feature/**" ]
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -71,3 +73,35 @@ jobs:
     - name: Test persistent resume in Firefox
       working-directory: p2p-transfer
       run: wasm-pack test --headless --firefox -- --test resume_wasm
+
+  # The Dioxus web UI (p2p-transfer/web, #67): lint, release bundle, and a bundle-size
+  # report in the job summary (fails over the brotli budget in build-web.sh).
+  web-dioxus:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: p2p-transfer
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Setup Rust
+      # Installs the toolchain p2p-transfer/rust-toolchain pins, with wasm32.
+      run: rustup toolchain install
+
+    - name: fmt and clippy
+      run: |
+        cargo fmt -p oxfer-web -- --check
+        cargo clippy --locked -p oxfer-web --target wasm32-unknown-unknown -- -D warnings -W clippy::all
+        cargo clippy --locked -p oxfer-web -- -D warnings -W clippy::all
+
+    - name: Bundle-size reporter tests
+      run: node --test tests/report-bundle-size.test.mjs
+
+    - name: dx bundle (release) and size report
+      env:
+        OXFER_WEB_UI: dioxus
+      run: bash build-web.sh

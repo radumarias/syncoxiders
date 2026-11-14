@@ -34,6 +34,10 @@ jobs:
         run: npm ci
 
       - name: Build browser app
+        env:
+          # egui (Trunk) until the Dioxus cut-over (#67); set the repository variable
+          # OXFER_WEB_UI=dioxus to ship p2p-transfer/web instead. See build-web.sh.
+          OXFER_WEB_UI: ${{ vars.OXFER_WEB_UI || 'egui' }}
         run: npm run build
 
       - name: Deploy with cf
