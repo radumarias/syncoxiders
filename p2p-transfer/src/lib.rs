@@ -11,6 +11,7 @@ pub mod logging;
 pub mod node;
 pub mod protocol;
 pub mod sessions;
+pub mod theme;
 pub mod transfer;
 #[cfg(target_arch = "wasm32")]
 pub mod webrtc;

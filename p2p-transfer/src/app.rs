@@ -23,6 +23,9 @@ use crate::sessions::{
 };
 #[cfg(target_arch = "wasm32")]
 use crate::sessions::{PickedFile, WakeLock};
+#[cfg(target_arch = "wasm32")]
+use crate::theme::BROWSER_THEME_KEY;
+use crate::theme::{Palette, Rgb, Theme};
 use crate::transfer::Phase;
 
 #[cfg(target_arch = "wasm32")]
@@ -34,82 +37,8 @@ extern "C" {
 
 // ── File-messenger theme — shared colors for desktop and browser ────────────
 
-/// A display preference, independent of the light/dark setting and transfer state.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-enum Theme {
-    Rusty,
-    #[default]
-    Clean,
-    /// A vector CRT: one green phosphor on black, wireframe outlines, monospace type. Light
-    /// mode is the same machine's green-bar line-printer paper.
-    Phosphor,
-}
-
-#[cfg(target_arch = "wasm32")]
-const BROWSER_THEME_KEY: &str = "oxfer.theme.v1";
-
 // Keep header and footer controls clear of the shared content column's edges.
 const CONTROL_EDGE_INSET: f32 = 16.0;
-
-impl Theme {
-    /// Menu order.
-    const ALL: [Self; 3] = [Self::Rusty, Self::Clean, Self::Phosphor];
-
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Rusty => "Rusty",
-            Self::Clean => "Clean",
-            Self::Phosphor => "Phosphor",
-        }
-    }
-
-    /// Primary buttons and egui's own widgets.
-    const fn control_radius(self) -> u8 {
-        match self {
-            Self::Rusty => 10,
-            Self::Clean => 18,
-            Self::Phosphor => 2,
-        }
-    }
-
-    /// Cards.
-    const fn card_radius(self) -> u8 {
-        match self {
-            Self::Rusty => 16,
-            Self::Clean => 20,
-            Self::Phosphor => 4,
-        }
-    }
-
-    /// Ceiling for every other rounded frame, pill, and icon tile; see [`Tc::corner`].
-    const fn corner_cap(self) -> Option<u8> {
-        match self {
-            Self::Phosphor => Some(4),
-            Self::Rusty | Self::Clean => None,
-        }
-    }
-
-    /// Set all UI text in the monospace family, not only meta, links, and logs.
-    const fn monospace(self) -> bool {
-        matches!(self, Self::Phosphor)
-    }
-
-    #[cfg(any(test, target_arch = "wasm32"))]
-    const fn storage_value(self) -> &'static str {
-        match self {
-            Self::Rusty => "rusty",
-            Self::Clean => "clean",
-            Self::Phosphor => "phosphor",
-        }
-    }
-
-    #[cfg(any(test, target_arch = "wasm32"))]
-    fn from_storage_value(value: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|theme| theme.storage_value() == value)
-    }
-}
 
 /// What a theme paints on the page fill. Cards are opaque, so it shows only in the gutters
 /// and the gaps between them.
@@ -147,157 +76,48 @@ struct Tc {
 }
 
 impl Tc {
-    const fn clean_dark() -> Self {
-        Self {
-            theme: Theme::Clean,
-            bg: Color32::from_rgb(21, 23, 36), // #151724
-            surface_lowest: Color32::from_rgb(14, 16, 24), // #0e1018
-            surface_low: Color32::from_rgb(28, 31, 46), // #1c1f2e
-            surface: Color32::from_rgb(35, 38, 58), // #23263a
-            surface_high: Color32::from_rgb(46, 50, 80), // #2e3250
-            primary: Color32::from_rgb(26, 136, 254), // #1a88fe
-            on_primary: Color32::from_rgb(6, 16, 28), // #06101c
-            secondary: Color32::from_rgb(4, 242, 162), // #04f2a2
-            on_surface: Color32::from_rgb(245, 246, 248), // #f5f6f8
-            on_surface_var: Color32::from_rgb(177, 178, 184), // #b1b2b8
-            outline: Color32::from_rgb(154, 160, 176), // #9aa0b0
-            outline_var: Color32::from_rgb(58, 62, 82), // #3a3e52
-            error: Color32::from_rgb(255, 139, 154), // #ff8b9a
-            glow: egui::Shadow::NONE,
-            logo_tint: Color32::WHITE,
-            backdrop: Backdrop::Plain,
-        }
-    }
-
-    const fn clean_light() -> Self {
-        Self {
-            theme: Theme::Clean,
-            bg: Color32::from_rgb(228, 228, 228), // #e4e4e4
-            surface_lowest: Color32::from_rgb(254, 254, 254), // #fefefe
-            surface_low: Color32::from_rgb(255, 255, 255), // #ffffff
-            surface: Color32::from_rgb(244, 245, 247), // #f4f5f7
-            surface_high: Color32::from_rgb(220, 232, 252), // #dce8fc
-            primary: Color32::from_rgb(22, 116, 216), // #1674d8
-            on_primary: Color32::from_rgb(255, 255, 255), // #ffffff
-            secondary: Color32::from_rgb(0, 121, 81), // #007951
-            on_surface: Color32::from_rgb(21, 23, 36), // #151724
-            on_surface_var: Color32::from_rgb(92, 96, 112), // #5c6070
-            outline: Color32::from_rgb(78, 82, 96), // #4e5260
-            outline_var: Color32::from_rgb(197, 198, 203), // #c5c6cb
-            error: Color32::from_rgb(196, 55, 74), // #c4374a
-            glow: egui::Shadow::NONE,
-            logo_tint: Color32::WHITE,
-            backdrop: Backdrop::Plain,
-        }
-    }
-
-    const fn rusty_dark() -> Self {
-        Self {
-            theme: Theme::Rusty,
-            bg: Color32::from_rgb(16, 13, 12),
-            surface_lowest: Color32::from_rgb(10, 8, 7),
-            surface_low: Color32::from_rgb(28, 22, 19),
-            surface: Color32::from_rgb(35, 27, 23),
-            surface_high: Color32::from_rgb(54, 39, 31),
-            primary: Color32::from_rgb(239, 112, 56),
-            on_primary: Color32::from_rgb(34, 15, 7),
-            secondary: Color32::from_rgb(68, 218, 181),
-            on_surface: Color32::from_rgb(247, 235, 226),
-            on_surface_var: Color32::from_rgb(213, 190, 176),
-            outline: Color32::from_rgb(168, 137, 120),
-            outline_var: Color32::from_rgb(81, 57, 46),
-            error: Color32::from_rgb(255, 181, 164),
-            glow: egui::Shadow::NONE,
-            logo_tint: Color32::WHITE,
-            backdrop: Backdrop::Plain,
-        }
-    }
-
-    const fn rusty_light() -> Self {
-        Self {
-            theme: Theme::Rusty,
-            bg: Color32::from_rgb(250, 246, 242),
-            surface_lowest: Color32::from_rgb(255, 253, 251),
-            surface_low: Color32::from_rgb(244, 235, 228),
-            surface: Color32::from_rgb(237, 222, 212),
-            surface_high: Color32::from_rgb(226, 202, 187),
-            primary: Color32::from_rgb(176, 66, 22),
-            on_primary: Color32::from_rgb(255, 249, 245),
-            secondary: Color32::from_rgb(0, 113, 88),
-            on_surface: Color32::from_rgb(48, 28, 20),
-            on_surface_var: Color32::from_rgb(94, 67, 55),
-            outline: Color32::from_rgb(132, 99, 82),
-            outline_var: Color32::from_rgb(211, 187, 173),
-            error: Color32::from_rgb(177, 46, 30),
-            glow: egui::Shadow::NONE,
-            logo_tint: Color32::WHITE,
-            backdrop: Backdrop::Plain,
-        }
-    }
-
-    const fn phosphor_dark() -> Self {
-        let primary = Color32::from_rgb(57, 255, 20); // #39ff14
-        Self {
-            theme: Theme::Phosphor,
-            bg: Color32::from_rgb(3, 10, 4),             // #030a04
-            surface_lowest: Color32::from_rgb(0, 0, 0),  // #000000
-            surface_low: Color32::from_rgb(6, 18, 8),    // #061208
-            surface: Color32::from_rgb(10, 26, 12),      // #0a1a0c
-            surface_high: Color32::from_rgb(19, 58, 20), // #133a14
-            primary,
-            on_primary: Color32::from_rgb(2, 26, 2), // #021a02
-            secondary: Color32::from_rgb(198, 255, 61), // #c6ff3d
-            on_surface: Color32::from_rgb(184, 255, 160), // #b8ffa0
-            on_surface_var: Color32::from_rgb(116, 214, 92), // #74d65c
-            outline: Color32::from_rgb(79, 209, 58), // #4fd13a
-            outline_var: Color32::from_rgb(30, 92, 27), // #1e5c1b
-            error: Color32::from_rgb(255, 106, 61),  // #ff6a3d
-            glow: egui::Shadow {
-                offset: [0, 0],
-                blur: 18,
-                spread: 0,
-                color: Color32::from_rgba_unmultiplied_const(
-                    primary.r(),
-                    primary.g(),
-                    primary.b(),
-                    34,
-                ),
-            },
-            logo_tint: primary,
-            backdrop: Backdrop::VectorFloor,
-        }
-    }
-
-    const fn phosphor_light() -> Self {
-        Self {
-            theme: Theme::Phosphor,
-            bg: Color32::from_rgb(241, 247, 236), // #f1f7ec
-            surface_lowest: Color32::from_rgb(251, 253, 249), // #fbfdf9
-            surface_low: Color32::from_rgb(250, 253, 246), // #fafdf6
-            surface: Color32::from_rgb(220, 236, 210), // #dcecd2
-            surface_high: Color32::from_rgb(199, 226, 184), // #c7e2b8
-            primary: Color32::from_rgb(23, 112, 26), // #17701a
-            on_primary: Color32::from_rgb(244, 255, 238), // #f4ffee
-            secondary: Color32::from_rgb(63, 106, 0), // #3f6a00
-            on_surface: Color32::from_rgb(15, 42, 16), // #0f2a10
-            on_surface_var: Color32::from_rgb(61, 90, 58), // #3d5a3a
-            outline: Color32::from_rgb(68, 112, 60), // #44703c
-            outline_var: Color32::from_rgb(181, 209, 166), // #b5d1a6
-            error: Color32::from_rgb(178, 58, 20), // #b23a14
-            glow: egui::Shadow::NONE,
-            logo_tint: Color32::WHITE,
-            backdrop: Backdrop::GreenBar,
-        }
-    }
-
+    /// The shared token table (`crate::theme`) plus egui-only effects.
     fn of(theme: Theme, dark: bool) -> Self {
-        match (theme, dark) {
-            (Theme::Rusty, true) => Self::rusty_dark(),
-            (Theme::Rusty, false) => Self::rusty_light(),
-            (Theme::Clean, true) => Self::clean_dark(),
-            (Theme::Clean, false) => Self::clean_light(),
-            (Theme::Phosphor, true) => Self::phosphor_dark(),
-            (Theme::Phosphor, false) => Self::phosphor_light(),
+        let p = Palette::of(theme, dark);
+        let c = |Rgb(r, g, b): Rgb| Color32::from_rgb(r, g, b);
+        let primary = c(p.primary);
+        let (glow, logo_tint, backdrop) = match (theme, dark) {
+            (Theme::Phosphor, true) => (
+                egui::Shadow {
+                    offset: [0, 0],
+                    blur: 18,
+                    spread: 0,
+                    color: Color32::from_rgba_unmultiplied(
+                        primary.r(),
+                        primary.g(),
+                        primary.b(),
+                        34,
+                    ),
+                },
+                primary,
+                Backdrop::VectorFloor,
+            ),
+            (Theme::Phosphor, false) => (egui::Shadow::NONE, Color32::WHITE, Backdrop::GreenBar),
+            _ => (egui::Shadow::NONE, Color32::WHITE, Backdrop::Plain),
+        };
+        Self {
+            theme,
+            bg: c(p.bg),
+            surface_lowest: c(p.surface_lowest),
+            surface_low: c(p.surface_low),
+            surface: c(p.surface),
+            surface_high: c(p.surface_high),
+            primary,
+            on_primary: c(p.on_primary),
+            secondary: c(p.secondary),
+            on_surface: c(p.on_surface),
+            on_surface_var: c(p.on_surface_var),
+            outline: c(p.outline),
+            outline_var: c(p.outline_var),
+            error: c(p.error),
+            glow,
+            logo_tint,
+            backdrop,
         }
     }
 
