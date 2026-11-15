@@ -18,6 +18,7 @@ node --test tests/theme.test.mjs
 node --test tests/theme_lab.test.mjs
 node --test tests/favicon.test.mjs
 node --test tests/package-cf-output.test.mjs
+node --test tests/markdown_worker.test.mjs
 node --test tests/agent_cli.test.mjs
 wasm-pack test --headless --firefox -- --test webrtc_wasm
 wasm-pack test --headless --firefox -- --test relay_wasm
@@ -27,3 +28,5 @@ cmp assets/theme.js dist/assets/theme.js
 cmp assets/favicon.js dist/assets/favicon.js
 cmp assets/oxfer-favicon-light.svg dist/assets/oxfer-favicon-light.svg
 cmp assets/oxfer-favicon-dark.svg dist/assets/oxfer-favicon-dark.svg
+cmp assets/view-toggle.js dist/assets/view-toggle.js
+cmp assets/diags.md dist/assets/diags.md

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { packageCfOutput, productionDomains, workerConfig } from "../package-cf-output.mjs";
+import { packageCfOutput, productionDomains, workerConfig, workerManifest } from "../package-cf-output.mjs";
 
 const read = path => readFile(new URL(path, import.meta.url), "utf8");
 
@@ -14,7 +14,8 @@ test("cloudflare.config.ts matches the packaged Worker identity", async () => {
     assert.match(source, new RegExp(`compatibilityDate: "${workerConfig.compatibilityDate}"`));
     assert.match(source, /notFoundHandling: "single-page-application"/);
     assert.match(source, /domains: \["oxfer\.app", "www\.oxfer\.app"\]/);
-    assert.doesNotMatch(source, /\bentrypoint\s*:/);
+    assert.match(source, /entrypoint: "\.\/worker\/index\.mjs"/);
+    assert.match(source, /ASSETS: bindings\.assets\(\)/);
     assert.doesNotMatch(source, /wrangler\.(jsonc?|toml)/);
 });
 
@@ -29,7 +30,7 @@ test("the crate has no Wrangler config; Cloudflare hosting is cf-only", async ()
     assert.equal("wrangler" in (pkg.devDependencies ?? {}), false);
 });
 
-test("package-cf-output copies Trunk dist into an assets-only cf Build Output", async () => {
+test("package-cf-output copies Trunk dist and the Markdown Worker into a cf Build Output", async () => {
     const dir = await mkdtemp(join(tmpdir(), "oxfer-cf-"));
     try {
         const dist = join(dir, "dist");
@@ -38,12 +39,16 @@ test("package-cf-output copies Trunk dist into an assets-only cf Build Output", 
         await writeFile(join(dist, "sw.js"), "self.addEventListener('fetch', () => {});\n");
         await writeFile(join(dist, "_headers"), "/*\n  Referrer-Policy: no-referrer\n");
         await writeFile(join(dist, "assets/favicon.js"), "/* favicon */\n");
-        const { assets, config } = await packageCfOutput({
+        const { assets, bundle, config } = await packageCfOutput({
             dist,
             outputRoot: join(dir, ".cloudflare/output"),
             includeDomains: false,
         });
-        assert.deepEqual(config, workerConfig);
+        assert.deepEqual(config, { ...workerConfig, manifest: workerManifest });
+        assert.equal(
+            await readFile(join(bundle, workerManifest.mainModule), "utf8"),
+            await read("../worker/index.mjs"),
+        );
         assert.equal(
             await readFile(join(dir, ".cloudflare/output/v0/config.json"), "utf8"),
             `${JSON.stringify({ buildContext: { isPreview: false } })}\n`,
