@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use p2p_transfer::i18n::Msg;
 use p2p_transfer::sessions::text::{self, format_size};
 use p2p_transfer::sessions::{Intent, ReceiveIntent, SaveTarget};
 use p2p_transfer::transfer::Phase;
@@ -25,7 +26,7 @@ pub fn Receive() -> Element {
     rsx! {
         section { class: "card", aria_labelledby: "receive-title",
             div { class: "title-row",
-                h1 { id: "receive-title", "Receive on this device" }
+                h1 { id: "receive-title", {Msg::ReceiveOnThisDevice.text()} }
                 Pill { text: "ENCRYPTED" }
             }
             if running {
@@ -33,8 +34,8 @@ pub fn Receive() -> Element {
             }
             match (&progress, receive.opening) {
                 (None, true) => rsx! {
-                    p { role: "status", class: "busy", "Connecting to the sender…" }
-                    p { class: "muted", "Looking for the device sharing this file. This can take a moment." }
+                    p { role: "status", class: "busy", {Msg::ReceiveConnectingSender.text()} }
+                    p { class: "muted", {Msg::ReceiveLookingForSender.text()} }
                     CancelButton {}
                 },
                 (None, false) => rsx! { LinkForm { input: receive.input.as_str().to_string() } },
@@ -47,7 +48,7 @@ pub fn Receive() -> Element {
                         }
                     }
                     if let Phase::Reconnecting { attempt, max_attempts } = p.phase {
-                        p { class: "muted", "Trying again ({attempt} of {max_attempts}). Keep the sender's tab open. We'll try to continue where we stopped." }
+                        p { class: "muted", {Msg::ReceiveRetrying.with(&[("attempt", &attempt), ("max_attempts", &max_attempts)])} }
                     }
                     if let Phase::AwaitingSave { manifest } = &p.phase {
                         ul { class: "files", aria_label: "Files offered",
@@ -58,7 +59,7 @@ pub fn Receive() -> Element {
                                 }
                             }
                         }
-                        p { "Oxfer checks the file after it's saved." }
+                        p { {Msg::ReceiveChecksAfterSave.text()} }
                         SaveControls { keep_local_copy: receive.keep_local_copy, save_pending: receive.save_pending, resuming: receive.resuming }
                     } else if p.bytes_total > 0 {
                         Progress { fraction: p.bytes_done as f32 / p.bytes_total as f32, label: "Download progress" }
@@ -97,14 +98,14 @@ fn LinkForm(input: String) -> Element {
                 event.prevent_default();
                 core.dispatch(Intent::Receive(ReceiveIntent::OpenInput));
             },
-            label { r#for: "receive-link", "Paste the full link someone sent you." }
+            label { r#for: "receive-link", {Msg::ReceivePasteFullLink.text()} }
             input {
                 id: "receive-link",
                 class: "mono",
                 r#type: "url",
                 autocomplete: "off",
                 spellcheck: "false",
-                placeholder: "Paste a link here",
+                placeholder: Msg::PasteALinkHere.text(),
                 value: input,
                 oninput: move |event| core.dispatch(Intent::Receive(ReceiveIntent::SetInput(event.value()))),
             }
@@ -117,9 +118,13 @@ fn LinkForm(input: String) -> Element {
 fn SaveControls(keep_local_copy: bool, save_pending: bool, resuming: bool) -> Element {
     let core = use_core();
     let label = if keep_local_copy {
-        "Save a copy in this browser"
+        {
+            Msg::SaveACopyInThisBrowser.text()
+        }
     } else {
-        "Choose where to save"
+        {
+            Msg::ChooseWhereToSave.text()
+        }
     };
     rsx! {
         label { class: "check",
@@ -129,7 +134,7 @@ fn SaveControls(keep_local_copy: bool, save_pending: bool, resuming: bool) -> El
                 disabled: save_pending,
                 onchange: move |event| core.dispatch(Intent::Receive(ReceiveIntent::SetKeepLocalCopy(event.checked()))),
             }
-            "Keep a copy here so I can continue later"
+            {Msg::KeepLocalCopy.text()}
         }
         if keep_local_copy {
             p { class: "muted small",
@@ -146,7 +151,7 @@ fn SaveControls(keep_local_copy: bool, save_pending: bool, resuming: bool) -> El
         }
         if save_pending {
             p { role: "status", class: "busy",
-                if resuming { "Checking your saved copy…" } else { "Opening your save location…" }
+                if resuming { {Msg::CheckingYourSavedCopy.text()} } else { {Msg::OpeningYourSaveLocation.text()} }
             }
         }
     }

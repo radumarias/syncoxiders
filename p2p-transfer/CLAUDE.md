@@ -78,12 +78,17 @@ routes stream bounded chunks and are required for larger downloads.
   the `Platform` trait (`NativePlatform`, `WebPlatform`, `TestPlatform`);
   user-facing wording lives in `sessions::text`. New session logic goes here,
   never in a UI adapter.
+- `src/i18n.rs` + `locales/<lang>/oxfer.ftl` — user-facing copy shared by every UI, in Fluent.
+  `Msg::X.text()` / `Msg::X.with(&[("name", &value)])`; add the id to `locales/en/oxfer.ftl`
+  and the `messages!` list together (a test fails if they drift). Move a sentence here when a second
+  UI needs it (61 are shared so far; UI-only copy may stay literal); a new language is a new `.ftl` plus a `Locale` variant.
 - `src/app.rs` — the egui adapter (feature `egui-ui`, on by default): theme,
   layout, rendering and view state only (copied flags, focus, open panels,
   native file dialogs). It holds no transfer, retry or session logic.
   `--no-default-features` builds the engine plus `sessions` without egui.
 - `src/theme.rs` — the 13 colour tokens × 3 themes × light/dark and shape tokens.
-  egui builds its palette from `Palette::of`; the web UI loads `css_variables()`.
+  egui builds its palette from `Palette::of`; the web UI loads `css_variables()`. Chat member
+  colours (`member_slot`/`member_color`, `--member-N`) live here too.
   Change colours here, never in a UI.
 - `web/` — `oxfer-web`, the Dioxus 0.7 DOM UI (browser only; the native binary is a
   stub so `cargo build --all` works). `core.rs` holds `Oxfer` plus a `Signal<Snapshot>`

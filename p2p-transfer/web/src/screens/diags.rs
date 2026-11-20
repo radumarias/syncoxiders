@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use p2p_transfer::i18n::Msg;
 use p2p_transfer::sessions::{DiagnosticsIntent, Intent};
 
 use super::{home::ActiveShare, CopyButton};
@@ -19,10 +20,10 @@ pub fn Diags() -> Element {
             ActiveShare {}
         }
         section { class: "card", aria_labelledby: "diag-title", aria_busy: diag.running || diag.busy,
-            h1 { id: "diag-title", "Network diagnostics" }
-            p { "Use the peer test on both devices, then copy each report. Compare their session IDs and timestamps." }
+            h1 { id: "diag-title", {Msg::NetworkDiagnostics.text()} }
+            p { {Msg::DiagCompareReports.text()} }
             if let Some(session) = &diag.session {
-                p { class: "mono", "Session ID: {session}" }
+                p { class: "mono", {Msg::DiagSessionId.with(&[("session", &session)])} }
             }
             if diag.has_target || (diag.peer_link.is_none() && diag.completed.is_none()) {
                 button {
@@ -30,36 +31,36 @@ pub fn Diags() -> Element {
                     class: "button primary",
                     disabled: diag.busy,
                     onclick: run(DiagnosticsIntent::StartPeerTest),
-                    if diag.has_target { "Test peer connection" } else { "Start peer test" }
+                    if diag.has_target { {Msg::TestPeerConnection.text()} } else { {Msg::StartPeerTest.text()} }
                 }
             }
             if let Some(peer_link) = &diag.peer_link {
-                p { "Keep this page open and send this test-only link to the other device. It cannot download files." }
+                p { {Msg::DiagPeerTestInstructions.text()} }
                 p { class: "mono wrap", {peer_link.clone()} }
                 div { class: "actions",
-                    CopyButton { text: peer_link.clone(), label: "Copy peer test link", class: "outline" }
-                    button { r#type: "button", class: "button outline", onclick: run(DiagnosticsIntent::StopPeerTest), "Stop peer test" }
+                    CopyButton { text: peer_link.clone(), label: Msg::CopyPeerTestLink.text(), class: "outline" }
+                    button { r#type: "button", class: "button outline", onclick: run(DiagnosticsIntent::StopPeerTest), {Msg::StopPeerTest.text()} }
                 }
             }
             if diag.busy {
-                p { role: "status", class: "busy", "Starting or dialling the diagnostic peer…" }
+                p { role: "status", class: "busy", {Msg::DiagPeerStarting.text()} }
             }
             if let Some(outcome) = &diag.outcome {
                 p { role: "status", {outcome.clone()} }
             }
             if let Some(completed) = diag.completed {
-                p { "Successful incoming peer pings: {completed}" }
+                p { {Msg::DiagIncomingPings.with(&[("completed", &completed)])} }
             }
-            p { "For local checks only, share this link. It contains no peer address or file access code." }
+            p { {Msg::DiagLocalLinkNote.text()} }
             p { class: "mono wrap", {diag.local_link.clone()} }
-            CopyButton { text: diag.local_link.clone(), label: "Copy local checks link", class: "outline" }
+            CopyButton { text: diag.local_link.clone(), label: Msg::CopyLocalChecksLink.text(), class: "outline" }
             if diag.running {
-                p { role: "status", class: "busy", "Testing relay WebSockets and iroh registration (up to 60 seconds if the default fails)…" }
+                p { role: "status", class: "busy", {Msg::DiagRelayTesting.text()} }
             } else {
-                button { r#type: "button", class: "button outline", onclick: run(DiagnosticsIntent::RunChecks), "Run checks again" }
+                button { r#type: "button", class: "button outline", onclick: run(DiagnosticsIntent::RunChecks), {Msg::RunChecksAgain.text()} }
             }
             if let Some(full) = diag.full_report() {
-                p { "Review before sharing: the report contains your browser version, time, relay checks and peer test result. It does not include tickets or files." }
+                p { {Msg::DiagReportReview.text()} }
                 CopyButton { text: full.clone(), label: "Copy report", class: "outline" }
                 pre { class: "report", {full} }
             }

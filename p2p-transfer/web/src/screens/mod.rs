@@ -6,6 +6,7 @@
 //! where one exists, so egui and the web say the same thing.
 
 use dioxus::prelude::*;
+use p2p_transfer::i18n::Msg;
 use p2p_transfer::sessions::{PickedFile, Platform as _, WakeLock, WebPlatform};
 use p2p_transfer::theme::{css_variables, Theme};
 use wasm_bindgen::JsCast as _;
@@ -149,7 +150,7 @@ pub fn NavLink(
             aria_label: label,
             aria_current: if current { "page" },
             aria_disabled: if disabled { "true" },
-            title: if disabled { "Wait for files to finish preparing" },
+            title: if disabled { Msg::SendWaitPreparing.text() },
             onclick: move |event| {
                 event.prevent_default();
                 if !disabled {
@@ -346,27 +347,18 @@ pub fn ErrorText(text: String) -> Element {
 #[component]
 pub fn TransferAttention(sender: bool, awaiting_save: bool, wake_lock: WakeLock) -> Element {
     let (status, tone) = if awaiting_save {
-        (
-            "We'll ask your browser to keep the screen on when you start saving.",
-            "muted",
-        )
+        ({ Msg::WakeLockWillAsk.text() }, "muted")
     } else {
         match wake_lock {
-            WakeLock::Active => (
-                "Your browser is helping keep the screen on (uses more battery).",
-                "ok",
-            ),
-            WakeLock::Requesting => ("Asking your browser to keep the screen on…", "muted"),
-            _ => (
-                "Your browser can't keep the screen on automatically. Keep it on yourself.",
-                "warn",
-            ),
+            WakeLock::Active => ({ Msg::WakeLockActive.text() }, "ok"),
+            WakeLock::Requesting => ({ Msg::WakeLockAsking.text() }, "muted"),
+            _ => ({ Msg::WakeLockUnsupported.text() }, "warn"),
         }
     };
     rsx! {
         div { class: "attention", role: "status",
             p { class: "attention-title",
-                if sender { "Keep this tab open while they save your file." } else { "Keep this tab open until your file is saved." }
+                if sender { {Msg::SendKeepTabOpen.text()} } else { {Msg::ReceiveKeepTabOpen.text()} }
             }
             p { "Keep this page visible and your screen on. Locking your device or switching apps may interrupt the transfer." }
             p { class: "attention-status {tone}", {status} }

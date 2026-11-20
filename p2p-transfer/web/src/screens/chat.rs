@@ -1,8 +1,12 @@
 use dioxus::prelude::*;
+use p2p_transfer::i18n::Msg;
 use p2p_transfer::sessions::chat::agent_prompt;
 use p2p_transfer::sessions::{ChatIntent, ChatRole, ChatStatus, Intent};
 
 use super::{CopyButton, ErrorText, Pill};
+use p2p_transfer::theme::member_slot;
+
+use crate::appearance::use_appearance;
 use crate::core::use_core;
 
 #[component]
@@ -10,6 +14,7 @@ pub fn Chat() -> Element {
     let core = use_core();
     let snap = core.snap();
     let mut draft = use_signal(String::new);
+    let theme = *use_appearance().theme.read();
     // A different room starts with an empty draft.
     let room = snap.read().chat.as_ref().map(|chat| chat.id);
     use_effect(use_reactive!(|room| {
@@ -29,17 +34,17 @@ pub fn Chat() -> Element {
             }
             match &chat.status {
                 ChatStatus::Starting => rsx! {
-                    p { role: "status", class: "busy", if host { "Opening the room…" } else { "Connecting to the room…" } }
+                    p { role: "status", class: "busy", if host { {Msg::ChatOpeningRoom.text()} } else { {Msg::ChatConnectingRoom.text()} } }
                 },
                 ChatStatus::Open => rsx! {
-                    p { class: "muted", if host { "Keep this page open: the room closes when you leave it." } else { "Keep this page open while you talk." } }
+                    p { class: "muted", if host { {Msg::ChatKeepOpenRoomCloses.text()} } else { {Msg::ChatKeepOpenTalking.text()} } }
                 },
                 ChatStatus::Failed(message) => rsx! { ErrorText { text: message.clone() } },
-                ChatStatus::Closed => rsx! { p { class: "muted", "The room is closed." } },
+                ChatStatus::Closed => rsx! { p { class: "muted", {Msg::ChatRoomClosed.text()} } },
             }
             if let Some(links) = &chat.links {
                 div { class: "link-box",
-                    label { r#for: "room-link", "Send this link to the person you want to talk to." }
+                    label { r#for: "room-link", {Msg::ChatLinkHintTalk.text()} }
                     input { id: "room-link", class: "mono", readonly: true, value: links.link.as_str() }
                     div { class: "actions",
                         CopyButton { text: links.link.as_str().to_string(), class: "primary" }
@@ -51,7 +56,11 @@ pub fn Chat() -> Element {
                 h2 { "In the room" }
                 ul { class: "members",
                     for member in chat.members.iter() {
-                        li { key: "{member}", class: "pill",
+                        li {
+                            key: "{member}",
+                            class: "pill member",
+                            "data-member": member_slot(theme, member),
+                            "data-you": (chat.you.as_deref() == Some(member.as_str())).then_some("true"),
                             if chat.you.as_deref() == Some(member.as_str()) { "{member} (you)" } else { {member.clone()} }
                         }
                     }
@@ -59,7 +68,7 @@ pub fn Chat() -> Element {
             }
             ol { class: "messages", aria_live: "polite", aria_label: "Messages",
                 if chat.lines.is_empty() {
-                    li { class: "muted", "No messages yet." }
+                    li { class: "muted", {Msg::ChatNoMessages.text()} }
                 }
                 for (index, line) in chat.lines.iter().enumerate() {
                     li { key: "{index}", class: if line.from.is_none() { "notice" } else { "message" },
@@ -85,7 +94,7 @@ pub fn Chat() -> Element {
                     input {
                         id: "chat-input",
                         autocomplete: "off",
-                        placeholder: "Type a message and press Enter",
+                        placeholder: Msg::ChatInputHint.text(),
                         value: draft,
                         oninput: move |event| draft.set(event.value()),
                     }
@@ -114,7 +123,7 @@ fn StartRoom() -> Element {
                     r#type: "button",
                     class: "button primary",
                     onclick: move |_| core.dispatch(Intent::HostChat { for_agents: false }),
-                    "Start a chat room"
+                    {Msg::StartAChatRoom.text()}
                 }
                 button {
                     r#type: "button",

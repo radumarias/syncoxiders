@@ -11,6 +11,7 @@ use eframe::egui;
 use egui::{Button, Color32, CornerRadius, RichText, Stroke, Ui};
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::Msg;
 use crate::logging;
 use crate::sessions::text::{self, format_size, LINK_WARNING};
 #[cfg(target_arch = "wasm32")]
@@ -474,9 +475,9 @@ impl P2PTransfer {
                 ui.add(
                     egui::Label::new(
                         RichText::new(if sender {
-                            "Keep this tab open while they save your file."
+                            Msg::SendKeepTabOpen.text()
                         } else {
-                            "Keep this tab open until your file is saved."
+                            Msg::ReceiveKeepTabOpen.text()
                         })
                         .color(tc.on_surface)
                         .size(16.0)
@@ -496,23 +497,12 @@ impl P2PTransfer {
                     .wrap(),
                 );
                 let (status, color) = if awaiting_save {
-                    (
-                        "We'll ask your browser to keep the screen on when you start saving.",
-                        tc.on_surface_var,
-                    )
+                    (Msg::WakeLockWillAsk.text(), tc.on_surface_var)
                 } else {
                     match wake_lock {
-                        WakeLock::Active => (
-                            "Your browser is helping keep the screen on (uses more battery).",
-                            tc.secondary,
-                        ),
-                        WakeLock::Requesting => {
-                            ("Asking your browser to keep the screen on…", tc.outline)
-                        }
-                        _ => (
-                            "Your browser can't keep the screen on automatically. Keep it on yourself.",
-                            tc.error,
-                        ),
+                        WakeLock::Active => (Msg::WakeLockActive.text(), tc.secondary),
+                        WakeLock::Requesting => (Msg::WakeLockAsking.text(), tc.outline),
+                        _ => (Msg::WakeLockUnsupported.text(), tc.error),
                     }
                 };
                 ui.add(egui::Label::new(RichText::new(status).color(color).size(12.0)).wrap());
@@ -1056,7 +1046,7 @@ impl P2PTransfer {
         let mut return_to_share = false;
         card(tc).show(ui, |ui| {
             ui.label(
-                RichText::new("Your files are still available")
+                RichText::new(Msg::SendStillAvailable.text())
                     .color(tc.on_surface)
                     .size(19.0)
                     .strong(),
@@ -1073,21 +1063,21 @@ impl P2PTransfer {
     }
 
     fn show_home(&mut self, ui: &mut Ui) {
-        const STEPS: [(HomeIcon, &str, &str); 3] = [
+        let steps: [(HomeIcon, &str, &str); 3] = [
             (
                 HomeIcon::File,
                 "1. Pick a file",
-                "Choose a photo, video, or document.",
+                Msg::HomeStoryChoose.text(),
             ),
             (
                 HomeIcon::Link,
                 "2. Send the link",
-                "Send it to the person you want to share with.",
+                Msg::SendLinkHintShare.text(),
             ),
             (
                 HomeIcon::Device,
                 "3. They save it",
-                "They open your link and choose where to save it.",
+                Msg::HomeStoryTheySave.text(),
             ),
         ];
 
@@ -1099,11 +1089,11 @@ impl P2PTransfer {
             .corner_radius(tc.corner(20))
             .inner_margin(egui::Margin::same(if compact { 16 } else { 24 }))
             .show(ui, |ui| {
-                ui.horizontal(|ui| pill(ui, &tc, "NO ACCOUNT NEEDED", true));
+                ui.horizontal(|ui| pill(ui, &tc, Msg::NoAccountNeeded.text(), true));
                 ui.add_space(12.0);
                 ui.add(
                     egui::Label::new(
-                        RichText::new("Send files without cloud storage.")
+                        RichText::new(Msg::SendFilesWithoutCloudStorage.text())
                             .color(tc.on_surface)
                             .size(if compact { 26.0 } else { 34.0 })
                             .strong(),
@@ -1113,11 +1103,9 @@ impl P2PTransfer {
                 ui.add_space(10.0);
                 ui.add(
                     egui::Label::new(
-                        RichText::new(
-                            "Pick a file, send them a link, and they save it on their device.",
-                        )
-                        .color(tc.on_surface_var)
-                        .size(if compact { 15.0 } else { 17.0 }),
+                        RichText::new(Msg::HomeStoryPickSend.text())
+                            .color(tc.on_surface_var)
+                            .size(if compact { 15.0 } else { 17.0 }),
                     )
                     .wrap(),
                 );
@@ -1149,7 +1137,7 @@ impl P2PTransfer {
                 if ui
                     .add_sized(
                         [width, 44.0],
-                        outline_button(&tc, "Start a chat room", tc.outline),
+                        outline_button(&tc, Msg::StartAChatRoom.text(), tc.outline),
                     )
                     .clicked()
                 {
@@ -1177,22 +1165,22 @@ impl P2PTransfer {
             });
         ui.add_space(if compact { 16.0 } else { 24.0 });
         ui.label(
-            RichText::new("From your device to theirs")
+            RichText::new(Msg::HomeStoryDirect.text())
                 .color(tc.on_surface)
                 .size(21.0)
                 .strong(),
         );
         ui.add_space(10.0);
         if compact {
-            for (index, (icon, title, body)) in STEPS.into_iter().enumerate() {
+            for (index, (icon, title, body)) in steps.into_iter().enumerate() {
                 if index > 0 {
                     ui.add_space(8.0);
                 }
                 home_story_step(ui, &tc, icon, title, body);
             }
         } else {
-            ui.columns(STEPS.len(), |cols| {
-                for (column, (icon, title, body)) in STEPS.into_iter().enumerate() {
+            ui.columns(steps.len(), |cols| {
+                for (column, (icon, title, body)) in steps.into_iter().enumerate() {
                     home_story_step(&mut cols[column], &tc, icon, title, body);
                 }
             });
@@ -1210,58 +1198,63 @@ impl P2PTransfer {
         };
         let mut intent = None;
         card(&tc).show(ui, |ui| {
-            ui.heading("Network diagnostics");
-            ui.label("Use the peer test on both devices, then copy each report. Compare their session IDs and timestamps.");
+            ui.heading(Msg::NetworkDiagnostics.text());
+            ui.label(Msg::DiagCompareReports.text());
             ui.add_space(8.0);
             if let Some(session) = &diag.session {
-                ui.label(format!("Session ID: {session}"));
+                ui.label(Msg::DiagSessionId.with(&[("session", &session)]));
             }
             if diag.has_target {
-                if ui.add_enabled(!diag.busy, Button::new("Test peer connection")).clicked() {
+                if ui
+                    .add_enabled(!diag.busy, Button::new(Msg::TestPeerConnection.text()))
+                    .clicked()
+                {
                     intent = Some(DiagnosticsIntent::StartPeerTest);
                 }
             } else if diag.peer_link.is_none()
                 && diag.completed.is_none()
-                && ui.add_enabled(!diag.busy, Button::new("Start peer test")).clicked()
+                && ui
+                    .add_enabled(!diag.busy, Button::new(Msg::StartPeerTest.text()))
+                    .clicked()
             {
                 intent = Some(DiagnosticsIntent::StartPeerTest);
             }
             if let Some(peer_link) = &diag.peer_link {
-                ui.label("Keep this page open and send this test-only link to the other device. It cannot download files.");
-                if ui.button("Copy peer test link").clicked() {
+                ui.label(Msg::DiagPeerTestInstructions.text());
+                if ui.button(Msg::CopyPeerTestLink.text()).clicked() {
                     ui.ctx().copy_text(peer_link.clone());
                 }
                 ui.add(egui::Label::new(RichText::new(peer_link).monospace().size(12.0)).wrap());
-                if ui.button("Stop peer test").clicked() {
+                if ui.button(Msg::StopPeerTest.text()).clicked() {
                     intent = Some(DiagnosticsIntent::StopPeerTest);
                 }
             }
             if diag.busy {
                 ui.spinner();
-                ui.label("Starting or dialling the diagnostic peer…");
+                ui.label(Msg::DiagPeerStarting.text());
             }
             if let Some(outcome) = &diag.outcome {
                 ui.label(outcome);
             }
             if let Some(completed) = diag.completed {
-                ui.label(format!("Successful incoming peer pings: {completed}"));
+                ui.label(Msg::DiagIncomingPings.with(&[("completed", &completed)]));
             }
             ui.add_space(10.0);
-            ui.label("For local checks only, share this link. It contains no peer address or file access code.");
-            if ui.button("Copy local checks link").clicked() && !diag.local_link.is_empty() {
+            ui.label(Msg::DiagLocalLinkNote.text());
+            if ui.button(Msg::CopyLocalChecksLink.text()).clicked() && !diag.local_link.is_empty() {
                 ui.ctx().copy_text(diag.local_link.clone());
             }
             ui.add(egui::Label::new(RichText::new(&diag.local_link).monospace().size(12.0)).wrap());
             ui.add_space(12.0);
             if diag.running {
                 ui.spinner();
-                ui.label("Testing relay WebSockets and iroh registration (up to 60 seconds if the default fails)…");
-            } else if ui.button("Run checks again").clicked() {
+                ui.label(Msg::DiagRelayTesting.text());
+            } else if ui.button(Msg::RunChecksAgain.text()).clicked() {
                 intent = Some(DiagnosticsIntent::RunChecks);
             }
             if let Some(full) = diag.full_report() {
                 ui.add_space(12.0);
-                ui.label("Review before sharing: the report contains your browser version, time, relay checks and peer test result. It does not include tickets or files.");
+                ui.label(Msg::DiagReportReview.text());
                 if ui.button("Copy report").clicked() {
                     ui.ctx().copy_text(full.clone());
                 }
@@ -1366,7 +1359,11 @@ impl P2PTransfer {
             match &send.link {
                 LinkState::Ready(link) => {
                     let link = link.as_str();
-                    ui.label(RichText::new("Send this link").color(tc.outline).size(12.0));
+                    ui.label(
+                        RichText::new(Msg::SendThisLink.text())
+                            .color(tc.outline)
+                            .size(12.0),
+                    );
                     ui.add_space(4.0);
                     egui::Frame::new()
                         .fill(tc.surface_lowest)
@@ -1444,7 +1441,7 @@ impl P2PTransfer {
                         ui.horizontal_wrapped(|ui| {
                             pill(ui, &tc, "COPIED", true);
                             ui.label(
-                                RichText::new("Send this link to the person you chose.")
+                                RichText::new(Msg::SendLinkHintChosen.text())
                                     .color(tc.secondary)
                                     .size(13.0)
                                     .strong(),
@@ -1473,14 +1470,14 @@ impl P2PTransfer {
                 }
                 LinkState::Preparing => {
                     ui.label(
-                        RichText::new("Getting your link ready…")
+                        RichText::new(Msg::GettingYourLinkReady.text())
                             .color(tc.outline)
                             .size(12.0),
                     );
                 }
                 LinkState::Binding => {
                     ui.label(
-                        RichText::new("Getting your link ready…")
+                        RichText::new(Msg::GettingYourLinkReady.text())
                             .color(tc.outline)
                             .size(12.0),
                     );
@@ -1634,7 +1631,7 @@ impl P2PTransfer {
         card(&tc).show(ui, |ui| {
             if compact {
                 ui.label(
-                    RichText::new("Receive on this device")
+                    RichText::new(Msg::ReceiveOnThisDevice.text())
                         .color(tc.on_surface)
                         .size(21.0)
                         .strong(),
@@ -1643,7 +1640,7 @@ impl P2PTransfer {
             } else {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(
-                        RichText::new("Receive on this device")
+                        RichText::new(Msg::ReceiveOnThisDevice.text())
                             .color(tc.on_surface)
                             .size(21.0)
                             .strong(),
@@ -1667,18 +1664,16 @@ impl P2PTransfer {
                 ui.horizontal_wrapped(|ui| {
                     ui.add(egui::Spinner::new().size(24.0).color(tc.secondary));
                     ui.label(
-                        RichText::new("Connecting to the sender…")
+                        RichText::new(Msg::ReceiveConnectingSender.text())
                             .color(tc.on_surface)
                             .size(15.0)
                             .strong(),
                     );
                 });
                 ui.label(
-                    RichText::new(
-                        "Looking for the device sharing this file. This can take a moment.",
-                    )
-                    .color(tc.on_surface_var)
-                    .size(13.0),
+                    RichText::new(Msg::ReceiveLookingForSender.text())
+                        .color(tc.on_surface_var)
+                        .size(13.0),
                 );
                 ui.add_space(10.0);
                 cancel = if compact {
@@ -1686,13 +1681,12 @@ impl P2PTransfer {
                     ui.add_sized([width, 48.0], outline_button(&tc, "Cancel", tc.outline))
                         .clicked()
                 } else {
-                    ui.add(outline_button(&tc, "Cancel", tc.outline))
-                        .clicked()
+                    ui.add(outline_button(&tc, "Cancel", tc.outline)).clicked()
                 };
             } else if progress.is_none() {
                 ui.add(
                     egui::Label::new(
-                        RichText::new("Paste the full link someone sent you.")
+                        RichText::new(Msg::ReceivePasteFullLink.text())
                             .color(tc.on_surface_var)
                             .size(14.0),
                     )
@@ -1703,7 +1697,7 @@ impl P2PTransfer {
                     ui.add_sized(
                         [ui.available_width(), 48.0],
                         egui::TextEdit::singleline(&mut input)
-                            .hint_text("Paste a link here")
+                            .hint_text(Msg::PasteALinkHere.text())
                             .frame(egui::Frame::new())
                             .font(egui::FontId::monospace(14.0))
                             .text_color(tc.on_surface)
@@ -1716,8 +1710,7 @@ impl P2PTransfer {
                     ui.add_sized([width, 48.0], primary_button(&tc, "Open link"))
                         .clicked()
                 } else {
-                    ui.add(primary_button(&tc, "Open link"))
-                        .clicked()
+                    ui.add(primary_button(&tc, "Open link")).clicked()
                 };
             }
 
@@ -1740,9 +1733,10 @@ impl P2PTransfer {
                 } = p.phase
                 {
                     ui.label(
-                        RichText::new(format!(
-                            "Trying again ({attempt} of {max_attempts}). Keep the sender's tab open. We'll try to continue where we stopped."
-                        ))
+                        RichText::new(
+                            Msg::ReceiveRetrying
+                                .with(&[("attempt", &attempt), ("max_attempts", &max_attempts)]),
+                        )
                         .color(tc.on_surface_var)
                         .size(13.0),
                     );
@@ -1775,24 +1769,15 @@ impl P2PTransfer {
                                 ui.horizontal_wrapped(manifest_row);
                             }
                         } else {
-                            file_attachment(
-                                ui,
-                                &tc,
-                                &meta.name,
-                                &format_size(meta.size),
-                                false,
-                            );
+                            file_attachment(ui, &tc, &meta.name, &format_size(meta.size), false);
                             ui.add_space(6.0);
                         }
                     }
                     ui.add_space(12.0);
-                    ui.label("Oxfer checks the file after it's saved.");
+                    ui.label(Msg::ReceiveChecksAfterSave.text());
                     #[cfg(target_arch = "wasm32")]
                     ui.add_enabled_ui(!save_pending, |ui| {
-                        ui.checkbox(
-                            &mut keep_local_copy,
-                            "Keep a copy here so I can continue later",
-                        );
+                        ui.checkbox(&mut keep_local_copy, Msg::KeepLocalCopy.text());
                         if keep_local_copy {
                             ui.label(
                                 RichText::new(
@@ -1808,28 +1793,22 @@ impl P2PTransfer {
                     });
                     #[cfg(target_arch = "wasm32")]
                     let save_label = if keep_local_copy {
-                        "Save a copy in this browser"
+                        Msg::SaveACopyInThisBrowser.text()
                     } else {
-                        "Choose where to save"
+                        Msg::ChooseWhereToSave.text()
                     };
                     #[cfg(not(target_arch = "wasm32"))]
-                    let save_label = "Choose where to save";
+                    let save_label = Msg::ChooseWhereToSave.text();
                     let save_clicked = if compact {
                         let width = ui.available_width();
                         ui.add_enabled_ui(!save_pending, |ui| {
-                            ui.add_sized(
-                                [width, 48.0],
-                                primary_button(&tc, save_label),
-                            )
-                            .clicked()
+                            ui.add_sized([width, 48.0], primary_button(&tc, save_label))
+                                .clicked()
                         })
                         .inner
                     } else {
-                        ui.add_enabled(
-                            !save_pending,
-                            primary_button(&tc, save_label),
-                        )
-                        .clicked()
+                        ui.add_enabled(!save_pending, primary_button(&tc, save_label))
+                            .clicked()
                     };
                     if save_clicked {
                         save = true;
@@ -1837,17 +1816,13 @@ impl P2PTransfer {
                     if save_pending {
                         #[cfg(target_arch = "wasm32")]
                         let preparing = if keep_local_copy {
-                            "Checking your saved copy…"
+                            Msg::CheckingYourSavedCopy.text()
                         } else {
-                            "Opening your save location…"
+                            Msg::OpeningYourSaveLocation.text()
                         };
                         #[cfg(not(target_arch = "wasm32"))]
-                        let preparing = "Opening your save location…";
-                        ui.label(
-                            RichText::new(preparing)
-                                .color(tc.outline)
-                                .size(12.0),
-                        );
+                        let preparing = Msg::OpeningYourSaveLocation.text();
+                        ui.label(RichText::new(preparing).color(tc.outline).size(12.0));
                     }
                 } else if p.bytes_total > 0 {
                     ui.add_space(10.0);
@@ -1921,7 +1896,7 @@ impl P2PTransfer {
         card(&tc).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(
-                    RichText::new("Saved files in this browser")
+                    RichText::new(Msg::SavedFilesInThisBrowser.text())
                         .color(tc.on_surface)
                         .size(21.0)
                         .strong(),
@@ -1957,11 +1932,11 @@ impl P2PTransfer {
                             format_size(file.size),
                         ));
                         if file.verified {
-                            pill(ui, &tc, "READY TO SAVE", true);
+                            pill(ui, &tc, Msg::ReadyToSave.text(), true);
                             if ui
                                 .add_enabled(
                                     !busy && !receiving,
-                                    outline_button(&tc, "Download file", tc.secondary),
+                                    outline_button(&tc, Msg::DownloadFile.text(), tc.secondary),
                                 )
                                 .clicked()
                             {
@@ -1976,15 +1951,19 @@ impl P2PTransfer {
                     ui.horizontal_wrapped(|ui| {
                         if entry.files.iter().any(|f| !f.verified)
                             && ui
-                                .add(outline_button(&tc, "Continue download", tc.secondary))
+                                .add(outline_button(
+                                    &tc,
+                                    Msg::ContinueDownload.text(),
+                                    tc.secondary,
+                                ))
                                 .clicked()
                         {
                             resume = Some(entry.id.clone());
                         }
                         if self.confirm_discard.as_ref() == Some(&entry.id) {
-                            ui.label("Delete this copy and its saved progress?");
+                            ui.label(Msg::CopiesDeleteConfirm.text());
                             if ui
-                                .add(outline_button(&tc, "Delete permanently", tc.error))
+                                .add(outline_button(&tc, Msg::DeletePermanently.text(), tc.error))
                                 .clicked()
                             {
                                 action = Some(CopiesIntent::Discard(entry.id.clone()));
@@ -1994,7 +1973,7 @@ impl P2PTransfer {
                                 self.confirm_discard = None;
                             }
                         } else if ui
-                            .add(outline_button(&tc, "Delete saved copy", tc.outline))
+                            .add(outline_button(&tc, Msg::DeleteSavedCopy.text(), tc.outline))
                             .clicked()
                         {
                             self.confirm_discard = Some(entry.id.clone());
@@ -2232,7 +2211,7 @@ impl P2PTransfer {
                             )
                         })
                         .inner
-                        .on_disabled_hover_text("Wait for files to finish preparing");
+                        .on_disabled_hover_text(Msg::SendWaitPreparing.text());
                     if home.clicked() {
                         self.dispatch(Intent::GoHome);
                     }
@@ -2242,7 +2221,7 @@ impl P2PTransfer {
                     ui.menu_button("File", |ui| {
                         if ui
                             .add_enabled(!preparing, Button::new("Open transfer link"))
-                            .on_disabled_hover_text("Wait for files to finish preparing")
+                            .on_disabled_hover_text(Msg::SendWaitPreparing.text())
                             .clicked()
                         {
                             self.dispatch(Intent::OpenReceive);
@@ -2299,7 +2278,7 @@ impl P2PTransfer {
                         ui.add_sized([width, 44.0], outline_button(tc, "Diags", tc.outline))
                     })
                     .inner
-                    .on_disabled_hover_text("Wait for files to finish preparing");
+                    .on_disabled_hover_text(Msg::SendWaitPreparing.text());
                 if diagnostics.clicked() {
                     self.dispatch(Intent::OpenDiagnostics);
                 }
@@ -2444,18 +2423,18 @@ impl P2PTransfer {
                     ui.horizontal(|ui| {
                         ui.spinner();
                         ui.label(if host {
-                            "Opening the room…"
+                            Msg::ChatOpeningRoom.text()
                         } else {
-                            "Connecting to the room…"
+                            Msg::ChatConnectingRoom.text()
                         });
                     });
                 }
                 ChatStatus::Open => {
                     ui.label(
                         RichText::new(if host {
-                            "Keep this page open: the room closes when you leave it."
+                            Msg::ChatKeepOpenRoomCloses.text()
                         } else {
-                            "Keep this page open while you talk."
+                            Msg::ChatKeepOpenTalking.text()
                         })
                         .color(tc.on_surface_var)
                         .size(13.0),
@@ -2465,7 +2444,7 @@ impl P2PTransfer {
                     ui.label(RichText::new(message.as_str()).color(tc.error));
                 }
                 ChatStatus::Closed => {
-                    ui.label(RichText::new("The room is closed.").color(tc.on_surface_var));
+                    ui.label(RichText::new(Msg::ChatRoomClosed.text()).color(tc.on_surface_var));
                 }
             }
 
@@ -2473,7 +2452,7 @@ impl P2PTransfer {
                 let link = links.link.as_str();
                 ui.add_space(8.0);
                 ui.label(
-                    RichText::new("Send this link to the person you want to talk to.")
+                    RichText::new(Msg::ChatLinkHintTalk.text())
                         .color(tc.on_surface)
                         .strong(),
                 );
@@ -2530,7 +2509,9 @@ impl P2PTransfer {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 8.0;
                         if chat.lines.is_empty() {
-                            ui.label(RichText::new("No messages yet.").color(tc.on_surface_var));
+                            ui.label(
+                                RichText::new(Msg::ChatNoMessages.text()).color(tc.on_surface_var),
+                            );
                         }
                         let you = chat.you.as_deref();
                         let style = ui.style().clone();
@@ -2593,7 +2574,7 @@ impl P2PTransfer {
                             open,
                             egui::TextEdit::singleline(&mut state.input)
                                 .id(egui::Id::new("chat_input"))
-                                .hint_text("Type a message and press Enter")
+                                .hint_text(Msg::ChatInputHint.text())
                                 .frame(egui::Frame::new())
                                 .text_color(tc.on_surface)
                                 .desired_width(input_width - 24.0)
@@ -2653,37 +2634,8 @@ impl P2PTransfer {
 /// theme's primary colour; everyone else gets a hue of their own from their name. Phosphor
 /// is one phosphor colour by design, so its members differ in brightness instead.
 fn member_color(tc: &Tc, dark: bool, name: &str, you: bool) -> Color32 {
-    if you {
-        return tc.primary;
-    }
-    const DARK: [Color32; 7] = [
-        Color32::from_rgb(255, 180, 84),  // amber
-        Color32::from_rgb(177, 140, 255), // violet
-        Color32::from_rgb(79, 214, 190),  // teal
-        Color32::from_rgb(255, 143, 177), // pink
-        Color32::from_rgb(155, 225, 93),  // lime
-        Color32::from_rgb(255, 209, 102), // yellow
-        Color32::from_rgb(122, 162, 255), // periwinkle
-    ];
-    const LIGHT: [Color32; 7] = [
-        Color32::from_rgb(166, 86, 0),
-        Color32::from_rgb(107, 63, 214),
-        Color32::from_rgb(0, 122, 104),
-        Color32::from_rgb(194, 24, 91),
-        Color32::from_rgb(63, 125, 18),
-        Color32::from_rgb(138, 109, 0),
-        Color32::from_rgb(47, 85, 201),
-    ];
-    // FNV-1a: stable across sessions and peers, so a name keeps its colour.
-    let hash = name.bytes().fold(0x811c_9dc5_u32, |h, b| {
-        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
-    });
-    if tc.theme == Theme::Phosphor {
-        let shades = [tc.secondary, tc.on_surface, tc.on_surface_var];
-        return shades[hash as usize % shades.len()];
-    }
-    let palette = if dark { DARK } else { LIGHT };
-    palette[hash as usize % palette.len()]
+    let c = crate::theme::member_color(tc.theme, dark, name, you);
+    Color32::from_rgb(c.0, c.1, c.2)
 }
 
 /// One member in the "In the room" roster: their name in their colour, in a small pill.

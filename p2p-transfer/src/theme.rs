@@ -224,10 +224,77 @@ impl Palette {
     }
 }
 
+/// Colours that tell chat participants apart: seven hues per mode, or three shades of the
+/// one phosphor in [`Theme::Phosphor`].
+const MEMBER_DARK: [Rgb; 7] = [
+    Rgb(255, 180, 84),  // amber
+    Rgb(177, 140, 255), // violet
+    Rgb(79, 214, 190),  // teal
+    Rgb(255, 143, 177), // pink
+    Rgb(155, 225, 93),  // lime
+    Rgb(255, 209, 102), // yellow
+    Rgb(122, 162, 255), // periwinkle
+];
+const MEMBER_LIGHT: [Rgb; 7] = [
+    Rgb(166, 86, 0),
+    Rgb(107, 63, 214),
+    Rgb(0, 122, 104),
+    Rgb(194, 24, 91),
+    Rgb(63, 125, 18),
+    Rgb(138, 109, 0),
+    Rgb(47, 85, 201),
+];
+
+/// How many distinct member colours a theme has.
+pub const fn member_slots(theme: Theme) -> usize {
+    match theme {
+        Theme::Phosphor => 3,
+        Theme::Rusty | Theme::Clean => 7,
+    }
+}
+
+/// Which member colour a name gets. FNV-1a, so it is stable across sessions, devices and
+/// UIs: a name keeps its colour for everyone in the room.
+pub fn member_slot(theme: Theme, name: &str) -> usize {
+    let hash = name.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    hash as usize % member_slots(theme)
+}
+
+/// The colour for member `slot` (see [`member_slot`]), in this theme and mode.
+pub const fn member_palette(theme: Theme, dark: bool) -> [Rgb; 7] {
+    let p = Palette::of(theme, dark);
+    match theme {
+        Theme::Phosphor => [
+            p.secondary,
+            p.on_surface,
+            p.on_surface_var,
+            p.secondary,
+            p.on_surface,
+            p.on_surface_var,
+            p.secondary,
+        ],
+        Theme::Rusty | Theme::Clean if dark => MEMBER_DARK,
+        Theme::Rusty | Theme::Clean => MEMBER_LIGHT,
+    }
+}
+
+/// A participant's colour; the local user is always the primary colour.
+pub fn member_color(theme: Theme, dark: bool, name: &str, you: bool) -> Rgb {
+    if you {
+        return Palette::of(theme, dark).primary;
+    }
+    member_palette(theme, dark)[member_slot(theme, name)]
+}
+
 fn declarations(theme: Theme, dark: bool) -> String {
     let mut out = String::new();
     for (name, rgb) in Palette::of(theme, dark).tokens() {
         out.push_str(&format!("--{name}:{};", rgb.hex()));
+    }
+    for (slot, rgb) in member_palette(theme, dark).iter().enumerate() {
+        out.push_str(&format!("--member-{slot}:{};", rgb.hex()));
     }
     out.push_str(&format!(
         "color-scheme:{};",
@@ -273,6 +340,25 @@ pub fn css_variables() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn local_test_member_colours_are_stable_and_per_theme() {
+        use super::*;
+        // Same name, same slot, every time; the local user is always the primary colour.
+        assert_eq!(
+            member_slot(Theme::Clean, "ana"),
+            member_slot(Theme::Clean, "ana")
+        );
+        assert!(member_slot(Theme::Phosphor, "ana") < 3);
+        for theme in Theme::ALL {
+            assert!(member_slot(theme, "bob") < member_slots(theme));
+            assert_eq!(
+                member_color(theme, true, "x", true),
+                Palette::of(theme, true).primary
+            );
+        }
+        assert!(css_variables().contains("--member-6:"));
+    }
+
     use super::*;
 
     #[test]
