@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use p2p_transfer::i18n::Msg;
 use p2p_transfer::sessions::text::format_size;
 use p2p_transfer::sessions::{CopiesIntent, Intent};
 
@@ -20,7 +21,7 @@ pub fn Copies() -> Element {
     rsx! {
         section { class: "card", aria_labelledby: "copies-title", aria_busy: copies.busy,
             div { class: "title-row",
-                h1 { id: "copies-title", "Saved files in this browser" }
+                h1 { id: "copies-title", {Msg::SavedFilesInThisBrowser.text()} }
                 button {
                     r#type: "button",
                     class: "button outline small",
@@ -45,7 +46,7 @@ pub fn Copies() -> Element {
                                     span { class: "file-name", {file.name.clone()} }
                                     span { class: "meta", "{format_size(file.written)} / {format_size(file.size)}" }
                                     if file.verified {
-                                        span { class: "pill ok", "READY TO SAVE" }
+                                        span { class: "pill ok", {Msg::ReadyToSave.text()} }
                                         button {
                                             r#type: "button",
                                             class: "button outline small",
@@ -54,7 +55,7 @@ pub fn Copies() -> Element {
                                                 let id = entry.id.clone();
                                                 move |_| core.dispatch(Intent::Copies(CopiesIntent::Export(id.clone(), index)))
                                             },
-                                            "Download file"
+                                            {Msg::DownloadFile.text()}
                                         }
                                     } else {
                                         span { class: "pill", "UNFINISHED" }
@@ -72,11 +73,11 @@ pub fn Copies() -> Element {
                                         let id = entry.id.clone();
                                         move |_| core.dispatch(Intent::ResumeLocalCopy(id.clone()))
                                     },
-                                    "Continue download"
+                                    {Msg::ContinueDownload.text()}
                                 }
                             }
                             if confirm().as_deref() == Some(entry.id.as_str()) {
-                                span { role: "alert", "Delete this copy and its saved progress?" }
+                                span { role: "alert", {Msg::CopiesDeleteConfirm.text()} }
                                 button {
                                     r#type: "button",
                                     class: "button outline danger",
@@ -88,7 +89,7 @@ pub fn Copies() -> Element {
                                             confirm.set(None);
                                         }
                                     },
-                                    "Delete permanently"
+                                    {Msg::DeletePermanently.text()}
                                 }
                                 button { r#type: "button", class: "button outline", onclick: move |_| confirm.set(None), "Keep" }
                             } else {
@@ -100,7 +101,7 @@ pub fn Copies() -> Element {
                                         let id = entry.id.clone();
                                         move |_| confirm.set(Some(id.clone()))
                                     },
-                                    "Delete saved copy"
+                                    {Msg::DeleteSavedCopy.text()}
                                 }
                             }
                         }

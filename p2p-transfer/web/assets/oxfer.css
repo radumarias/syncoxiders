@@ -151,6 +151,17 @@ nav { order: 3; flex: 1 1 100%; min-width: 0; }
   letter-spacing: 0.04em;
 }
 .pill.ok { color: var(--secondary); }
+/* Chat participants: the colour is the theme's `--member-N`, picked by `member_slot`. */
+.pill.member { box-shadow: inset 0 0 0 1px currentColor; }
+.pill.member[data-you] { color: var(--primary); }
+.pill.member[data-member="0"] { color: var(--member-0); }
+.pill.member[data-member="1"] { color: var(--member-1); }
+.pill.member[data-member="2"] { color: var(--member-2); }
+.pill.member[data-member="3"] { color: var(--member-3); }
+.pill.member[data-member="4"] { color: var(--member-4); }
+.pill.member[data-member="5"] { color: var(--member-5); }
+.pill.member[data-member="6"] { color: var(--member-6); }
+.pill.member[data-you][data-member] { color: var(--primary); }
 
 .steps { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
 @media (min-width: 640px) { .steps { grid-template-columns: repeat(3, 1fr); } }

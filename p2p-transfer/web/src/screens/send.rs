@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use p2p_transfer::i18n::Msg;
 use p2p_transfer::sessions::text::{self, format_size, LINK_WARNING};
 use p2p_transfer::sessions::{Intent, LinkState, SendIntent};
 
@@ -44,18 +45,18 @@ pub fn Send() -> Element {
             match &send.link {
                 LinkState::Ready(link) => rsx! {
                     div { class: "link-box",
-                        label { r#for: "share-link", "Send this link" }
+                        label { r#for: "share-link", {Msg::SendThisLink.text()} }
                         input { id: "share-link", class: "mono", readonly: true, value: link.as_str() }
                         div { class: "actions",
                             CopyButton { text: link.as_str().to_string(), class: "primary" }
                             PickButton { class: "outline", "Add files" }
                         }
-                        p { class: "muted", "Send this link to the person you chose." }
+                        p { class: "muted", {Msg::SendLinkHintChosen.text()} }
                         p { class: "warn", {LINK_WARNING} }
                     }
                 },
                 LinkState::Preparing | LinkState::Binding => rsx! {
-                    p { role: "status", class: "busy", "Getting your link ready…" }
+                    p { role: "status", class: "busy", {Msg::GettingYourLinkReady.text()} }
                 },
                 LinkState::Failed => rsx! {
                     button {

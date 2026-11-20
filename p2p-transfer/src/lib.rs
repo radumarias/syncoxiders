@@ -7,6 +7,7 @@ pub mod chat;
 #[cfg(target_arch = "wasm32")]
 mod diagnostics;
 pub mod file_io;
+pub mod i18n;
 pub mod logging;
 pub mod node;
 pub mod protocol;
