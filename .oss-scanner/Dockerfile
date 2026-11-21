@@ -46,6 +46,9 @@ RUN cargo fetch --locked
 # profile. trunk stays in debug: a release build would download wasm-opt.
 RUN cargo build --locked -p p2p-transfer --all-targets --all-features
 RUN cargo check --locked -p p2p-transfer --all-features --lib --target wasm32-unknown-unknown
+# The Dioxus web UI crate (p2p-transfer/web), as ./check.sh lints it. Its dx bundle is not built here: dx
+# downloads its own wasm-opt and esbuild.
+RUN cargo check --locked -p oxfer-web --target wasm32-unknown-unknown
 RUN trunk build --locked
 
 # Run the cheap tests so the image is known to work, without letting a failing test abort the build.
