@@ -462,6 +462,8 @@ a { color: var(--primary); }
 }
 .button.small { min-height: 36px; padding: 0 12px; font-size: 0.85rem; }
 .button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+/* Secondary actions (Radu): a bordered button on the card surface. */
+.button.outline { background: var(--surface-lowest); border-color: var(--outline); color: var(--on-surface); }
 .button.danger { color: var(--error); border-color: var(--error); }
 .button:hover:not(:disabled) { filter: brightness(1.08); }
 .button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -489,6 +491,98 @@ input.mono { font-family: var(--font-mono); font-size: 0.9rem; }
   height: 12px;
   margin: 8px 0 4px;
   accent-color: var(--secondary);
+}
+
+/* ── Receive (Radu) ────────────────────────────────────────────────────── */
+/* Receive screen for #68. Classes are prefixed `receive-`. Cards reflow on the
+   width of the main area (`@container frame-main`); only the pinned action bar
+   follows the viewport, because it has to match the phone tab bar of the frame. */
+
+.receive {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+}
+.receive-head { margin-bottom: 0; }
+
+.receive-link { max-width: 640px; }
+.receive-tip { display: none; margin: 4px 0 0; }
+@media (hover: hover) and (pointer: fine) {
+  .receive-tip { display: block; }
+}
+
+.receive-body { display: grid; gap: var(--gap); }
+@container frame-main (min-width: 600px) {
+  .receive-split { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+}
+
+.receive-summary { margin: 0 0 4px; color: var(--on-surface-var); font-size: 0.95rem; font-weight: 600; }
+.receive-percent { display: flex; align-items: baseline; gap: 10px; }
+.receive-percent-value { font-size: 2.6rem; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.receive-paused { color: var(--error); font-weight: 700; }
+.receive-bar.paused .progress { accent-color: var(--error); }
+.receive-numbers {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 12px;
+  margin-bottom: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.receive-pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.receive-pill.warn { color: var(--error); }
+.receive-pill.muted { color: var(--on-surface-var); }
+
+/* File rows: name and size on one line, then progress or state below. */
+.receive-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 12px;
+}
+.receive-file .progress { grid-column: 1 / -1; margin: 4px 0 0; }
+.receive-file-state, .receive-file-where { grid-column: 1 / -1; color: var(--on-surface-var); font-size: 0.85rem; }
+.receive-file-state.ok { color: var(--secondary); }
+.receive-file-where { overflow-wrap: anywhere; }
+
+.receive-notice {
+  border-color: var(--error);
+  background: color-mix(in srgb, var(--error) 8%, var(--surface-low));
+}
+.receive-notice h2, .receive-help h2 { font-size: 1.05rem; }
+
+.receive-done { text-align: center; }
+.receive-done-mark { display: inline-flex; margin-bottom: 8px; color: var(--secondary); }
+.receive-done .pill { margin-bottom: 12px; }
+.receive-done .files { text-align: left; }
+
+/* Phones: the main action sits above the tab bar, in thumb reach. It is the last
+   thing in the screen, so `margin-top: auto` keeps it at the bottom of short pages. */
+.receive-actions {
+  position: sticky;
+  bottom: var(--frame-bottom);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  padding: 12px 0;
+  background: var(--bg);
+}
+@media (min-width: 600px) {
+  .receive-actions {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-top: 0;
+    padding: 0;
+    background: none;
+  }
 }
 
 /* ── Accessibility ─────────────────────────────────────────────────────── */
