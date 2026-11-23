@@ -124,7 +124,7 @@ test("token rows carry values as properties, never as markup", () => {
 });
 
 test("an exported theme imports back unchanged", () => {
-    for (const [preset, name] of [["RUSTY", "Rusty"], ["PHOSPHOR", "Phosphor"]]) {
+    for (const [preset, name] of [["RUSTY", "Rusty"], ["PHOSPHOR", "Phosphor"], ["SPACEX", "SpaceX"]]) {
         const lab = loadLab();
         lab.evaluate(`(applyPreset(${preset}, '${name}'), state.intent = 'warm workshop', state.author = 'Ada')`);
         const exported = lab.evaluate("bundle()");
